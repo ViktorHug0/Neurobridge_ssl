@@ -12,7 +12,8 @@ if __name__ == "__main__":
     # Get input arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--raw_data_dir', default='./data/things_meg', type=str, help="raw data directory")
-    parser.add_argument('--output_dir', default='./data/things_meg/preprocessed_meg', type=str, help="output directory")
+    parser.add_argument('--output_meg_dir', default='./data/things_meg/preprocessed_meg', type=str, help="output directory")
+    parser.add_argument('--output_image_dir', default='./data/things_meg/image_set', type=str, help="output directory")
     parser.add_argument("--precision", default="fp32", type=str, choices=["fp64", "fp32", "fp16"], help="precision: float32 or float16")
     parser.add_argument('--zscore', action="store_true")
     args = parser.parse_args()
@@ -45,7 +46,7 @@ if __name__ == "__main__":
     for sub_id in range(1, 5):
         # Check if the subject has been processed
         print(f"\nProcessing Subject {sub_id}...")
-        if os.path.isdir(os.path.join(args.output_dir, 'sub-'+format(sub_id,'02'))):
+        if os.path.isdir(os.path.join(args.output_meg_dir, 'sub-'+format(sub_id,'02'))):
             if sub_id != 4:
                 print(f"Subject {sub_id} already processed, skipping...")
                 continue
@@ -170,7 +171,7 @@ if __name__ == "__main__":
             train_data = train_data.astype(np.float64)
             test_data = test_data.astype(np.float64)
 
-        save_dir = os.path.join(args.output_dir, 'preprocessed_meg', 'sub-'+format(sub_id,'02'))
+        save_dir = os.path.join(args.output_meg_dir, 'sub-'+format(sub_id,'02'))
         os.makedirs(save_dir, exist_ok=True)
         np.save(os.path.join(save_dir, 'train.npy'), train_data)
         
@@ -188,7 +189,7 @@ if __name__ == "__main__":
         "train_data_shape": train_data.shape,
         "test_data_shape": test_data.shape
     }
-    with open(os.path.join(args.output_dir, 'preprocessed_meg', "info.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.output_meg_dir, "info.json"), "w", encoding="utf-8") as f:
         dump_pretty(info_dict, f, indent=4, ensure_ascii=False)
 
     ################################################################################
@@ -216,7 +217,7 @@ if __name__ == "__main__":
     base_dir = os.path.join(args.raw_data_dir, 'image_set/object_images')
 
     print(f"Training set has {len(train_df)} images.")
-    dst_dir = os.path.join(args.output_dir, 'image_set/train_images')
+    dst_dir = os.path.join(args.output_image_dir, 'train_images')
     for index, row in train_df.iterrows():
         category_nr = str(row['category_nr']).zfill(5)
         src_path = row['image_path'].replace('images_meg/', base_dir + '/')
@@ -226,7 +227,7 @@ if __name__ == "__main__":
         shutil.copy(src_path, dst_path)
 
     print(f"Test set has {len(test_df)} images.")
-    dst_dir = os.path.join(args.output_dir, 'image_set/test_images')
+    dst_dir = os.path.join(args.output_image_dir, 'test_images')
     for index, row in test_df.iterrows():
         category_nr = str(row['category_nr']).zfill(5)
         src_path = row['image_path'].replace('images_test_meg/', base_dir + '/')
