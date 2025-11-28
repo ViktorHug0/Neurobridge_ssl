@@ -12,7 +12,7 @@ if __name__ == "__main__":
     # Get input arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--raw_data_dir', default='./data/things_meg', type=str, help="raw data directory")
-    parser.add_argument('--output_dir', default='./data/things_meg', type=str, help="output directory")
+    parser.add_argument('--output_dir', default='./data/things_meg/preprocessed_meg', type=str, help="output directory")
     parser.add_argument("--precision", default="fp32", type=str, choices=["fp64", "fp32", "fp16"], help="precision: float32 or float16")
     parser.add_argument('--zscore', action="store_true")
     args = parser.parse_args()
@@ -43,11 +43,16 @@ if __name__ == "__main__":
     print(f"There are a total of {total_images} files in the image directory '{image_dir}'")
 
     for sub_id in range(1, 5):
-        if os.path.isdir(os.path.join(args.output_dir, 'sub-'+format(sub_id,'02'))) and sub_id != 4:
-            print(f"Subject {sub_id} already processed, skipping...")
-            continue
+        # Check if the subject has been processed
+        print(f"\nProcessing Subject {sub_id}...")
+        if os.path.isdir(os.path.join(args.output_dir, 'sub-'+format(sub_id,'02'))):
+            if sub_id != 4:
+                print(f"Subject {sub_id} already processed, skipping...")
+                continue
+            else:
+                print(f"Subject {sub_id} already processed, but re-processing for meta information...")
         
-        fif_file = os.path.join(meg_dir,f"preprocessed_P{sub_id}-epo.fif")
+        fif_file = os.path.join(meg_dir, f"sub-{format(sub_id,'02')}", f"preprocessed_P{sub_id}-epo.fif")
 
         def read_and_crop_epochs(fif_file):
             epochs = mne.read_epochs(fif_file, preload=True)

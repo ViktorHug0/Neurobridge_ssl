@@ -1,9 +1,7 @@
 import argparse
 import os
 import sys
-import pickle
 import random
-import json
 
 import mne
 import numpy as np
@@ -249,18 +247,22 @@ if __name__ == "__main__":
     ses_range = get_loop_range("session", args.ses_num, args.ses_id)
 
     # Preprocess data of each subjects seperately
-    for sub in sub_range:
+    for sub_id in sub_range:
         # Check if the subject has been processed
-        if os.path.isdir(os.path.join(args.output_dir, 'sub-'+format(sub,'02'))) and sub != 10:
-            print(f"Subject {sub} already processed, skipping...")
-            continue
+        print(f"\nProcessing Subject {sub_id}...")
+        if os.path.isdir(os.path.join(args.output_dir, 'sub-'+format(sub_id,'02'))):
+            if sub_id != 10:
+                print(f"Subject {sub_id} already processed, skipping...")
+                continue
+            else:
+                print(f"Subject {sub_id} already processed, but re-processing for meta information...")
 
         epoched_data = {"train": [], "test": []}
         for ses in ses_range:
             # Load EEG data from file
-            print(f"\nSubject {sub}, Session {ses}\n")
+            print(f"\nSubject {sub_id}, Session {ses}\n")
             
-            eeg_dir = os.path.join(args.raw_data_dir, 'sub-' + format(sub,'02'), 'ses-' + format(ses,'02'))
+            eeg_dir = os.path.join(args.raw_data_dir, 'sub-' + format(sub_id,'02'), 'ses-' + format(ses,'02'))
             print("---Processing Data---")
             train_eeg_path = os.path.join(eeg_dir, 'raw_eeg_training.npy')
             train_data, train_img_conditions, train_ch_names, train_times, train_freq = preprocess(train_eeg_path, "train", channels_order, args, seed)
@@ -276,10 +278,10 @@ if __name__ == "__main__":
                 train_data, test_data = mvnn(train_data, test_data)
             if args.zscore:
                 train_data, test_data = zscore_channelwise(train_data, test_data)
-            epoched_data['train'].append({"data": train_data, "img_conditions": train_img_conditions, "sub_id": sub})
-            epoched_data['test'].append({"data": test_data, "img_conditions": test_img_conditions, "sub_id": sub})
+            epoched_data['train'].append({"data": train_data, "img_conditions": train_img_conditions, "sub_id": sub_id})
+            epoched_data['test'].append({"data": test_data, "img_conditions": test_img_conditions, "sub_id": sub_id})
         print("Saving...")
-        save_dir = os.path.join(args.output_dir, 'sub-'+format(sub,'02'))
+        save_dir = os.path.join(args.output_dir, 'sub-'+format(sub_id,'02'))
          # Create the directory if not existing and save the data
         if os.path.isdir(save_dir) == False:
             os.makedirs(save_dir)

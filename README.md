@@ -51,13 +51,16 @@ data
 │   ├── image_set
 │   │   └── object_images
 │   ├── raw_meg
-│   │   ├── preprocessed_P1-epo-1.fif
+│   │   ├── sub-01
+│   │   │   ├── preprocessed_P1-epo-1.fif
+│   │   │   ├── ...
+│   │   │   └── preprocessed_P1.fif
 │   │   ├── ...
-│   │   └── preprocessed_P4-epo.fif
-│   ├── sourcedata
-│   │   ├── sample_attributes_P1.csv
-│   │   ├── ...
-│   │   └── sample_attributes_P4.csv
+│   │   └── sub-04
+│   └── sourcedata
+│       ├── sample_attributes_P1.csv
+│       ├── ...
+│       └── sample_attributes_P4.csv
 ```
 
 The EEG and MEG data can be obtained using the provided download scripts, whereas the image data must be downloaded manually.
