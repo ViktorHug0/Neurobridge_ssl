@@ -5,6 +5,9 @@ results
 data/*
 !data/.gitkeep
 
+*.pth
+*.pdf
+
 reference
 exp
 TODO.md

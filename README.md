@@ -151,7 +151,27 @@ Inter-subject: leave one subject out for test
 /bin/bash scripts/things_meg/inter-subjects.sh
 ```
 
-# Acknowledge
+## Analysis
+
+Set python environment path:
+
+```Bash
+source .env
+```
+
+Draw retrival samples:
+
+```Bash
+python analysis/draw_retrival_sample.py --checkpoint_path "intra-subjects_sub-08_checkpoint_last.pth" --sub_id 8 --topk 5 --num_samples 5
+```
+
+Draw similarity matrix:
+
+```Bash
+python analysis/draw_similarity_matrix.py --checkpoint_path "intra-subjects_sub-08_checkpoint_last.pth" --sub_id 8
+```
+
+# Acknowledgements
 - [A large and rich EEG dataset for modeling human visual object recognition](https://www.alegifford.com/projects/eeg_dataset/) [THINGS-EEG]
 - [THINGS-data, a multimodal collection of large-scale datasets for investigating object representations in human brain and behavior](https://elifesciences.org/articles/82580) [THINGS-MEG]
 - [Decoding Natural Images from EEG for Object Recognition](https://github.com/eeyhsong/NICE-EEG) [NICE, ICLR 2024]
