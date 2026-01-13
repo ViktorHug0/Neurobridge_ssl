@@ -287,6 +287,7 @@ if __name__ == "__main__":
             os.makedirs(save_dir)
         save_eeg_subject(epoched_data, args.precision, save_dir)
 
+    times = np.round(times, 3)
     # save ch_names and times as json
     info_dict = {
         "ch_names": ch_names,

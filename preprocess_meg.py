@@ -159,7 +159,7 @@ if __name__ == "__main__":
             test_data = (test_data - mean_train) / std_train
             print("Z-score normalization applied.")
 
-        times = np.linspace(0, 0.995, 200)
+        times = np.round(np.linspace(0, 0.995, 200), 3)
         
         if args.precision == "fp16":
             train_data = train_data.astype(np.float16)
