@@ -75,8 +75,6 @@ if __name__ == '__main__':
     parser.add_argument('--eeg_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
     
-    parser.add_argument('--image_data_dir', default='./data/things_eeg/image_set/train_images', type=str, help='where your image data are')
-    
     parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'mlp'], default='direct')
     parser.add_argument('--feature_dim', type=int, default=512, help='dont work when direct')
 
@@ -228,8 +226,8 @@ if __name__ == '__main__':
     eeg_projector.train()
     img_projector.train()
     text_projector.train()
-    best_loss = float('inf')
-    best_epoch = 0
+    best_top1_acc = 0.0
+    best_top5_acc = 0.0
     best_test_loss = float('inf')
     best_test_epoch = 0
     for epoch in range(1, args.num_epochs + 1):
@@ -242,7 +240,7 @@ if __name__ == '__main__':
             text_feature_batch = batch[2].to(device)
 
             optimizer.zero_grad()
-            if args.eeg_encoder_type in ['ATM', 'eegproject', 'nice']:
+            if args.eeg_encoder_type in ['ATM']:
                 eeg_feature_batch = model(eeg_batch, subject_id_batch)
             else:
                 eeg_feature_batch = model(eeg_batch)

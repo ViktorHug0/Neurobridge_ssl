@@ -15,7 +15,7 @@ NUM_EPOCHS=50
 SELECTED_CHANNELS=('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
 PROJECTOR="linear"
 FEATURE_DIM=512
-OUTPUT_DIR="./results/things_eeg/intra_subjects"
+OUTPUT_DIR="./results/things_eeg/intra-subjects"
 
 for SUB_ID in {1..10}
 do
@@ -28,6 +28,7 @@ do
         --eeg_encoder_type "$EEG_ENCODER_TYPE" \
         --train_subject_ids $SUB_ID \
         --test_subject_ids $SUB_ID \
+        --softplus \
         --num_epochs "$NUM_EPOCHS" \
         --image_feature_dir "$IMAGE_FEATURE_DIR" \
         --text_feature_dir "$TEXT_FEATURE_DIR" \

@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 class ContrastiveLoss(nn.Module):
-    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, softplut:bool):
+    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool):
         super(ContrastiveLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
@@ -12,7 +12,7 @@ class ContrastiveLoss(nn.Module):
         self.img_l2norm = img_l2norm
         self.text_l2norm = text_l2norm
         
-        self.softplus = softplut
+        self.is_softplus = is_softplus
         
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_mse = nn.MSELoss()
@@ -31,7 +31,7 @@ class ContrastiveLoss(nn.Module):
                 text_feature = F.normalize(text_feature, p=2, dim=1)
 
         # Calculate similarity matrix (N x N)
-        if self.softplus:
+        if self.is_softplus:
             logit_scale = self.softplus(self.logit_scale)
         else:
             logit_scale = torch.exp(self.logit_scale)
