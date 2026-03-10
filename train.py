@@ -151,6 +151,8 @@ if __name__ == '__main__':
     parser.add_argument('--style_lambda', default=0.0, type=float, help='subject classification loss weight on style')
     parser.add_argument('--decor_lambda', default=0.0, type=float, help='content-style decorrelation loss weight')
     parser.add_argument('--coral_lambda', default=0.0, type=float, help='source-subject CORAL loss weight on content')
+    parser.add_argument('--episodic_source_holdout', action='store_true', help='enable source-held-out episodic meta-training')
+    parser.add_argument('--episodic_lambda', default=0.2, type=float, help='weight for meta-heldout source loss')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
     parser.add_argument("--selected_channels", default=[], nargs='*', type=str, help="selected EEG channels, empty means all channels")
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
@@ -473,6 +475,9 @@ if __name__ == '__main__':
 
         total_loss = 0.0
         total_ssl_loss = 0.0
+        epoch_meta_sid = None
+        if args.episodic_source_holdout:
+            epoch_meta_sid = sorted(train_subject_ids)[(epoch - 1) % len(train_subject_ids)]
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{args.num_epochs} [Train]"):
             eeg_batch = batch[0].to(device)
             image_feature_batch = batch[1].to(device)
@@ -492,15 +497,42 @@ if __name__ == '__main__':
             image_feature_batch = img_projector(image_feature_batch)
             text_feature_batch = text_projector(text_feature_batch)
 
-            positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-            loss = compute_cross_modal_loss(
-                criterion,
-                eeg_feature_batch,
-                image_feature_batch,
-                text_feature_batch,
-                positive_mask,
-                args.multi_positive_loss
-            )
+            if args.episodic_source_holdout:
+                meta_mask = subject_id_batch == epoch_meta_sid
+                base_mask = ~meta_mask
+                if torch.sum(base_mask) == 0:
+                    base_mask = torch.ones_like(meta_mask, dtype=torch.bool)
+                    meta_mask = torch.zeros_like(meta_mask, dtype=torch.bool)
+                base_positive_mask = build_image_positive_mask(object_idx_batch[base_mask], image_idx_batch[base_mask])
+                loss = compute_cross_modal_loss(
+                    criterion,
+                    eeg_feature_batch[base_mask],
+                    image_feature_batch[base_mask],
+                    text_feature_batch[base_mask],
+                    base_positive_mask,
+                    args.multi_positive_loss
+                )
+                if torch.any(meta_mask):
+                    meta_positive_mask = build_image_positive_mask(object_idx_batch[meta_mask], image_idx_batch[meta_mask])
+                    meta_loss = compute_cross_modal_loss(
+                        criterion,
+                        eeg_feature_batch[meta_mask],
+                        image_feature_batch[meta_mask],
+                        text_feature_batch[meta_mask],
+                        meta_positive_mask,
+                        args.multi_positive_loss
+                    )
+                    loss = loss + args.episodic_lambda * meta_loss
+            else:
+                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
+                loss = compute_cross_modal_loss(
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_batch,
+                    text_feature_batch,
+                    positive_mask,
+                    args.multi_positive_loss
+                )
 
             ssl_loss = eeg_feature_batch.new_tensor(0.0)
             if eeg_ssl_projector is not None:

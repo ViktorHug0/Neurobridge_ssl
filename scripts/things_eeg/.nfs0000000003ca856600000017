@@ -20,11 +20,8 @@ OUTPUT_DIR="./results/things_eeg/inter-subjects"
 
 # Default extra arguments (can be overridden by environment variable EXTRA_ARGS)
 # Baseline run should set EXTRA_ARGS to an empty string.
-DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256"
+DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256 --adv_lambda 0.1 --style_lambda 0.1 --decor_lambda 0.01 --coral_lambda 0.01"
 EXTRA_ARGS=${EXTRA_ARGS-$DEFAULT_EXTRA_ARGS}
-if [ "${EPISODIC_SOURCE_HOLDOUT:-0}" = "1" ]; then
-    EXTRA_ARGS="$EXTRA_ARGS --episodic_source_holdout --episodic_lambda ${EPISODIC_LAMBDA:-0.2}"
-fi
 
 # Default seed (can be overridden by environment variable SEED)
 SEED=${SEED:-2025}
