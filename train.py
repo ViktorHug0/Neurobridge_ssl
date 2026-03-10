@@ -26,6 +26,7 @@ from module.loss import ContrastiveLoss
 from module.util import retrieve_all
 from module.projector import *
 from module.sampler import GroupedImageBatchSampler
+from module.domain_generalization import SubjectClassifier, grad_reverse, decorrelation_loss, coral_subject_loss
 from module.eeg_augmentation import RandomTimeShift, RandomGaussianNoise, RandomChannelDropout, RandomSmooth
 
 
@@ -127,7 +128,9 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='./result', type=str)
     parser.add_argument('--output_name', default=None, type=str)
     parser.add_argument('--train_subject_ids', default=[8], nargs='+', type=int)
+    parser.add_argument('--val_subject_ids', default=[], nargs='*', type=int)
     parser.add_argument('--test_subject_ids', default=[8], nargs='+', type=int)
+    parser.add_argument('--strict_dg', action='store_true')
     parser.add_argument('--data_average', action='store_true')
     parser.add_argument('--data_random', action='store_true')
     parser.add_argument('--init_temperature', default=0.07, type=float)
@@ -143,6 +146,11 @@ if __name__ == '__main__':
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--ssl_projector_dim', default=128, type=int, help='bottleneck dimension for the EEG-only SSL head')
+    parser.add_argument('--style_dim', default=128, type=int, help='style head dimension')
+    parser.add_argument('--adv_lambda', default=0.0, type=float, help='subject adversarial loss weight on content')
+    parser.add_argument('--style_lambda', default=0.0, type=float, help='subject classification loss weight on style')
+    parser.add_argument('--decor_lambda', default=0.0, type=float, help='content-style decorrelation loss weight')
+    parser.add_argument('--coral_lambda', default=0.0, type=float, help='source-subject CORAL loss weight on content')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
     parser.add_argument("--selected_channels", default=[], nargs='*', type=str, help="selected EEG channels, empty means all channels")
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
@@ -212,6 +220,10 @@ if __name__ == '__main__':
 
     if args.grouped_batch_sampler and args.data_random:
         raise ValueError("Grouped batching requires deterministic indices. Disable --data_random when using --grouped_batch_sampler.")
+    if args.strict_dg and len(args.val_subject_ids) == 0:
+        raise ValueError("Strict DG requires --val_subject_ids.")
+    if any(s in args.test_subject_ids for s in args.val_subject_ids):
+        raise ValueError("Validation subjects must not overlap test subjects.")
 
     print('\n>>> Loading Train Data <<<')
     if args.eeg_aug:
@@ -226,8 +238,12 @@ if __name__ == '__main__':
     else:
         eeg_transform = None
 
+    train_subject_ids = [sid for sid in args.train_subject_ids if sid not in set(args.val_subject_ids)]
+    if len(train_subject_ids) == 0:
+        raise ValueError("No training subjects left after removing validation subjects.")
+
     train_dataset = EEGPreImageDataset(
-        args.train_subject_ids,
+        train_subject_ids,
         args.eeg_data_dir,
         args.selected_channels,
         args.time_window,
@@ -274,6 +290,28 @@ if __name__ == '__main__':
             drop_last=True,
             num_workers=args.num_workers
         )
+
+    val_dataloader = None
+    if len(args.val_subject_ids) > 0:
+        print('\n>>> Loading Val Data <<<')
+        val_dataset = EEGPreImageDataset(
+            args.val_subject_ids,
+            args.eeg_data_dir,
+            args.selected_channels,
+            args.time_window,
+            args.image_feature_dir,
+            args.text_feature_dir,
+            args.image_aug,
+            args.aug_image_feature_dirs,
+            True,
+            False,
+            eeg_transform,
+            False,
+            args.image_test_aug,
+            args.eeg_test_aug,
+            args.frozen_eeg_prior
+        )
+        val_dataloader = DataLoader(val_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
     print('\n>>> Loading Test Data <<<')
     test_dataset = EEGPreImageDataset(
@@ -326,6 +364,12 @@ if __name__ == '__main__':
     )
     log(f'Projector trainable parameters: {projector_params / 1e6:.2f}M')
 
+    style_projector = ProjectorLinear(feature_dim, args.style_dim).to(device)
+    subject_id_to_idx = {sid: i for i, sid in enumerate(sorted(train_subject_ids))}
+    content_subject_classifier = SubjectClassifier(args.feature_dim, len(subject_id_to_idx)).to(device)
+    style_subject_classifier = SubjectClassifier(args.style_dim, len(subject_id_to_idx)).to(device)
+    subject_criterion = torch.nn.CrossEntropyLoss()
+
     eeg_ssl_projector = None
     if args.ssl_lambda > 0:
         eeg_ssl_projector = ProjectorMLP(feature_dim, args.ssl_projector_dim).to(device)
@@ -345,7 +389,15 @@ if __name__ == '__main__':
     ).to(device)
     log(str(criterion))
 
-    trainable_parameters = list(model.parameters()) + list(eeg_projector.parameters()) + list(img_projector.parameters()) + list(text_projector.parameters())
+    trainable_parameters = (
+        list(model.parameters())
+        + list(eeg_projector.parameters())
+        + list(img_projector.parameters())
+        + list(text_projector.parameters())
+        + list(style_projector.parameters())
+        + list(content_subject_classifier.parameters())
+        + list(style_subject_classifier.parameters())
+    )
     if eeg_ssl_projector is not None:
         trainable_parameters.extend(list(eeg_ssl_projector.parameters()))
     if args.t_learnable:
@@ -355,15 +407,67 @@ if __name__ == '__main__':
 
     best_top1_acc = 0.0
     best_top5_acc = 0.0
-    best_test_loss = float('inf')
-    best_test_epoch = 0
+    best_select_loss = float('inf')
+    best_select_epoch = 0
+    best_val_top1_acc = 0.0
+    best_val_top5_acc = 0.0
+    best_test_top1_at_select = 0.0
+    best_test_top5_at_select = 0.0
     history = {'epoch': [], 'train_loss': [], 'test_loss': [], 'top1_acc': []}
+
+    def evaluate_split(split_dataloader, split_name):
+        total_loss = 0.0
+        eeg_feature_list = []
+        image_feature_list = []
+        with torch.no_grad():
+            for batch in split_dataloader:
+                eeg_batch = batch[0].to(device)
+                image_feature_batch = batch[1].to(device)
+                text_feature_batch = batch[2].to(device)
+                subject_id_batch = batch[3].to(device)
+                object_idx_batch = batch[4].to(device)
+                image_idx_batch = batch[5].to(device)
+
+                if args.eeg_encoder_type == 'ATM':
+                    eeg_backbone_batch = model(eeg_batch, subject_id_batch)
+                else:
+                    eeg_backbone_batch = model(eeg_batch)
+
+                eeg_feature_batch = eeg_projector(eeg_backbone_batch)
+                image_feature_batch = img_projector(image_feature_batch)
+                text_feature_batch = text_projector(text_feature_batch)
+                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
+                loss = compute_cross_modal_loss(
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_batch,
+                    text_feature_batch,
+                    positive_mask,
+                    args.multi_positive_loss
+                )
+                total_loss += loss.item()
+                eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
+                image_feature_list.append(image_feature_batch.cpu().numpy())
+
+        avg_loss = total_loss / len(split_dataloader)
+        eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
+        image_feature_all = np.concatenate(image_feature_list, axis=0)
+        top5_count, top1_count, total = retrieve_all(eeg_feature_all, image_feature_all, args.data_average)
+        top5_acc = top5_count / total * 100
+        top1_acc = top1_count / total * 100
+        writer.add_scalar(f'Loss/{split_name}', avg_loss, epoch)
+        writer.add_scalar(f'Acc/top1_{split_name}', top1_acc, epoch)
+        writer.add_scalar(f'Acc/top5_{split_name}', top5_acc, epoch)
+        return avg_loss, top1_acc, top5_acc
 
     for epoch in range(1, args.num_epochs + 1):
         model.train()
         eeg_projector.train()
         img_projector.train()
         text_projector.train()
+        style_projector.train()
+        content_subject_classifier.train()
+        style_subject_classifier.train()
         if eeg_ssl_projector is not None:
             eeg_ssl_projector.train()
 
@@ -384,6 +488,7 @@ if __name__ == '__main__':
                 eeg_backbone_batch = model(eeg_batch)
 
             eeg_feature_batch = eeg_projector(eeg_backbone_batch)
+            eeg_style_batch = style_projector(eeg_backbone_batch)
             image_feature_batch = img_projector(image_feature_batch)
             text_feature_batch = text_projector(text_feature_batch)
 
@@ -405,6 +510,25 @@ if __name__ == '__main__':
                 loss = loss + args.ssl_lambda * ssl_loss
                 total_ssl_loss += ssl_loss.item()
 
+            subject_idx_batch = torch.tensor(
+                [subject_id_to_idx[int(s.item())] for s in subject_id_batch],
+                device=device,
+                dtype=torch.long,
+            )
+            adv_logits = content_subject_classifier(grad_reverse(eeg_feature_batch, 1.0))
+            style_logits = style_subject_classifier(eeg_style_batch)
+            adv_loss = subject_criterion(adv_logits, subject_idx_batch)
+            style_loss = subject_criterion(style_logits, subject_idx_batch)
+            decor_loss = decorrelation_loss(eeg_feature_batch, eeg_style_batch)
+            coral_loss = coral_subject_loss(eeg_feature_batch, subject_id_batch)
+            loss = (
+                loss
+                + args.adv_lambda * adv_loss
+                + args.style_lambda * style_loss
+                + args.decor_lambda * decor_loss
+                + args.coral_lambda * coral_loss
+            )
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -420,6 +544,9 @@ if __name__ == '__main__':
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'eeg_projector_state_dict': eeg_projector.state_dict(),
+                'style_projector_state_dict': style_projector.state_dict(),
+                'content_subject_classifier_state_dict': content_subject_classifier.state_dict(),
+                'style_subject_classifier_state_dict': style_subject_classifier.state_dict(),
                 'img_projector_state_dict': img_projector.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': avg_loss,
@@ -432,55 +559,18 @@ if __name__ == '__main__':
         eeg_projector.eval()
         img_projector.eval()
         text_projector.eval()
+        style_projector.eval()
+        content_subject_classifier.eval()
+        style_subject_classifier.eval()
         if eeg_ssl_projector is not None:
             eeg_ssl_projector.eval()
-
-        total_test_loss = 0.0
-        eeg_feature_list = []
-        image_feature_list = []
-
-        with torch.no_grad():
-            for batch in test_dataloader:
-                eeg_batch = batch[0].to(device)
-                image_feature_batch = batch[1].to(device)
-                text_feature_batch = batch[2].to(device)
-                subject_id_batch = batch[3].to(device)
-                object_idx_batch = batch[4].to(device)
-                image_idx_batch = batch[5].to(device)
-
-                if args.eeg_encoder_type == 'ATM':
-                    eeg_backbone_batch = model(eeg_batch, subject_id_batch)
-                else:
-                    eeg_backbone_batch = model(eeg_batch)
-
-                eeg_feature_batch = eeg_projector(eeg_backbone_batch)
-                image_feature_batch = img_projector(image_feature_batch)
-                text_feature_batch = text_projector(text_feature_batch)
-
-                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-                loss = compute_cross_modal_loss(
-                    criterion,
-                    eeg_feature_batch,
-                    image_feature_batch,
-                    text_feature_batch,
-                    positive_mask,
-                    args.multi_positive_loss
-                )
-                total_test_loss += loss.item()
-                eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
-                image_feature_list.append(image_feature_batch.cpu().numpy())
-
-        avg_test_loss = total_test_loss / len(test_dataloader)
-        writer.add_scalar('Loss/test', avg_test_loss, epoch)
-
-        eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
-        image_feature_all = np.concatenate(image_feature_list, axis=0)
-        top5_count, top1_count, total = retrieve_all(eeg_feature_all, image_feature_all, args.data_average)
-        top5_acc = top5_count / total * 100
-        top1_acc = top1_count / total * 100
-        writer.add_scalar('Acc/top1_test', top1_acc, epoch)
-        writer.add_scalar('Acc/top5_test', top5_acc, epoch)
-        log(f"top5 acc {top5_acc:.2f}%\ttop1 acc {top1_acc:.2f}%\tTest Loss: {avg_test_loss:.4f}")
+        avg_test_loss, top1_acc, top5_acc = evaluate_split(test_dataloader, 'test')
+        log(f"[test] top5 acc {top5_acc:.2f}%\ttop1 acc {top1_acc:.2f}%\tLoss: {avg_test_loss:.4f}")
+        if val_dataloader is not None:
+            avg_val_loss, val_top1_acc, val_top5_acc = evaluate_split(val_dataloader, 'val')
+            log(f"[val] top5 acc {val_top5_acc:.2f}%\ttop1 acc {val_top1_acc:.2f}%\tLoss: {avg_val_loss:.4f}")
+        else:
+            avg_val_loss, val_top1_acc, val_top5_acc = avg_test_loss, top1_acc, top5_acc
 
         history['epoch'].append(epoch)
         history['train_loss'].append(avg_loss)
@@ -488,24 +578,31 @@ if __name__ == '__main__':
         history['top1_acc'].append(top1_acc)
 
         is_better = False
-        if avg_test_loss < best_test_loss:
+        if avg_val_loss < best_select_loss:
             is_better = True
-        elif avg_test_loss == best_test_loss and top1_acc > best_top1_acc:
+        elif avg_val_loss == best_select_loss and val_top1_acc > best_val_top1_acc:
             is_better = True
 
         if is_better:
-            best_test_loss = avg_test_loss
+            best_select_loss = avg_val_loss
+            best_val_top1_acc = val_top1_acc
+            best_val_top5_acc = val_top5_acc
             best_top5_acc = top5_acc
             best_top1_acc = top1_acc
-            best_test_epoch = epoch
+            best_test_top1_at_select = top1_acc
+            best_test_top5_at_select = top5_acc
+            best_select_epoch = epoch
             if args.save_weights:
                 checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'eeg_projector_state_dict': eeg_projector.state_dict(),
+                    'style_projector_state_dict': style_projector.state_dict(),
+                    'content_subject_classifier_state_dict': content_subject_classifier.state_dict(),
+                    'style_subject_classifier_state_dict': style_subject_classifier.state_dict(),
                     'img_projector_state_dict': img_projector.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': avg_test_loss,
+                    'loss': avg_val_loss,
                 }
                 if eeg_ssl_projector is not None:
                     checkpoint['eeg_ssl_projector_state_dict'] = eeg_ssl_projector.state_dict()
@@ -516,10 +613,16 @@ if __name__ == '__main__':
     result_dict = {
         'top1 acc': f'{top1_acc:.2f}',
         'top5 acc': f'{top5_acc:.2f}',
-        'best top1 acc': f'{best_top1_acc:.2f}',
-        'best top5 acc': f'{best_top5_acc:.2f}',
-        'best test loss': f'{best_test_loss:.4f}',
-        'best epoch': best_test_epoch,
+        'best top1 acc': f'{best_test_top1_at_select:.2f}',
+        'best top5 acc': f'{best_test_top5_at_select:.2f}',
+        'best val loss': f'{best_select_loss:.4f}',
+        'best val top1 acc': f'{best_val_top1_acc:.2f}',
+        'best val top5 acc': f'{best_val_top5_acc:.2f}',
+        'best epoch': best_select_epoch,
     }
     pd.DataFrame(result_dict, index=[0]).to_csv(os.path.join(log_dir, 'result.csv'), index=False)
-    log(f'best test loss: {best_test_loss:.4f} top5 acc: {best_top5_acc:.2f} top1 acc: {best_top1_acc:.2f} at epoch {best_test_epoch}')
+    log(
+        f'best val loss: {best_select_loss:.4f} '
+        f'best test top5/top1: {best_test_top5_at_select:.2f}/{best_test_top1_at_select:.2f} '
+        f'at epoch {best_select_epoch}'
+    )
