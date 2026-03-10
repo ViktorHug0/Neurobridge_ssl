@@ -17,6 +17,11 @@ PROJECTOR="linear"
 FEATURE_DIM=512
 OUTPUT_DIR="./results/things_meg/inter-subjects"
 
+# Create a dedicated sub-folder for this inter-subject run
+RUN_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+RUN_DIR="${OUTPUT_DIR}/${RUN_TIMESTAMP}"
+mkdir -p "$RUN_DIR"
+
 for SUB_ID in {1..4}
 do
     OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
@@ -43,7 +48,7 @@ do
         --text_feature_dir "$TEXT_FEATURE_DIR" \
         --eeg_data_dir "$EEG_DATA_DIR" \
         --device "$DEVICE"  \
-        --output_dir "$OUTPUT_DIR" \
+        --output_dir "$RUN_DIR" \
         --selected_channels "${SELECTED_CHANNELS[@]}" \
         --image_aug \
         --aug_image_feature_dirs "./data/things_meg/image_feature/RN50/GaussianBlur-GaussianNoise-LowResolution-Mosaic" \
@@ -57,6 +62,7 @@ do
         --data_average \
         --save_weights \
         --seed 2025;
-done
 
-python compute_avg_results.py --result_dir "$OUTPUT_DIR";
+    # Dynamically update the summary CSV after each subject run
+    python compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
+done

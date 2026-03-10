@@ -6,6 +6,7 @@ import pandas as pd
 # Get input arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--result_dir', default="", type=str)
+parser.add_argument('--output_name', default="avg_results.csv", type=str)
 
 args = parser.parse_args()
 
@@ -49,6 +50,6 @@ def extract_sub_num(x):
 all_data = all_data.sort_values(by="sub", key=lambda col: col.map(extract_sub_num))
 
 # Save the merged result
-all_data.to_csv(os.path.join(args.result_dir, 'avg_results.csv'), index=False)
+all_data.to_csv(os.path.join(args.result_dir, args.output_name), index=False)
 
 print(all_data)

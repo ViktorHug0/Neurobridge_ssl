@@ -42,7 +42,10 @@ class ContrastiveLoss(nn.Module):
 
         log_probs = torch.log_softmax(logits, dim=1)
         positives = positive_mask[valid_rows]
-        positive_log_probs = log_probs[valid_rows] * positives
+        
+        # Avoid nan from 0 * -inf by using torch.where to mask out non-positives
+        positive_log_probs = torch.where(positives, log_probs[valid_rows], torch.zeros_like(log_probs[valid_rows]))
+        
         loss_per_row = -positive_log_probs.sum(dim=1) / positives.sum(dim=1).clamp_min(1)
         return loss_per_row.mean()
 
