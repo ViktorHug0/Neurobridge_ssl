@@ -20,21 +20,63 @@ class ContrastiveLoss(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / init_temperature), requires_grad=learnable)
         self.softplus = nn.Softplus()
 
-    def forward(self, eeg_feature, image_feature, text_feature):
-        # L2 normalize embeddings
+    def _get_logit_scale(self):
+        if self.is_softplus:
+            return self.softplus(self.logit_scale)
+        return torch.exp(self.logit_scale)
+
+    def _normalize_inputs(self, eeg_feature, image_feature, text_feature=None):
         if self.eeg_l2norm:
             eeg_feature = F.normalize(eeg_feature, p=2, dim=1)
-        if self.img_l2norm:
+        if image_feature is not None and self.img_l2norm:
             image_feature = F.normalize(image_feature, p=2, dim=1)
-        if self.beta != 1.0:
+        if text_feature is not None and self.text_l2norm:
+            text_feature = F.normalize(text_feature, p=2, dim=1)
+        return eeg_feature, image_feature, text_feature
+
+    @staticmethod
+    def _multi_positive_cross_entropy(logits, positive_mask):
+        valid_rows = positive_mask.any(dim=1)
+        if not torch.any(valid_rows):
+            return logits.new_tensor(0.0)
+
+        log_probs = torch.log_softmax(logits, dim=1)
+        positives = positive_mask[valid_rows]
+        positive_log_probs = log_probs[valid_rows] * positives
+        loss_per_row = -positive_log_probs.sum(dim=1) / positives.sum(dim=1).clamp_min(1)
+        return loss_per_row.mean()
+
+    def multi_positive_pair_loss(self, query_feature, key_feature, positive_mask, key_is_text=False):
+        if self.eeg_l2norm:
+            query_feature = F.normalize(query_feature, p=2, dim=1)
+        if key_is_text:
             if self.text_l2norm:
-                text_feature = F.normalize(text_feature, p=2, dim=1)
+                key_feature = F.normalize(key_feature, p=2, dim=1)
+        elif self.img_l2norm:
+            key_feature = F.normalize(key_feature, p=2, dim=1)
+        logit_scale = self._get_logit_scale()
+        logits = torch.matmul(query_feature, key_feature.T) * logit_scale
+        loss_qk = self._multi_positive_cross_entropy(logits, positive_mask)
+        loss_kq = self._multi_positive_cross_entropy(logits.T, positive_mask.T)
+        return (loss_qk + loss_kq) / 2
+
+    def self_similarity_loss(self, feature, positive_mask):
+        if self.eeg_l2norm:
+            feature = F.normalize(feature, p=2, dim=1)
+        logit_scale = self._get_logit_scale()
+        logits = torch.matmul(feature, feature.T) * logit_scale
+        logits = logits.masked_fill(torch.eye(logits.shape[0], dtype=torch.bool, device=logits.device), float('-inf'))
+        positive_mask = positive_mask.clone()
+        positive_mask.fill_diagonal_(False)
+        return self._multi_positive_cross_entropy(logits, positive_mask)
+
+    def forward(self, eeg_feature, image_feature, text_feature):
+        eeg_feature, image_feature, text_feature = self._normalize_inputs(
+            eeg_feature, image_feature, text_feature if self.beta != 1.0 else None
+        )
 
         # Calculate similarity matrix (N x N)
-        if self.is_softplus:
-            logit_scale = self.softplus(self.logit_scale)
-        else:
-            logit_scale = torch.exp(self.logit_scale)
+        logit_scale = self._get_logit_scale()
         similarity_matrix_ie = torch.matmul(eeg_feature, image_feature.T) * logit_scale
         if self.beta != 1.0:
             similarity_matrix_te = torch.matmul(eeg_feature, text_feature.T) * logit_scale
