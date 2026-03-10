@@ -84,9 +84,9 @@ def save_training_plot(history, out_path):
     fig, ax_loss = plt.subplots(figsize=(9, 5))
     ax_acc = ax_loss.twinx()
 
-    ax_loss.plot(epochs, history['train_loss'], label='Train Loss', color='tab:blue', linewidth=2)
-    ax_loss.plot(epochs, history['test_loss'], label='Test Loss', color='tab:red', linewidth=2)
-    ax_acc.plot(epochs, history['top1_acc'], label='Top-1 Acc', color='tab:green', linewidth=2)
+    ax_loss.plot(epochs, history['train_loss'], label='Train Loss', color='blue', linewidth=2)
+    ax_loss.plot(epochs, history['test_loss'], label='Test Loss', color='blue', linestyle='--', linewidth=2)
+    ax_acc.plot(epochs, history['top1_acc'], label='Top-1 Acc', color='black', linestyle='--', linewidth=2)
 
     ax_loss.set_xlabel('Epoch')
     ax_loss.set_ylabel('Loss')
