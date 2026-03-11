@@ -20,7 +20,7 @@ OUTPUT_DIR="./results/things_eeg/inter-subjects"
 
 # Default extra arguments (can be overridden by environment variable EXTRA_ARGS)
 # Baseline run should set EXTRA_ARGS to an empty string.
-DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256 --adv_lambda 0.1 --style_lambda 0.1 --decor_lambda 0.01 --coral_lambda 0.01"
+DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256 "
 EXTRA_ARGS=${EXTRA_ARGS-$DEFAULT_EXTRA_ARGS}
 
 # Default seed (can be overridden by environment variable SEED)
@@ -36,15 +36,10 @@ do
     OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
     echo "Training subject ${SUB_ID}..."
 
-    VAL_ID=1
-    if [ "$SUB_ID" -eq 1 ]; then
-        VAL_ID=2
-    fi
-
     TRAIN_IDS=""
     for i in {1..10}
     do
-        if [ "$i" -ne "$SUB_ID" ] && [ "$i" -ne "$VAL_ID" ]; then
+        if [ "$i" -ne "$SUB_ID" ]; then
             TRAIN_IDS+="$i "
         fi
     done
@@ -56,9 +51,7 @@ do
         --output_name "$OUTPUT_NAME" \
         --eeg_encoder_type "$EEG_ENCODER_TYPE" \
         --train_subject_ids $TRAIN_IDS \
-        --val_subject_ids $VAL_ID \
         --test_subject_ids $SUB_ID \
-        --strict_dg \
         --softplus \
         --num_epochs "$NUM_EPOCHS" \
         --image_feature_dir "$IMAGE_FEATURE_DIR" \
