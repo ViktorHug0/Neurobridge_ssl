@@ -11,7 +11,7 @@ DEVICE="cuda:0"
 EEG_ENCODER_TYPE="TSConv"
 BATCH_SIZE=1024
 LEARNING_RATE=1e-4
-NUM_EPOCHS=40
+NUM_EPOCHS=30
 NUM_WORKERS=4
 SELECTED_CHANNELS=() # "P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
 PROJECTOR="linear"
@@ -20,7 +20,7 @@ OUTPUT_DIR="./results/things_eeg/inter-subjects"
 
 # Default extra arguments (can be overridden by environment variable EXTRA_ARGS)
 # Baseline run should set EXTRA_ARGS to an empty string.
-DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256"
+DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 6 --ssl_lambda 1.0 --ssl_projector_dim 256 --adv_lambda 0.1 --style_lambda 0.1 --decor_lambda 0.01 --coral_lambda 0.01"
 EXTRA_ARGS=${EXTRA_ARGS-$DEFAULT_EXTRA_ARGS}
 if [ "${EPISODIC_SOURCE_HOLDOUT:-0}" = "1" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --episodic_source_holdout --episodic_lambda ${EPISODIC_LAMBDA:-0.2}"
