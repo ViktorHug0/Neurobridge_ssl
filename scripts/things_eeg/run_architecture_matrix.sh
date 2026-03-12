@@ -19,8 +19,8 @@ mkdir -p "${MATRIX_OUTPUT_DIR}"
 
 # Deterministic defaults; override externally if desired.
 BASELINE_SEEDS=(${BASELINE_SEEDS:-2025})
-A_SEEDS=(${A_SEEDS:-2101 2102 2103 2104 2105})
-B_SEEDS=(${B_SEEDS:-2201 2202 2203 2204 2205})
+A_SEEDS=(${A_SEEDS:-2101})
+B_SEEDS=(${B_SEEDS:-2201})
 
 append_unified_row () {
     local run_index="$1"
@@ -138,21 +138,21 @@ run_one () {
 run_counter=0
 
 # 1 baseline run
-for seed in "${BASELINE_SEEDS[@]}"; do
-    run_counter=$((run_counter + 1))
-    run_one \
-        "${run_counter}" \
-        "baseline" \
-        "baseline" \
-        "${seed}" \
-        "" \
-        "0" \
-        "0" \
-        "0" \
-        "0" \
-        "0.0" \
-        "0.0"
-done
+# for seed in "${BASELINE_SEEDS[@]}"; do
+#     run_counter=$((run_counter + 1))
+#     run_one \
+#         "${run_counter}" \
+#         "baseline" \
+#         "baseline" \
+#         "${seed}" \
+#         "" \
+#         "0" \
+#         "0" \
+#         "0" \
+#         "0" \
+#         "0.0" \
+#         "0.0"
+# done
 
 # 5 runs architecture A
 for seed in "${A_SEEDS[@]}"; do

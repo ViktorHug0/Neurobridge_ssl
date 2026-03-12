@@ -26,8 +26,18 @@ for run in sorted(os.listdir(args.result_dir)):
 # Concatenate all DataFrames
 all_data = pd.concat(df_list, ignore_index=True)
 
-# Extract numeric columns (excluding 'sub' and 'best epoch')
-numeric_cols = all_data.columns.difference(['sub', 'best epoch'])
+# Extract numeric columns (excluding 'sub', 'best epoch', and 'architecture')
+numeric_cols = all_data.select_dtypes(include=['number']).columns.tolist()
+# Also include columns that look like numbers but might be objects/strings
+for col in all_data.columns:
+    if col in ['sub', 'best epoch', 'architecture']:
+        continue
+    if col not in numeric_cols:
+        try:
+            pd.to_numeric(all_data[col])
+            numeric_cols.append(col)
+        except (ValueError, TypeError):
+            continue
 
 # Convert to float, keep two decimal places and pad with zeros (convert to string)
 for col in numeric_cols:
