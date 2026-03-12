@@ -111,3 +111,18 @@ class ContrastiveLoss(nn.Module):
             loss = loss_contrastive
         
         return loss
+
+
+def cross_covariance_penalty(z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
+    """
+    Penalize linear correlation between two representations.
+    This is used in the factorized architecture to encourage
+    z_inv and z_sub to encode different factors.
+    """
+    if z_a.numel() == 0 or z_b.numel() == 0:
+        return z_a.new_tensor(0.0)
+
+    z_a = z_a - z_a.mean(dim=0, keepdim=True)
+    z_b = z_b - z_b.mean(dim=0, keepdim=True)
+    cov = torch.matmul(z_a.T, z_b) / max(z_a.shape[0] - 1, 1)
+    return (cov ** 2).mean()

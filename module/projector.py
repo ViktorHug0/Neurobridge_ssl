@@ -30,3 +30,16 @@ class ProjectorDirect(nn.Module):
 
     def forward(self, x):
         return x
+
+
+class SubjectClassifier(nn.Module):
+    def __init__(self, input_dim, num_subjects):
+        super(SubjectClassifier, self).__init__()
+        self.classifier = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.ReLU(),
+            nn.Linear(input_dim, num_subjects),
+        )
+
+    def forward(self, x):
+        return self.classifier(x)
