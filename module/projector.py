@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 
 class ProjectorLinear(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -30,6 +31,22 @@ class ProjectorDirect(nn.Module):
 
     def forward(self, x):
         return x
+
+
+class DisentangledNetwork(nn.Module):
+    """CLAP-style residual MLP with zero-initialized output for content extraction."""
+    def __init__(self, d_in, d_mid, alpha_inference=1.0):
+        super().__init__()
+        self.alpha_inference = alpha_inference
+        self.linear1 = nn.Linear(d_in, d_mid)
+        self.act = nn.SiLU()
+        self.linear2 = nn.Linear(d_mid, d_in, bias=False)
+        nn.init.zeros_(self.linear2.weight)
+
+    def forward(self, x):
+        alpha = 1.0 if self.training else self.alpha_inference
+        h = self.linear2(self.act(self.linear1(x)))
+        return F.normalize(x + alpha * h, dim=-1)
 
 
 class SubjectClassifier(nn.Module):

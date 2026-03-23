@@ -228,7 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--ssl_projector_dim', default=128, type=int, help='bottleneck dimension for the EEG-only SSL head')
     parser.add_argument('--ssl_in_clip_space', action='store_true', help='compute EEG-only SSL directly on CL-aligned EEG features (no separate SSL head)')
-    parser.add_argument('--architecture', type=str, choices=['baseline', 'invariant_bottleneck', 'factorized'], default='baseline', help='training architecture')
+    parser.add_argument('--architecture', type=str, choices=['baseline', 'invariant_bottleneck', 'factorized', 'disentangled'], default='baseline', help='training architecture')
     parser.add_argument('--ssl_pretrain_epochs', default=0, type=int, help='stage-1 EEG-only SSL pretraining epochs')
     parser.add_argument('--cl_stage2_epochs', default=0, type=int, help='stage-2 CL training epochs (used by non-baseline architectures)')
     parser.add_argument('--stage3_epochs', default=0, type=int, help='optional stage-3 joint finetuning epochs')
@@ -238,6 +238,7 @@ if __name__ == '__main__':
     parser.add_argument('--sub_dim', default=256, type=int, help='subject branch bottleneck dimension for factorized architecture')
     parser.add_argument('--subject_loss_lambda', default=1.0, type=float, help='weight of factorized subject classification loss')
     parser.add_argument('--ortho_lambda', default=0.0, type=float, help='weight of z_inv/z_sub decorrelation loss')
+    parser.add_argument('--disentangle_alpha', default=1.0, type=float, help='inference-time alpha for disentangled network (CLAP)')
     parser.add_argument('--diagnostic_eval', action='store_true', help='run representation diagnostics each epoch')
     parser.add_argument('--train_eval_batch_size', default=512, type=int, help='batch size for diagnostic train-subject evaluation')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
@@ -425,7 +426,8 @@ if __name__ == '__main__':
 
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
-        'projector', 'feature_dim', 'eeg_backbone_dim', 'ssl_in_clip_space', 'inv_dim', 'sub_dim', 'time_window', 'selected_channels'
+        'projector', 'feature_dim', 'eeg_backbone_dim', 'ssl_in_clip_space', 'inv_dim', 'sub_dim',
+        'disentangle_alpha', 'time_window', 'selected_channels'
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
     inference_config['eeg_sample_points'] = eeg_sample_points
@@ -443,6 +445,10 @@ if __name__ == '__main__':
     eeg_sub_projector = None
     subject_classifier = None
     if args.architecture == 'baseline':
+        eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
+        eeg_ssl_input_dim = backbone_feature_dim
+    elif args.architecture == 'disentangled':
+        eeg_inv_projector = DisentangledNetwork(backbone_feature_dim, args.inv_dim, args.disentangle_alpha).to(device)
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
         eeg_ssl_input_dim = backbone_feature_dim
     elif args.architecture == 'invariant_bottleneck':
@@ -502,7 +508,7 @@ if __name__ == '__main__':
 
     subject_to_index = {sid: idx for idx, sid in enumerate(args.train_subject_ids)}
 
-    if args.architecture == 'baseline':
+    if args.architecture in ('baseline', 'disentangled'):
         stage_schedule = [('joint', args.num_epochs)]
     else:
         stage1_epochs = max(args.ssl_pretrain_epochs, 0)
@@ -540,8 +546,10 @@ if __name__ == '__main__':
         return stage_schedule[-1][0]
 
     def configure_stage(stage_name):
-        if args.architecture == 'baseline':
+        if args.architecture in ('baseline', 'disentangled'):
             active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
+            if eeg_inv_projector is not None:
+                active.add('eeg_inv_projector')
             if eeg_ssl_projector is not None and args.ssl_lambda > 0:
                 active.add('eeg_ssl_projector')
             lr = args.learning_rate
@@ -769,7 +777,7 @@ if __name__ == '__main__':
 
             ssl_enabled = False
             if eeg_ssl_projector is not None or use_ssl_clip_space:
-                if args.architecture == 'baseline':
+                if args.architecture in ('baseline', 'disentangled'):
                     ssl_enabled = args.ssl_lambda > 0
                 else:
                     ssl_enabled = stage in {'stage1_ssl', 'stage3_joint'}

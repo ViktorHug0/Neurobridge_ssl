@@ -24,23 +24,26 @@ SEED="${SEED:-2025}"
 
 mkdir -p "$RUN_ROOT"
 
-ARCHS=("EEGNet" "EEGProject" "TSConv" "EEGTransformer")
+# Disentangled sweep parameters
+SSL_LAMBDAS=(0.1 0.5 1.0)
+ALPHAS=(0.1 0.5 1.0)
+INV_DIM=256
 SUBSET_CHANNELS=("P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
 
 append_average_row() {
-    local arch="$1"
-    local ch_set="$2"
+    local lambda="$1"
+    local alpha="$2"
     local run_dir="$3"
-    python3 - "$UNIFIED_CSV" "$arch" "$ch_set" "$run_dir" <<'PY'
+    python3 - "$UNIFIED_CSV" "$lambda" "$alpha" "$run_dir" <<'PY'
 import csv
 import os
 import sys
 
-out_csv, arch, ch_set, run_dir = sys.argv[1:5]
+out_csv, ssl_lambda, alpha, run_dir = sys.argv[1:5]
 summary_path = os.path.join(run_dir, "inter_subject_summary.csv")
 row = {
-    "arch": arch,
-    "channels": ch_set,
+    "ssl_lambda": ssl_lambda,
+    "alpha": alpha,
     "top1 acc": "",
     "top5 acc": "",
     "best top1 acc": "",
@@ -67,33 +70,23 @@ with open(out_csv, "a", newline="") as f:
 PY
 }
 
-for ARCH in "${ARCHS[@]}"
-do
-    for CH_SET_TYPE in "subset" "all"
-    do
-        if [ "$CH_SET_TYPE" == "subset" ]; then
-            CURRENT_CHANNELS=("${SUBSET_CHANNELS[@]}")
-            CH_LABEL="subset"
-        else
-            CURRENT_CHANNELS=()
-            CH_LABEL="all"
-        fi
+# Fixed encoder for this disentangled sweep
+ARCH="TSConv"
+CH_LABEL="subset"
+CURRENT_CHANNELS=("${SUBSET_CHANNELS[@]}")
 
-        FULL_CONFIG_NAME="${ARCH}_${CH_LABEL}"
+for LAMBDA in "${SSL_LAMBDAS[@]}"
+do
+    for ALPHA in "${ALPHAS[@]}"
+    do
+        FULL_CONFIG_NAME="disentangled_lambda${LAMBDA}_alpha${ALPHA}"
         CONFIG_RUN_DIR="${RUN_ROOT}/${FULL_CONFIG_NAME}_seed${SEED}"
         mkdir -p "$CONFIG_RUN_DIR"
 
         echo "=========================================================="
-        echo "Running Sweep Config: ${FULL_CONFIG_NAME}"
-        echo "Arch: ${ARCH}, Channels: ${CH_LABEL}"
+        echo "Running Disentangled Sweep: ${FULL_CONFIG_NAME}"
+        echo "Lambda: ${LAMBDA}, Alpha: ${ALPHA}, Inv Dim: ${INV_DIM}"
         echo "=========================================================="
-
-        # Adjust batch size for memory-intensive architectures
-        CURRENT_BATCH_SIZE="$BATCH_SIZE"
-        if [ "$ARCH" == "EEGTransformer" ]; then
-            CURRENT_BATCH_SIZE=$((BATCH_SIZE / 4))
-            echo "Reducing batch size to $CURRENT_BATCH_SIZE for EEGTransformer"
-        fi
 
         for SUB_ID in {1..5}
         do
@@ -108,7 +101,11 @@ do
 
             PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
             python3 train.py \
-                --batch_size "$CURRENT_BATCH_SIZE" \
+                --architecture disentangled \
+                --ssl_lambda "$LAMBDA" \
+                --disentangle_alpha "$ALPHA" \
+                --inv_dim "$INV_DIM" \
+                --batch_size "$BATCH_SIZE" \
                 --num_workers "$NUM_WORKERS" \
                 --learning_rate "$LEARNING_RATE" \
                 --output_name "$OUTPUT_NAME" \
@@ -137,7 +134,7 @@ do
             python3 compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
         done
 
-        append_average_row "$ARCH" "$CH_LABEL" "$CONFIG_RUN_DIR"
+        append_average_row "$LAMBDA" "$ALPHA" "$CONFIG_RUN_DIR"
     done
 done
 
