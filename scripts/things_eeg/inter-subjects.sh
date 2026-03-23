@@ -10,96 +10,122 @@ EEG_DATA_DIR="/nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250
 DEVICE="cuda:0"
 EEG_ENCODER_TYPE="TSConv"
 BATCH_SIZE=1024
-LEARNING_RATE=1e-4
-NUM_EPOCHS=30
+LEARNING_RATE=2e-4
+NUM_EPOCHS=50
 NUM_WORKERS=4
-SELECTED_CHANNELS=() # "P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
+SELECTED_CHANNELS=()
 PROJECTOR="linear"
-FEATURE_DIM=512
-OUTPUT_DIR=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
+FEATURE_DIM=64
+EEG_BACKBONE_DIM=64
+OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
-# Default extra arguments (can be overridden by environment variable EXTRA_ARGS)
-# Baseline run should set EXTRA_ARGS to an empty string.
-DEFAULT_EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 10 --ssl_lambda 0.01 --ssl_projector_dim 32 "
-EXTRA_ARGS=${EXTRA_ARGS-$DEFAULT_EXTRA_ARGS}
-
-# Architecture controls (can be overridden by environment variables)
-ARCHITECTURE=${ARCHITECTURE:-baseline}
-SSL_PRETRAIN_EPOCHS=${SSL_PRETRAIN_EPOCHS:-0}
-CL_STAGE2_EPOCHS=${CL_STAGE2_EPOCHS:-0}
-STAGE3_EPOCHS=${STAGE3_EPOCHS:-0}
-FREEZE_ENCODER_STAGE2=${FREEZE_ENCODER_STAGE2:-0}
-INV_DIM=${INV_DIM:-256}
-SUB_DIM=${SUB_DIM:-256}
-SUBJECT_LOSS_LAMBDA=${SUBJECT_LOSS_LAMBDA:-1.0}
-ORTHO_LAMBDA=${ORTHO_LAMBDA:-0.0}
-DIAGNOSTIC_EVAL=${DIAGNOSTIC_EVAL:-0}
-
-FREEZE_FLAG=()
-if [ "$FREEZE_ENCODER_STAGE2" = "1" ]; then
-    FREEZE_FLAG+=(--freeze_encoder_stage2)
-fi
-
-DIAG_FLAG=()
-if [ "$DIAGNOSTIC_EVAL" = "1" ]; then
-    DIAG_FLAG+=(--diagnostic_eval)
-fi
+# Configuration sweep: comparing multi-positive vs standard InfoNCE on main loss
+CONFIG_NAMES=("multi_pos_9" "multi_pos_8" "multi_pos_6" "multi_pos_4" "multi_pos_2" "standard_infonce")
+CONFIG_ARGS=(
+    "--multi_positive_loss --grouped_batch_sampler --samples_per_image 9"
+    "--multi_positive_loss --grouped_batch_sampler --samples_per_image 8"
+    "--multi_positive_loss --grouped_batch_sampler --samples_per_image 6"
+    "--multi_positive_loss --grouped_batch_sampler --samples_per_image 4"
+    "--multi_positive_loss --grouped_batch_sampler --samples_per_image 2"
+    ""
+)
 
 # Default seed (can be overridden by environment variable SEED)
-SEED=${SEED:-2025}
+SEED=${SEED:-2009}
+SSL_LAMBDA=0
 
-# Create a dedicated sub-folder for this inter-subject run
-RUN_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-RUN_DIR="${OUTPUT_DIR}/${RUN_TIMESTAMP}_seed${SEED}"
-mkdir -p "$RUN_DIR"
+# Create a dedicated session folder for this entire execution
+SESSION_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+SESSION_DIR="${OUTPUT_DIR_BASE}/${SESSION_TIMESTAMP}_session_seed${SEED}"
+SESSION_SUMMARY="${SESSION_DIR}/session_summary.csv"
+mkdir -p "$SESSION_DIR"
 
-for SUB_ID in {1..10}
+for c_idx in "${!CONFIG_NAMES[@]}"
 do
-    OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
-    echo "Training subject ${SUB_ID}..."
+    CONFIG_NAME="${CONFIG_NAMES[$c_idx]}"
+    EXTRA_ARGS="${CONFIG_ARGS[$c_idx]}"
+    
+    echo "##########################################################"
+    echo "Running Config: $CONFIG_NAME"
+    echo "Args: $EXTRA_ARGS"
+    echo "##########################################################"
 
-    TRAIN_IDS=""
-    for i in {1..10}
+    # Create a sub-folder for this specific configuration inside the session folder
+    RUN_DIR="${SESSION_DIR}/${CONFIG_NAME}"
+    mkdir -p "$RUN_DIR"
+
+    for SUB_ID in {1..10}
     do
-        if [ "$i" -ne "$SUB_ID" ]; then
-            TRAIN_IDS+="$i "
-        fi
+        OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
+        echo "Training subject ${SUB_ID} with SSL_LAMBDA=${SSL_LAMBDA} ($CONFIG_NAME)..."
+
+        TRAIN_IDS=""
+        for i in {1..10}
+        do
+            if [ "$i" -ne "$SUB_ID" ]; then
+                TRAIN_IDS+="$i "
+            fi
+        done
+
+        python3 train.py \
+            --batch_size "$BATCH_SIZE" \
+            --num_workers "$NUM_WORKERS" \
+            --learning_rate "$LEARNING_RATE" \
+            --output_name "$OUTPUT_NAME" \
+            --eeg_encoder_type "$EEG_ENCODER_TYPE" \
+            --train_subject_ids $TRAIN_IDS \
+            --test_subject_ids $SUB_ID \
+            --softplus \
+            --num_epochs "$NUM_EPOCHS" \
+            --image_feature_dir "$IMAGE_FEATURE_DIR" \
+            --text_feature_dir "$TEXT_FEATURE_DIR" \
+            --eeg_data_dir "$EEG_DATA_DIR" \
+            --device "$DEVICE"  \
+            --output_dir "$RUN_DIR" \
+            --selected_channels "${SELECTED_CHANNELS[@]}" \
+            --img_l2norm \
+            --projector "$PROJECTOR" \
+            --feature_dim "$FEATURE_DIM" \
+            --eeg_backbone_dim "$EEG_BACKBONE_DIM" \
+            --data_average \
+            --save_weights \
+            --ssl_lambda "$SSL_LAMBDA" \
+            $EXTRA_ARGS \
+            --seed "$SEED";
+
+        # Dynamically update the summary CSV after each subject run
+        python3 compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
     done
 
-    python train.py \
-        --batch_size "$BATCH_SIZE" \
-        --num_workers "$NUM_WORKERS" \
-        --learning_rate "$LEARNING_RATE" \
-        --output_name "$OUTPUT_NAME" \
-        --eeg_encoder_type "$EEG_ENCODER_TYPE" \
-        --train_subject_ids $TRAIN_IDS \
-        --test_subject_ids $SUB_ID \
-        --softplus \
-        --num_epochs "$NUM_EPOCHS" \
-        --image_feature_dir "$IMAGE_FEATURE_DIR" \
-        --text_feature_dir "$TEXT_FEATURE_DIR" \
-        --eeg_data_dir "$EEG_DATA_DIR" \
-        --device "$DEVICE"  \
-        --output_dir "$RUN_DIR" \
-        --selected_channels "${SELECTED_CHANNELS[@]}" \
-        --img_l2norm \
-        --projector "$PROJECTOR" \
-        --feature_dim "$FEATURE_DIM" \
-        --data_average \
-        --save_weights \
-        --architecture "$ARCHITECTURE" \
-        --ssl_pretrain_epochs "$SSL_PRETRAIN_EPOCHS" \
-        --cl_stage2_epochs "$CL_STAGE2_EPOCHS" \
-        --stage3_epochs "$STAGE3_EPOCHS" \
-        --inv_dim "$INV_DIM" \
-        --sub_dim "$SUB_DIM" \
-        --subject_loss_lambda "$SUBJECT_LOSS_LAMBDA" \
-        --ortho_lambda "$ORTHO_LAMBDA" \
-        $EXTRA_ARGS \
-        --seed "$SEED" \
-        "${DIAG_FLAG[@]}" \
-        "${FREEZE_FLAG[@]}";
+    # After finishing all subjects for this config, append the Average row to the session summary
+    echo "Collecting average results for $CONFIG_NAME into $SESSION_SUMMARY..."
+    python3 -c "
+import pandas as pd
+import os
+import sys
 
-    # Dynamically update the summary CSV after each subject run
-    python compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
+run_dir = sys.argv[1]
+config_name = sys.argv[2]
+session_summary_path = sys.argv[3]
+
+inter_summary_path = os.path.join(run_dir, 'inter_subject_summary.csv')
+if os.path.exists(inter_summary_path):
+    try:
+        df = pd.read_csv(inter_summary_path)
+        avg_row = df[df['sub'] == 'Average'].copy()
+        if not avg_row.empty:
+            avg_row.insert(0, 'config', config_name)
+            # Optionally remove 'sub' column as it's redundant
+            # avg_row = avg_row.drop(columns=['sub'])
+            
+            header = not os.path.exists(session_summary_path)
+            avg_row.to_csv(session_summary_path, mode='a', index=False, header=header)
+            print(f'Successfully added {config_name} to {session_summary_path}')
+        else:
+            print(f'Warning: No Average row found in {inter_summary_path}')
+    except Exception as e:
+        print(f'Error processing {inter_summary_path}: {e}')
+else:
+    print(f'Warning: {inter_summary_path} not found')
+" "$RUN_DIR" "$CONFIG_NAME" "$SESSION_SUMMARY"
 done

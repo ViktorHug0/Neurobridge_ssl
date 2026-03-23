@@ -227,6 +227,7 @@ if __name__ == '__main__':
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--ssl_projector_dim', default=128, type=int, help='bottleneck dimension for the EEG-only SSL head')
+    parser.add_argument('--ssl_in_clip_space', action='store_true', help='compute EEG-only SSL directly on CL-aligned EEG features (no separate SSL head)')
     parser.add_argument('--architecture', type=str, choices=['baseline', 'invariant_bottleneck', 'factorized'], default='baseline', help='training architecture')
     parser.add_argument('--ssl_pretrain_epochs', default=0, type=int, help='stage-1 EEG-only SSL pretraining epochs')
     parser.add_argument('--cl_stage2_epochs', default=0, type=int, help='stage-2 CL training epochs (used by non-baseline architectures)')
@@ -250,7 +251,8 @@ if __name__ == '__main__':
     parser.add_argument('--eeg_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
     parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'mlp'], default='direct')
-    parser.add_argument('--feature_dim', type=int, default=512, help='output dimension when projector is not direct')
+    parser.add_argument('--feature_dim', type=int, default=512, help='shared alignment-space dimension when projector is not direct')
+    parser.add_argument('--eeg_backbone_dim', type=int, default=0, help='EEG encoder output dimension (0 means use image feature dimension)')
     parser.add_argument('--image_feature_dir', default='/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit', type=str, help='where your image feature are')
     parser.add_argument('--aug_image_feature_dirs', default=[], nargs='+', type=str, help='where your augmentation image feature are')
     parser.add_argument('--text_feature_dir', default='./data/things_eeg/text_feature/BLIP2', type=str, help='where your text feature are')
@@ -341,10 +343,13 @@ if __name__ == '__main__':
     )
 
     eeg_sample_points = train_dataset.num_sample_points
-    feature_dim = train_dataset.image_features.shape[-1]
+    image_feature_dim = train_dataset.image_features.shape[-1]
+    backbone_feature_dim = args.eeg_backbone_dim if args.eeg_backbone_dim > 0 else image_feature_dim
     channels_num = train_dataset.channels_num
     log(f'EEG sample points: {eeg_sample_points}')
-    log(f'feature dimension: {feature_dim}')
+    log(f'image feature dimension: {image_feature_dim}')
+    log(f'EEG backbone output dimension: {backbone_feature_dim}')
+    log(f'alignment feature dimension (--feature_dim): {args.feature_dim}')
     log(f'data length: {len(train_dataset)}')
     log(f'number of channels: {channels_num}')
 
@@ -420,15 +425,16 @@ if __name__ == '__main__':
 
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
-        'projector', 'feature_dim', 'inv_dim', 'sub_dim', 'time_window', 'selected_channels'
+        'projector', 'feature_dim', 'eeg_backbone_dim', 'ssl_in_clip_space', 'inv_dim', 'sub_dim', 'time_window', 'selected_channels'
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
     inference_config['eeg_sample_points'] = eeg_sample_points
-    inference_config['backbone_feature_dim'] = feature_dim
+    inference_config['backbone_feature_dim'] = backbone_feature_dim
+    inference_config['image_feature_dim'] = image_feature_dim
     with open(os.path.join(writer.log_dir, "evaluate_config.json"), 'w') as f:
         json.dump(inference_config, f, indent=4)
 
-    model = build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num).to(device)
+    model = build_eeg_encoder(args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'EEG Encoder trainable parameters: {num_params / 1e6:.2f}M')
     log(str(model))
@@ -437,21 +443,21 @@ if __name__ == '__main__':
     eeg_sub_projector = None
     subject_classifier = None
     if args.architecture == 'baseline':
-        eeg_projector = build_projector(args.projector, feature_dim, args.feature_dim).to(device)
-        eeg_ssl_input_dim = feature_dim
+        eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
+        eeg_ssl_input_dim = backbone_feature_dim
     elif args.architecture == 'invariant_bottleneck':
-        eeg_inv_projector = ProjectorMLP(feature_dim, args.inv_dim).to(device)
+        eeg_inv_projector = ProjectorMLP(backbone_feature_dim, args.inv_dim).to(device)
         eeg_projector = build_projector(args.projector, args.inv_dim, args.feature_dim).to(device)
         eeg_ssl_input_dim = args.inv_dim
     else:
-        eeg_inv_projector = ProjectorMLP(feature_dim, args.inv_dim).to(device)
-        eeg_sub_projector = ProjectorMLP(feature_dim, args.sub_dim).to(device)
+        eeg_inv_projector = ProjectorMLP(backbone_feature_dim, args.inv_dim).to(device)
+        eeg_sub_projector = ProjectorMLP(backbone_feature_dim, args.sub_dim).to(device)
         eeg_projector = build_projector(args.projector, args.inv_dim, args.feature_dim).to(device)
         subject_classifier = SubjectClassifier(args.sub_dim, len(args.train_subject_ids)).to(device)
         eeg_ssl_input_dim = args.inv_dim
 
-    img_projector = build_projector(args.projector, feature_dim, args.feature_dim).to(device)
-    text_projector = build_projector(args.projector, feature_dim, args.feature_dim).to(device)
+    img_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
+    text_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
     projector_params = (
         sum(p.numel() for p in eeg_projector.parameters() if p.requires_grad)
         + sum(p.numel() for p in img_projector.parameters() if p.requires_grad)
@@ -465,15 +471,21 @@ if __name__ == '__main__':
         projector_params += sum(p.numel() for p in subject_classifier.parameters() if p.requires_grad)
     log(f'Projector trainable parameters: {projector_params / 1e6:.2f}M')
 
+    use_ssl_clip_space = args.ssl_in_clip_space
+    if use_ssl_clip_space and args.ssl_projector_dim != 128:
+        log(f"ssl_in_clip_space is enabled; ignoring ssl_projector_dim={args.ssl_projector_dim}.")
+
     eeg_ssl_projector = None
-    if args.ssl_lambda > 0 or (args.architecture != 'baseline' and args.ssl_pretrain_epochs > 0):
+    if (not use_ssl_clip_space) and (args.ssl_lambda > 0 or (args.architecture != 'baseline' and args.ssl_pretrain_epochs > 0)):
         eeg_ssl_projector = ProjectorMLP(eeg_ssl_input_dim, args.ssl_projector_dim).to(device)
         ssl_params = sum(p.numel() for p in eeg_ssl_projector.parameters() if p.requires_grad)
         log(f'EEG-only SSL projector trainable parameters: {ssl_params / 1e6:.2f}M')
         log(f'EEG-only SSL enabled with lambda={args.ssl_lambda:.4f} and bottleneck dim={args.ssl_projector_dim}')
+    elif use_ssl_clip_space and (args.ssl_lambda > 0 or (args.architecture != 'baseline' and args.ssl_pretrain_epochs > 0)):
+        log(f'EEG-only SSL enabled in CL-aligned space with lambda={args.ssl_lambda:.4f} (no separate SSL projector)')
 
-    if args.ssl_pretrain_epochs > 0 and eeg_ssl_projector is None:
-        raise ValueError("ssl_pretrain_epochs > 0 requires SSL head. Set ssl_lambda > 0.")
+    if args.ssl_pretrain_epochs > 0 and eeg_ssl_projector is None and not use_ssl_clip_space:
+        raise ValueError("ssl_pretrain_epochs > 0 requires an SSL path. Set ssl_lambda > 0 or enable --ssl_in_clip_space.")
 
     criterion = ContrastiveLoss(
         args.init_temperature,
@@ -534,7 +546,11 @@ if __name__ == '__main__':
                 active.add('eeg_ssl_projector')
             lr = args.learning_rate
         elif stage_name == 'stage1_ssl':
-            active = {'model', 'eeg_inv_projector', 'eeg_ssl_projector'}
+            active = {'model', 'eeg_inv_projector'}
+            if use_ssl_clip_space:
+                active.add('eeg_projector')
+            else:
+                active.add('eeg_ssl_projector')
             if args.architecture == 'factorized':
                 active.add('eeg_sub_projector')
                 if subject_classifier is not None and args.subject_loss_lambda > 0:
@@ -590,14 +606,18 @@ if __name__ == '__main__':
         }
         if args.architecture == 'baseline':
             output['eeg_feature'] = eeg_projector(eeg_backbone_batch)
-            if eeg_ssl_projector is not None:
+            if use_ssl_clip_space:
+                output['ssl_feature'] = output['eeg_feature']
+            elif eeg_ssl_projector is not None:
                 output['ssl_feature'] = eeg_ssl_projector(eeg_backbone_batch)
             return output
 
         z_inv = eeg_inv_projector(eeg_backbone_batch)
         output['z_inv'] = z_inv
         output['eeg_feature'] = eeg_projector(z_inv)
-        if eeg_ssl_projector is not None:
+        if use_ssl_clip_space:
+            output['ssl_feature'] = output['eeg_feature']
+        elif eeg_ssl_projector is not None:
             output['ssl_feature'] = eeg_ssl_projector(z_inv)
 
         if args.architecture == 'factorized':
@@ -748,7 +768,7 @@ if __name__ == '__main__':
                 total_cl_loss += cl_loss.item()
 
             ssl_enabled = False
-            if eeg_ssl_projector is not None:
+            if eeg_ssl_projector is not None or use_ssl_clip_space:
                 if args.architecture == 'baseline':
                     ssl_enabled = args.ssl_lambda > 0
                 else:
