@@ -200,3 +200,40 @@ if __name__ == "__main__":
     # Forward pass through the model
     output = model(dummy_eeg_input)
     print(output.shape)  # Expected output shape: (batch_size, feature_dim)
+
+class TSConv30(nn.Module):
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63):
+        super().__init__()
+        
+        self.tsconv30 = nn.Sequential(
+            nn.Conv2d(1, 40, (1, 30), (1, 1)),
+            nn.AvgPool2d((1, 51), (1, 5)),
+            nn.BatchNorm2d(40),
+            nn.ELU(),
+            nn.Conv2d(40, 40, (channels_num, 1), (1, 1)),
+            nn.BatchNorm2d(40),
+            nn.ELU(),
+            nn.Dropout(0.5),
+        )
+        
+        emb_size = 40
+        self.projection = nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1))
+        
+        embedding_dim = (math.ceil((((eeg_sample_points - 30) + 1) - 51) / 5.) + 1) * 40
+        self.proj_eeg = nn.Sequential(
+            nn.Linear(embedding_dim, feature_dim),
+            ResidualAdd(nn.Sequential(
+                nn.GELU(),
+                nn.Linear(feature_dim, feature_dim),
+                nn.Dropout(0.5),
+            )),
+            nn.LayerNorm(feature_dim),
+        )
+    
+    def forward(self, x:Tensor):
+        x = x.unsqueeze(dim=1)
+        x = self.tsconv30(x)
+        x = self.projection(x)
+        x = x.view(x.size(0), -1)
+        x = self.proj_eeg(x)
+        return x

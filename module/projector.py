@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Function
 
 class ProjectorLinear(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -33,8 +34,8 @@ class ProjectorDirect(nn.Module):
         return x
 
 
-class DisentangledNetwork(nn.Module):
-    """CLAP-style residual MLP with zero-initialized output for content extraction."""
+class ResidualAdapter(nn.Module):
+    """Small CLAP-style residual adapter on top of aligned features."""
     def __init__(self, d_in, d_mid, alpha_inference=1.0):
         super().__init__()
         self.alpha_inference = alpha_inference
@@ -49,6 +50,21 @@ class DisentangledNetwork(nn.Module):
         return F.normalize(x + alpha * h, dim=-1)
 
 
+class _GradReverse(Function):
+    @staticmethod
+    def forward(ctx, x, scale):
+        ctx.scale = scale
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -ctx.scale * grad_output, None
+
+
+def grad_reverse(x, scale=1.0):
+    return _GradReverse.apply(x, scale)
+
+
 class SubjectClassifier(nn.Module):
     def __init__(self, input_dim, num_subjects):
         super(SubjectClassifier, self).__init__()
@@ -60,3 +76,16 @@ class SubjectClassifier(nn.Module):
 
     def forward(self, x):
         return self.classifier(x)
+
+
+class FeatureReconstructor(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.ReLU(),
+            nn.Linear(input_dim, output_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)

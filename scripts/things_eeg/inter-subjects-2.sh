@@ -11,23 +11,24 @@ DEVICE="cuda:0"
 EEG_ENCODER_TYPE="TSConv"
 BATCH_SIZE=1024
 LEARNING_RATE=3e-4
-NUM_EPOCHS=50
+NUM_EPOCHS=40
 NUM_WORKERS=4
 SELECTED_CHANNELS=() # ('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
     PROJECTOR="linear"
-    # FEATURE_DIM sweep handled below
+    # Temperature sweep handled below
+    FEATURE_DIM=64
     EEG_BACKBONE_DIM=64
 OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
-# Configuration sweep: feature_dim values
-FEATURE_DIM_VALUES=(64 256)
+# Configuration sweep: temperature values
+TEMPERATURE_VALUES=(0.01 0.03 0.07 0.1 0.2)
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
-for val in "${FEATURE_DIM_VALUES[@]}"
+for val in "${TEMPERATURE_VALUES[@]}"
 do
-    CONFIG_NAMES+=("featdim_${val}")
-    CONFIG_ARGS+=("--feature_dim ${val} --eeg_backbone_dim ${val} --ssl_lambda 0 --multi_positive_loss --grouped_batch_sampler --samples_per_image 9")
+    CONFIG_NAMES+=("temp_${val}")
+    CONFIG_ARGS+=("--init_temperature ${val} --feature_dim ${FEATURE_DIM} --eeg_backbone_dim ${EEG_BACKBONE_DIM} --ssl_lambda 0 --multi_positive_loss --grouped_batch_sampler --samples_per_image 9")
 done
 
 # Default seed (can be overridden by environment variable SEED)

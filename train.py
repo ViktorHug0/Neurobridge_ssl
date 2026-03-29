@@ -22,7 +22,7 @@ import pandas as pd
 
 from module.dataset import EEGPreImageDataset
 from module.eeg_encoder.atm.atm import ATMS
-from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer
+from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer, TSConv30 
 from module.loss import ContrastiveLoss, cross_covariance_penalty
 from module.util import retrieve_all
 from module.projector import *
@@ -113,6 +113,8 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
         return EEGProject(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'TSConv':
         return TSConv(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'TSConv30':
+        return TSConv30(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGTransformer':
         return EEGTransformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
@@ -136,6 +138,60 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch):
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
     return model(eeg_batch)
+
+
+def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise'):
+    if features.shape[0] < 2:
+        return features
+
+    obj = object_indices.detach().cpu().tolist()
+    img = image_indices.detach().cpu().tolist()
+    sid = subject_ids.detach().cpu().tolist()
+
+    groups = {}
+    for i, (o, im) in enumerate(zip(obj, img)):
+        groups.setdefault((int(o), int(im)), []).append(i)
+
+    mixed = features.clone()
+    dist_alpha = max(float(alpha), 1e-3)
+
+    for indices in groups.values():
+        group_size = len(indices)
+        if group_size < 2:
+            continue
+
+        group_idx = torch.tensor(indices, device=features.device, dtype=torch.long)
+        group_features = features[group_idx]
+
+        if mixup_type == 'group':
+            concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
+            weights = torch.distributions.Dirichlet(concentration).sample((group_size,)).to(group_features.dtype)
+            mixed_group = torch.einsum('ab,b...->a...', weights, group_features)
+        else:
+            group_subject_ids = [sid[i] for i in indices]
+            if len(set(group_subject_ids)) == group_size:
+                order = torch.randperm(group_size, device=features.device)
+                offset = random.randint(1, group_size - 1)
+                partner_pos = torch.empty(group_size, device=features.device, dtype=torch.long)
+                partner_pos[order] = torch.roll(order, shifts=offset)
+            else:
+                partner_pos = []
+                for pos, subject_id in enumerate(group_subject_ids):
+                    candidates = [j for j, sid_j in enumerate(group_subject_ids) if j != pos and sid_j != subject_id]
+                    if not candidates:
+                        candidates = [j for j in range(group_size) if j != pos]
+                    partner_pos.append(random.choice(candidates))
+                partner_pos = torch.tensor(partner_pos, device=features.device, dtype=torch.long)
+
+            concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
+            lam = torch.distributions.Beta(concentration, concentration).sample().to(group_features.dtype)
+            lam_shape = [group_size] + [1] * (group_features.dim() - 1)
+            lam = lam.view(*lam_shape)
+            mixed_group = lam * group_features + (1.0 - lam) * group_features[partner_pos]
+
+        mixed[group_idx] = mixed_group
+
+    return mixed
 
 
 def map_subject_ids_to_indices(subject_ids, subject_to_index):
@@ -225,20 +281,20 @@ if __name__ == '__main__':
     parser.add_argument('--multi_positive_loss', action='store_true', help='enable multi-positive EEG-image contrastive loss')
     parser.add_argument('--grouped_batch_sampler', action='store_true', help='sample multiple subjects per exact image in each batch')
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
+    parser.add_argument('--subject_mixup_mode', type=str, choices=['none', 'raw_eeg', 'embedding'], default='none', help='cross-subject same-stimulus convex mixing mode')
+    parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or full same-stimulus group mixing')
+    parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
-    parser.add_argument('--ssl_projector_dim', default=128, type=int, help='bottleneck dimension for the EEG-only SSL head')
-    parser.add_argument('--ssl_in_clip_space', action='store_true', help='compute EEG-only SSL directly on CL-aligned EEG features (no separate SSL head)')
-    parser.add_argument('--architecture', type=str, choices=['baseline', 'invariant_bottleneck', 'factorized', 'disentangled'], default='baseline', help='training architecture')
-    parser.add_argument('--ssl_pretrain_epochs', default=0, type=int, help='stage-1 EEG-only SSL pretraining epochs')
-    parser.add_argument('--cl_stage2_epochs', default=0, type=int, help='stage-2 CL training epochs (used by non-baseline architectures)')
-    parser.add_argument('--stage3_epochs', default=0, type=int, help='optional stage-3 joint finetuning epochs')
-    parser.add_argument('--freeze_encoder_stage2', action='store_true', help='freeze backbone and invariant bottleneck in stage-2')
-    parser.add_argument('--stage3_lr_scale', default=0.1, type=float, help='learning-rate scale applied during stage-3')
-    parser.add_argument('--inv_dim', default=256, type=int, help='invariant bottleneck dimension')
-    parser.add_argument('--sub_dim', default=256, type=int, help='subject branch bottleneck dimension for factorized architecture')
-    parser.add_argument('--subject_loss_lambda', default=1.0, type=float, help='weight of factorized subject classification loss')
-    parser.add_argument('--ortho_lambda', default=0.0, type=float, help='weight of z_inv/z_sub decorrelation loss')
-    parser.add_argument('--disentangle_alpha', default=1.0, type=float, help='inference-time alpha for disentangled network (CLAP)')
+    parser.add_argument('--architecture', type=str, choices=['baseline', 'frozen_adapter', 'factorized_adv'], default='baseline', help='training architecture')
+    parser.add_argument('--pretrain_epochs', default=0, type=int, help='baseline pretraining epochs before freezing the EEG encoder and training the adapter')
+    parser.add_argument('--adapter_hidden_dim', default=256, type=int, help='hidden dimension of the frozen-adapter residual MLP')
+    parser.add_argument('--adapter_alpha', default=1.0, type=float, help='inference-time alpha for the frozen-adapter residual MLP')
+    parser.add_argument('--content_dim', default=256, type=int, help='content branch bottleneck dimension for factorized_adv')
+    parser.add_argument('--style_dim', default=256, type=int, help='style branch bottleneck dimension for factorized_adv')
+    parser.add_argument('--subject_loss_lambda', default=1.0, type=float, help='weight of the subject classification loss on z_style')
+    parser.add_argument('--adv_subject_loss_lambda', default=0.0, type=float, help='weight of the adversarial subject loss on z_content')
+    parser.add_argument('--recon_lambda', default=0.0, type=float, help='weight of the optional backbone reconstruction loss')
+    parser.add_argument('--ortho_lambda', default=0.0, type=float, help='weight of z_content/z_style decorrelation loss')
     parser.add_argument('--diagnostic_eval', action='store_true', help='run representation diagnostics each epoch')
     parser.add_argument('--train_eval_batch_size', default=512, type=int, help='batch size for diagnostic train-subject evaluation')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
@@ -246,7 +302,7 @@ if __name__ == '__main__':
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
     parser.add_argument('--eeg_aug', action='store_true')
     parser.add_argument('--eeg_aug_type', type=str, choices=['noise', 'time_shift', 'channel_dropout', 'smooth'], default='noise', help='eeg augmentation type')
-    parser.add_argument('--eeg_encoder_type', type=str, choices=['ATM', "EEGNet", "EEGProject", "TSConv", "EEGTransformer"], default='EEGProject')
+    parser.add_argument('--eeg_encoder_type', type=str, choices=['ATM', "EEGNet", "EEGProject", "TSConv", "EEGTransformer", "TSConv30"], default='EEGProject')
     parser.add_argument('--image_aug', action='store_true')
     parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--eeg_test_aug', action='store_true')
@@ -308,6 +364,7 @@ if __name__ == '__main__':
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     log(f'Using device: {device}')
+    log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
 
     if args.grouped_batch_sampler and args.data_random:
         raise ValueError("Grouped batching requires deterministic indices. Disable --data_random when using --grouped_batch_sampler.")
@@ -426,8 +483,8 @@ if __name__ == '__main__':
 
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
-        'projector', 'feature_dim', 'eeg_backbone_dim', 'ssl_in_clip_space', 'inv_dim', 'sub_dim',
-        'disentangle_alpha', 'time_window', 'selected_channels'
+        'projector', 'feature_dim', 'eeg_backbone_dim', 'pretrain_epochs', 'adapter_hidden_dim',
+        'adapter_alpha', 'content_dim', 'style_dim', 'time_window', 'selected_channels'
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
     inference_config['eeg_sample_points'] = eeg_sample_points
@@ -441,26 +498,28 @@ if __name__ == '__main__':
     log(f'EEG Encoder trainable parameters: {num_params / 1e6:.2f}M')
     log(str(model))
 
-    eeg_inv_projector = None
-    eeg_sub_projector = None
+    eeg_adapter = None
+    content_projector = None
+    style_projector = None
     subject_classifier = None
+    adv_subject_classifier = None
+    reconstructor = None
     if args.architecture == 'baseline':
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
-        eeg_ssl_input_dim = backbone_feature_dim
-    elif args.architecture == 'disentangled':
-        eeg_inv_projector = DisentangledNetwork(backbone_feature_dim, args.inv_dim, args.disentangle_alpha).to(device)
+    elif args.architecture == 'frozen_adapter':
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
-        eeg_ssl_input_dim = backbone_feature_dim
-    elif args.architecture == 'invariant_bottleneck':
-        eeg_inv_projector = ProjectorMLP(backbone_feature_dim, args.inv_dim).to(device)
-        eeg_projector = build_projector(args.projector, args.inv_dim, args.feature_dim).to(device)
-        eeg_ssl_input_dim = args.inv_dim
+        eeg_adapter = ResidualAdapter(args.feature_dim, args.adapter_hidden_dim, args.adapter_alpha).to(device)
     else:
-        eeg_inv_projector = ProjectorMLP(backbone_feature_dim, args.inv_dim).to(device)
-        eeg_sub_projector = ProjectorMLP(backbone_feature_dim, args.sub_dim).to(device)
-        eeg_projector = build_projector(args.projector, args.inv_dim, args.feature_dim).to(device)
-        subject_classifier = SubjectClassifier(args.sub_dim, len(args.train_subject_ids)).to(device)
-        eeg_ssl_input_dim = args.inv_dim
+        if len(args.train_subject_ids) < 2 and (args.subject_loss_lambda > 0 or args.adv_subject_loss_lambda > 0):
+            raise ValueError("factorized_adv needs at least two training subjects when subject losses are enabled.")
+        content_projector = ProjectorMLP(backbone_feature_dim, args.content_dim).to(device)
+        style_projector = ProjectorMLP(backbone_feature_dim, args.style_dim).to(device)
+        eeg_projector = build_projector(args.projector, args.content_dim, args.feature_dim).to(device)
+        if len(args.train_subject_ids) >= 2:
+            subject_classifier = SubjectClassifier(args.style_dim, len(args.train_subject_ids)).to(device)
+            adv_subject_classifier = SubjectClassifier(args.content_dim, len(args.train_subject_ids)).to(device)
+        if args.recon_lambda > 0:
+            reconstructor = FeatureReconstructor(args.content_dim + args.style_dim, backbone_feature_dim).to(device)
 
     img_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
     text_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
@@ -469,29 +528,19 @@ if __name__ == '__main__':
         + sum(p.numel() for p in img_projector.parameters() if p.requires_grad)
         + sum(p.numel() for p in text_projector.parameters() if p.requires_grad)
     )
-    if eeg_inv_projector is not None:
-        projector_params += sum(p.numel() for p in eeg_inv_projector.parameters() if p.requires_grad)
-    if eeg_sub_projector is not None:
-        projector_params += sum(p.numel() for p in eeg_sub_projector.parameters() if p.requires_grad)
+    if eeg_adapter is not None:
+        projector_params += sum(p.numel() for p in eeg_adapter.parameters() if p.requires_grad)
+    if content_projector is not None:
+        projector_params += sum(p.numel() for p in content_projector.parameters() if p.requires_grad)
+    if style_projector is not None:
+        projector_params += sum(p.numel() for p in style_projector.parameters() if p.requires_grad)
     if subject_classifier is not None:
         projector_params += sum(p.numel() for p in subject_classifier.parameters() if p.requires_grad)
+    if adv_subject_classifier is not None:
+        projector_params += sum(p.numel() for p in adv_subject_classifier.parameters() if p.requires_grad)
+    if reconstructor is not None:
+        projector_params += sum(p.numel() for p in reconstructor.parameters() if p.requires_grad)
     log(f'Projector trainable parameters: {projector_params / 1e6:.2f}M')
-
-    use_ssl_clip_space = args.ssl_in_clip_space
-    if use_ssl_clip_space and args.ssl_projector_dim != 128:
-        log(f"ssl_in_clip_space is enabled; ignoring ssl_projector_dim={args.ssl_projector_dim}.")
-
-    eeg_ssl_projector = None
-    if (not use_ssl_clip_space) and (args.ssl_lambda > 0 or (args.architecture != 'baseline' and args.ssl_pretrain_epochs > 0)):
-        eeg_ssl_projector = ProjectorMLP(eeg_ssl_input_dim, args.ssl_projector_dim).to(device)
-        ssl_params = sum(p.numel() for p in eeg_ssl_projector.parameters() if p.requires_grad)
-        log(f'EEG-only SSL projector trainable parameters: {ssl_params / 1e6:.2f}M')
-        log(f'EEG-only SSL enabled with lambda={args.ssl_lambda:.4f} and bottleneck dim={args.ssl_projector_dim}')
-    elif use_ssl_clip_space and (args.ssl_lambda > 0 or (args.architecture != 'baseline' and args.ssl_pretrain_epochs > 0)):
-        log(f'EEG-only SSL enabled in CL-aligned space with lambda={args.ssl_lambda:.4f} (no separate SSL projector)')
-
-    if args.ssl_pretrain_epochs > 0 and eeg_ssl_projector is None and not use_ssl_clip_space:
-        raise ValueError("ssl_pretrain_epochs > 0 requires an SSL path. Set ssl_lambda > 0 or enable --ssl_in_clip_space.")
 
     criterion = ContrastiveLoss(
         args.init_temperature,
@@ -508,21 +557,12 @@ if __name__ == '__main__':
 
     subject_to_index = {sid: idx for idx, sid in enumerate(args.train_subject_ids)}
 
-    if args.architecture in ('baseline', 'disentangled'):
-        stage_schedule = [('joint', args.num_epochs)]
+    if args.architecture == 'frozen_adapter':
+        if args.pretrain_epochs <= 0 or args.pretrain_epochs >= args.num_epochs:
+            raise ValueError("frozen_adapter requires 0 < pretrain_epochs < num_epochs.")
+        stage_schedule = [('pretrain', args.pretrain_epochs), ('adapter', args.num_epochs - args.pretrain_epochs)]
     else:
-        stage1_epochs = max(args.ssl_pretrain_epochs, 0)
-        stage2_epochs = max(args.cl_stage2_epochs, 0)
-        stage3_epochs = max(args.stage3_epochs, 0)
-        if stage1_epochs + stage2_epochs + stage3_epochs == 0:
-            stage2_epochs = args.num_epochs
-        stage_schedule = []
-        if stage1_epochs > 0:
-            stage_schedule.append(('stage1_ssl', stage1_epochs))
-        if stage2_epochs > 0:
-            stage_schedule.append(('stage2_cl', stage2_epochs))
-        if stage3_epochs > 0:
-            stage_schedule.append(('stage3_joint', stage3_epochs))
+        stage_schedule = [('joint', args.num_epochs)]
     total_epochs = sum(item[1] for item in stage_schedule)
     log(f"Stage schedule: {stage_schedule} (total_epochs={total_epochs})")
 
@@ -531,10 +571,12 @@ if __name__ == '__main__':
         'eeg_projector': eeg_projector,
         'img_projector': img_projector,
         'text_projector': text_projector,
-        'eeg_ssl_projector': eeg_ssl_projector,
-        'eeg_inv_projector': eeg_inv_projector,
-        'eeg_sub_projector': eeg_sub_projector,
+        'eeg_adapter': eeg_adapter,
+        'content_projector': content_projector,
+        'style_projector': style_projector,
         'subject_classifier': subject_classifier,
+        'adv_subject_classifier': adv_subject_classifier,
+        'reconstructor': reconstructor,
     }
 
     def get_epoch_stage(epoch_idx):
@@ -546,43 +588,22 @@ if __name__ == '__main__':
         return stage_schedule[-1][0]
 
     def configure_stage(stage_name):
-        if args.architecture in ('baseline', 'disentangled'):
+        if args.architecture == 'baseline':
             active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
-            if eeg_inv_projector is not None:
-                active.add('eeg_inv_projector')
-            if eeg_ssl_projector is not None and args.ssl_lambda > 0:
-                active.add('eeg_ssl_projector')
-            lr = args.learning_rate
-        elif stage_name == 'stage1_ssl':
-            active = {'model', 'eeg_inv_projector'}
-            if use_ssl_clip_space:
-                active.add('eeg_projector')
+        elif args.architecture == 'frozen_adapter':
+            if stage_name == 'pretrain':
+                active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
             else:
-                active.add('eeg_ssl_projector')
-            if args.architecture == 'factorized':
-                active.add('eeg_sub_projector')
-                if subject_classifier is not None and args.subject_loss_lambda > 0:
-                    active.add('subject_classifier')
-            lr = args.learning_rate
-        elif stage_name == 'stage2_cl':
-            active = {'eeg_projector', 'img_projector', 'text_projector'}
-            if not args.freeze_encoder_stage2:
-                active.add('model')
-                if eeg_inv_projector is not None:
-                    active.add('eeg_inv_projector')
-            lr = args.learning_rate
+                active = {'eeg_adapter'}
         else:
-            active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
-            if eeg_inv_projector is not None:
-                active.add('eeg_inv_projector')
-            if eeg_ssl_projector is not None and args.ssl_lambda > 0:
-                active.add('eeg_ssl_projector')
-            if args.architecture == 'factorized':
-                if eeg_sub_projector is not None:
-                    active.add('eeg_sub_projector')
-                if subject_classifier is not None and args.subject_loss_lambda > 0:
-                    active.add('subject_classifier')
-            lr = args.learning_rate * args.stage3_lr_scale
+            active = {'model', 'content_projector', 'style_projector', 'eeg_projector', 'img_projector', 'text_projector'}
+            if subject_classifier is not None and args.subject_loss_lambda > 0:
+                active.add('subject_classifier')
+            if adv_subject_classifier is not None and args.adv_subject_loss_lambda > 0:
+                active.add('adv_subject_classifier')
+            if reconstructor is not None and args.recon_lambda > 0:
+                active.add('reconstructor')
+        lr = args.learning_rate
 
         for name, module in module_registry.items():
             if module is None:
@@ -604,35 +625,43 @@ if __name__ == '__main__':
         optimizer = optim.AdamW(trainable_parameters, lr=lr, betas=(0.9, 0.999), weight_decay=1e-4)
         return optimizer
 
-    def forward_architecture(eeg_backbone_batch):
+    def forward_architecture(eeg_backbone_batch, stage_name):
         output = {
             'eeg_feature': None,
             'ssl_feature': None,
-            'z_inv': None,
-            'z_sub': None,
+            'z_content': None,
+            'z_style': None,
             'subject_logits': None,
+            'adv_subject_logits': None,
+            'reconstruction': None,
         }
         if args.architecture == 'baseline':
             output['eeg_feature'] = eeg_projector(eeg_backbone_batch)
-            if use_ssl_clip_space:
-                output['ssl_feature'] = output['eeg_feature']
-            elif eeg_ssl_projector is not None:
-                output['ssl_feature'] = eeg_ssl_projector(eeg_backbone_batch)
+            output['ssl_feature'] = output['eeg_feature']
             return output
 
-        z_inv = eeg_inv_projector(eeg_backbone_batch)
-        output['z_inv'] = z_inv
-        output['eeg_feature'] = eeg_projector(z_inv)
-        if use_ssl_clip_space:
+        if args.architecture == 'frozen_adapter':
+            base_feature = eeg_projector(eeg_backbone_batch)
+            output['z_content'] = base_feature
+            if stage_name == 'adapter':
+                output['eeg_feature'] = eeg_adapter(base_feature)
+            else:
+                output['eeg_feature'] = base_feature
             output['ssl_feature'] = output['eeg_feature']
-        elif eeg_ssl_projector is not None:
-            output['ssl_feature'] = eeg_ssl_projector(z_inv)
+            return output
 
-        if args.architecture == 'factorized':
-            z_sub = eeg_sub_projector(eeg_backbone_batch)
-            output['z_sub'] = z_sub
-            if subject_classifier is not None:
-                output['subject_logits'] = subject_classifier(z_sub)
+        z_content = content_projector(eeg_backbone_batch)
+        z_style = style_projector(eeg_backbone_batch)
+        output['z_content'] = z_content
+        output['z_style'] = z_style
+        output['eeg_feature'] = eeg_projector(z_content)
+        output['ssl_feature'] = output['eeg_feature']
+        if subject_classifier is not None:
+            output['subject_logits'] = subject_classifier(z_style)
+        if adv_subject_classifier is not None:
+            output['adv_subject_logits'] = adv_subject_classifier(grad_reverse(z_content))
+        if reconstructor is not None:
+            output['reconstruction'] = reconstructor(torch.cat([z_content, z_style], dim=1))
         return output
 
     def build_checkpoint(epoch_idx, loss_value, stage_name, optimizer_obj):
@@ -647,14 +676,18 @@ if __name__ == '__main__':
             'optimizer_state_dict': optimizer_obj.state_dict(),
             'loss': loss_value,
         }
-        if eeg_ssl_projector is not None:
-            checkpoint['eeg_ssl_projector_state_dict'] = eeg_ssl_projector.state_dict()
-        if eeg_inv_projector is not None:
-            checkpoint['eeg_inv_projector_state_dict'] = eeg_inv_projector.state_dict()
-        if eeg_sub_projector is not None:
-            checkpoint['eeg_sub_projector_state_dict'] = eeg_sub_projector.state_dict()
+        if eeg_adapter is not None:
+            checkpoint['eeg_adapter_state_dict'] = eeg_adapter.state_dict()
+        if content_projector is not None:
+            checkpoint['content_projector_state_dict'] = content_projector.state_dict()
+        if style_projector is not None:
+            checkpoint['style_projector_state_dict'] = style_projector.state_dict()
         if subject_classifier is not None:
             checkpoint['subject_classifier_state_dict'] = subject_classifier.state_dict()
+        if adv_subject_classifier is not None:
+            checkpoint['adv_subject_classifier_state_dict'] = adv_subject_classifier.state_dict()
+        if reconstructor is not None:
+            checkpoint['reconstructor_state_dict'] = reconstructor.state_dict()
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
         return checkpoint
@@ -666,18 +699,22 @@ if __name__ == '__main__':
         eeg_projector.eval()
         img_projector.eval()
         text_projector.eval()
-        if eeg_inv_projector is not None:
-            eeg_inv_projector.eval()
-        if eeg_sub_projector is not None:
-            eeg_sub_projector.eval()
-        if eeg_ssl_projector is not None:
-            eeg_ssl_projector.eval()
+        if eeg_adapter is not None:
+            eeg_adapter.eval()
+        if content_projector is not None:
+            content_projector.eval()
+        if style_projector is not None:
+            style_projector.eval()
         if subject_classifier is not None:
             subject_classifier.eval()
+        if adv_subject_classifier is not None:
+            adv_subject_classifier.eval()
+        if reconstructor is not None:
+            reconstructor.eval()
 
         retrieval_features = []
-        z_inv_features = []
-        z_sub_features = []
+        z_content_features = []
+        z_style_features = []
         subjects = []
         object_indices = []
         image_indices = []
@@ -690,12 +727,12 @@ if __name__ == '__main__':
                 image_idx_batch = batch[5].to(device)
 
                 eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch)
+                arch_out = forward_architecture(eeg_backbone_batch, active_stage if active_stage is not None else 'joint')
                 retrieval_features.append(arch_out['eeg_feature'].cpu().numpy())
-                if arch_out['z_inv'] is not None:
-                    z_inv_features.append(arch_out['z_inv'].cpu().numpy())
-                if arch_out['z_sub'] is not None:
-                    z_sub_features.append(arch_out['z_sub'].cpu().numpy())
+                if arch_out['z_content'] is not None:
+                    z_content_features.append(arch_out['z_content'].cpu().numpy())
+                if arch_out['z_style'] is not None:
+                    z_style_features.append(arch_out['z_style'].cpu().numpy())
                 subjects.append(subject_id_batch.cpu().numpy())
                 object_indices.append(object_idx_batch.cpu().numpy())
                 image_indices.append(image_idx_batch.cpu().numpy())
@@ -711,12 +748,12 @@ if __name__ == '__main__':
                 retrieval_features, object_all, image_all, subject_all
             ),
         }
-        if len(z_inv_features) > 0:
-            z_inv_all = np.concatenate(z_inv_features, axis=0)
-            metrics['diag_subject_centroid_acc_z_inv'] = compute_centroid_subject_accuracy(z_inv_all, subject_all)
-        if len(z_sub_features) > 0:
-            z_sub_all = np.concatenate(z_sub_features, axis=0)
-            metrics['diag_subject_centroid_acc_z_sub'] = compute_centroid_subject_accuracy(z_sub_all, subject_all)
+        if len(z_content_features) > 0:
+            z_content_all = np.concatenate(z_content_features, axis=0)
+            metrics['diag_subject_centroid_acc_z_content'] = compute_centroid_subject_accuracy(z_content_all, subject_all)
+        if len(z_style_features) > 0:
+            z_style_all = np.concatenate(z_style_features, axis=0)
+            metrics['diag_subject_centroid_acc_z_style'] = compute_centroid_subject_accuracy(z_style_all, subject_all)
         return metrics
 
     best_top1_acc = 0.0
@@ -740,9 +777,13 @@ if __name__ == '__main__':
         total_ssl_loss = 0.0
         total_cl_loss = 0.0
         total_subject_loss = 0.0
+        total_adv_subject_loss = 0.0
         total_ortho_loss = 0.0
+        total_recon_loss = 0.0
         total_subject_acc = 0.0
         total_subject_acc_steps = 0
+        total_adv_subject_acc = 0.0
+        total_adv_subject_acc_steps = 0
 
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [{stage}]"):
             eeg_batch = batch[0].to(device)
@@ -753,43 +794,44 @@ if __name__ == '__main__':
             image_idx_batch = batch[5].to(device)
 
             optimizer.zero_grad()
+            if args.subject_mixup_mode == 'raw_eeg':
+                eeg_batch = cross_subject_stimulus_mix(
+                    eeg_batch, object_idx_batch, image_idx_batch, subject_id_batch,
+                    alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type
+                )
             eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-            arch_out = forward_architecture(eeg_backbone_batch)
+            if args.subject_mixup_mode == 'embedding':
+                eeg_backbone_batch = cross_subject_stimulus_mix(
+                    eeg_backbone_batch, object_idx_batch, image_idx_batch, subject_id_batch,
+                    alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type
+                )
+            arch_out = forward_architecture(eeg_backbone_batch, stage)
 
             loss = eeg_batch.new_tensor(0.0)
 
-            cl_enabled = (args.architecture == 'baseline') or (stage in {'stage2_cl', 'stage3_joint'})
-            if cl_enabled:
-                eeg_feature_batch = arch_out['eeg_feature']
-                image_feature_proj = img_projector(image_feature_batch)
-                text_feature_proj = text_projector(text_feature_batch)
-                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-                cl_loss = compute_cross_modal_loss(
-                    criterion,
-                    eeg_feature_batch,
-                    image_feature_proj,
-                    text_feature_proj,
-                    positive_mask,
-                    args.multi_positive_loss
-                )
-                loss = loss + cl_loss
-                total_cl_loss += cl_loss.item()
+            eeg_feature_batch = arch_out['eeg_feature']
+            image_feature_proj = img_projector(image_feature_batch)
+            text_feature_proj = text_projector(text_feature_batch)
+            positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
+            cl_loss = compute_cross_modal_loss(
+                criterion,
+                eeg_feature_batch,
+                image_feature_proj,
+                text_feature_proj,
+                positive_mask,
+                args.multi_positive_loss
+            )
+            loss = loss + cl_loss
+            total_cl_loss += cl_loss.item()
 
-            ssl_enabled = False
-            if eeg_ssl_projector is not None or use_ssl_clip_space:
-                if args.architecture in ('baseline', 'disentangled'):
-                    ssl_enabled = args.ssl_lambda > 0
-                else:
-                    ssl_enabled = stage in {'stage1_ssl', 'stage3_joint'}
-            if ssl_enabled:
+            if args.ssl_lambda > 0:
                 ssl_positive_mask = build_cross_subject_positive_mask(object_idx_batch, image_idx_batch, subject_id_batch)
                 ssl_loss = criterion.self_similarity_loss(arch_out['ssl_feature'], ssl_positive_mask)
-                ssl_weight = args.ssl_lambda if args.ssl_lambda > 0 else 1.0
-                loss = loss + ssl_weight * ssl_loss
+                loss = loss + args.ssl_lambda * ssl_loss
                 total_ssl_loss += ssl_loss.item()
 
-            if args.architecture == 'factorized' and arch_out['subject_logits'] is not None:
-                if stage in {'stage1_ssl', 'stage3_joint'} and args.subject_loss_lambda > 0:
+            if args.architecture == 'factorized_adv':
+                if arch_out['subject_logits'] is not None and args.subject_loss_lambda > 0:
                     subject_targets = map_subject_ids_to_indices(subject_id_batch, subject_to_index)
                     subject_loss = subject_criterion(arch_out['subject_logits'], subject_targets)
                     loss = loss + args.subject_loss_lambda * subject_loss
@@ -800,10 +842,26 @@ if __name__ == '__main__':
                     total_subject_acc += subject_acc
                     total_subject_acc_steps += 1
 
-                if stage == 'stage3_joint' and args.ortho_lambda > 0:
-                    ortho_loss = cross_covariance_penalty(arch_out['z_inv'], arch_out['z_sub'])
+                if arch_out['adv_subject_logits'] is not None and args.adv_subject_loss_lambda > 0:
+                    subject_targets = map_subject_ids_to_indices(subject_id_batch, subject_to_index)
+                    adv_subject_loss = subject_criterion(arch_out['adv_subject_logits'], subject_targets)
+                    loss = loss + args.adv_subject_loss_lambda * adv_subject_loss
+                    total_adv_subject_loss += adv_subject_loss.item()
+
+                    adv_subject_pred = torch.argmax(arch_out['adv_subject_logits'], dim=1)
+                    adv_subject_acc = (adv_subject_pred == subject_targets).float().mean().item() * 100.0
+                    total_adv_subject_acc += adv_subject_acc
+                    total_adv_subject_acc_steps += 1
+
+                if args.ortho_lambda > 0:
+                    ortho_loss = cross_covariance_penalty(arch_out['z_content'], arch_out['z_style'])
                     loss = loss + args.ortho_lambda * ortho_loss
                     total_ortho_loss += ortho_loss.item()
+
+                if arch_out['reconstruction'] is not None and args.recon_lambda > 0:
+                    recon_loss = F.mse_loss(arch_out['reconstruction'], eeg_backbone_batch.detach())
+                    loss = loss + args.recon_lambda * recon_loss
+                    total_recon_loss += recon_loss.item()
 
             loss.backward()
             optimizer.step()
@@ -813,11 +871,15 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train', avg_loss, epoch)
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_ssl', total_ssl_loss / len(dataloader), epoch)
-        if args.architecture == 'factorized':
+        if args.architecture == 'factorized_adv':
             writer.add_scalar('Loss/train_subject', total_subject_loss / len(dataloader), epoch)
+            writer.add_scalar('Loss/train_adv_subject', total_adv_subject_loss / len(dataloader), epoch)
             writer.add_scalar('Loss/train_ortho', total_ortho_loss / len(dataloader), epoch)
+            writer.add_scalar('Loss/train_recon', total_recon_loss / len(dataloader), epoch)
             if total_subject_acc_steps > 0:
                 writer.add_scalar('Acc/train_subject_head', total_subject_acc / total_subject_acc_steps, epoch)
+            if total_adv_subject_acc_steps > 0:
+                writer.add_scalar('Acc/train_adv_subject_head', total_adv_subject_acc / total_adv_subject_acc_steps, epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] Stage={stage} TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} SSL={total_ssl_loss / len(dataloader):.4f}"
@@ -830,14 +892,18 @@ if __name__ == '__main__':
         eeg_projector.eval()
         img_projector.eval()
         text_projector.eval()
-        if eeg_ssl_projector is not None:
-            eeg_ssl_projector.eval()
-        if eeg_inv_projector is not None:
-            eeg_inv_projector.eval()
-        if eeg_sub_projector is not None:
-            eeg_sub_projector.eval()
+        if eeg_adapter is not None:
+            eeg_adapter.eval()
+        if content_projector is not None:
+            content_projector.eval()
+        if style_projector is not None:
+            style_projector.eval()
         if subject_classifier is not None:
             subject_classifier.eval()
+        if adv_subject_classifier is not None:
+            adv_subject_classifier.eval()
+        if reconstructor is not None:
+            reconstructor.eval()
 
         total_test_loss = 0.0
         eeg_feature_list = []
@@ -853,7 +919,7 @@ if __name__ == '__main__':
                 image_idx_batch = batch[5].to(device)
 
                 eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch)
+                arch_out = forward_architecture(eeg_backbone_batch, stage)
                 eeg_feature_batch = arch_out['eeg_feature']
                 image_feature_proj = img_projector(image_feature_batch)
                 text_feature_proj = text_projector(text_feature_batch)
