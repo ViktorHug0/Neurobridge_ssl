@@ -60,6 +60,47 @@ def build_cross_subject_positive_mask(object_indices, image_indices, subject_ids
     return same_image & different_subject
 
 
+def sample_cross_subject_partner_indices(object_indices, image_indices, subject_ids):
+    obj = object_indices.detach().cpu().tolist()
+    img = image_indices.detach().cpu().tolist()
+    sid = subject_ids.detach().cpu().tolist()
+
+    groups = {}
+    for idx, (o, im) in enumerate(zip(obj, img)):
+        groups.setdefault((int(o), int(im)), []).append(idx)
+
+    partner_indices = []
+    valid_anchor_indices = []
+    for idx, (o, im, s) in enumerate(zip(obj, img, sid)):
+        candidates = [j for j in groups[(int(o), int(im))] if j != idx and sid[j] != s]
+        if len(candidates) == 0:
+            continue
+        partner_indices.append(random.choice(candidates))
+        valid_anchor_indices.append(idx)
+
+    if len(valid_anchor_indices) == 0:
+        empty = object_indices.new_empty((0,), dtype=torch.long)
+        return empty, empty
+    return (
+        torch.tensor(valid_anchor_indices, device=object_indices.device, dtype=torch.long),
+        torch.tensor(partner_indices, device=object_indices.device, dtype=torch.long),
+    )
+
+
+def compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, tau):
+    if criterion.eeg_l2norm:
+        anchor_feature = F.normalize(anchor_feature, p=2, dim=1)
+        positive_feature = F.normalize(positive_feature, p=2, dim=1)
+
+    if tau is None or tau <= 0:
+        logit_scale = criterion._get_logit_scale()
+    else:
+        logit_scale = 1.0 / tau
+    logits = torch.matmul(anchor_feature, positive_feature.T) * logit_scale
+    labels = torch.arange(anchor_feature.shape[0], device=anchor_feature.device)
+    return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2.0
+
+
 def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature, positive_mask, use_multi_positive):
     if use_multi_positive:
         loss_contrastive_ie = criterion.multi_positive_pair_loss(eeg_feature, image_feature, positive_mask)
@@ -285,10 +326,14 @@ if __name__ == '__main__':
     parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or full same-stimulus group mixing')
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
-    parser.add_argument('--architecture', type=str, choices=['baseline', 'frozen_adapter', 'factorized_adv'], default='baseline', help='training architecture')
-    parser.add_argument('--pretrain_epochs', default=0, type=int, help='baseline pretraining epochs before freezing the EEG encoder and training the adapter')
+    parser.add_argument('--architecture', type=str, choices=['baseline', 'clap_adapter', 'factorized_adv'], default='baseline', help='training architecture')
+    parser.add_argument('--pretrain_epochs', default=0, type=int, help='baseline pretraining epochs before freezing the EEG encoder and training the CLAP adapter')
     parser.add_argument('--adapter_hidden_dim', default=256, type=int, help='hidden dimension of the frozen-adapter residual MLP')
     parser.add_argument('--adapter_alpha', default=1.0, type=float, help='inference-time alpha for the frozen-adapter residual MLP')
+    parser.add_argument('--clap_loss_lambda', default=1.0, type=float, help='weight for CLAP stage-2 paired InfoNCE')
+    parser.add_argument('--clap_tau', default=0.5, type=float, help='temperature for CLAP stage-2 paired InfoNCE (<=0 uses base logit scale)')
+    parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
+    parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
     parser.add_argument('--content_dim', default=256, type=int, help='content branch bottleneck dimension for factorized_adv')
     parser.add_argument('--style_dim', default=256, type=int, help='style branch bottleneck dimension for factorized_adv')
     parser.add_argument('--subject_loss_lambda', default=1.0, type=float, help='weight of the subject classification loss on z_style')
@@ -358,6 +403,12 @@ if __name__ == '__main__':
     log('Input arguments:')
     for key, val in vars(args).items():
         log(f'{key:22} {val}')
+
+    if args.val_subject_id is not None and args.val_subject_id in args.train_subject_ids:
+        args.train_subject_ids = [sid for sid in args.train_subject_ids if sid != args.val_subject_id]
+        log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
+        if len(args.train_subject_ids) == 0:
+            raise ValueError("After removing val_subject_id, train_subject_ids is empty.")
 
     with open(os.path.join(args.output_dir, "last_run.txt"), 'w') as f:
         f.write(writer.log_dir)
@@ -434,6 +485,38 @@ if __name__ == '__main__':
             num_workers=args.num_workers
         )
 
+    if args.architecture == 'clap_adapter' and not args.grouped_batch_sampler:
+        raise ValueError("clap_adapter requires --grouped_batch_sampler to ensure cross-subject pairs.")
+    if args.architecture == 'clap_adapter' and args.samples_per_image < 2:
+        raise ValueError("clap_adapter requires --samples_per_image >= 2.")
+    if args.select_best_on == 'val' and args.val_subject_id is None:
+        raise ValueError("--select_best_on val requires --val_subject_id.")
+    if args.val_subject_id is not None:
+        if args.val_subject_id in args.test_subject_ids:
+            raise ValueError("val_subject_id must be different from test_subject_ids.")
+
+    val_dataloader = None
+    if args.val_subject_id is not None:
+        print('\n>>> Loading Validation Data <<<')
+        val_dataset = EEGPreImageDataset(
+            [args.val_subject_id],
+            args.eeg_data_dir,
+            args.selected_channels,
+            args.time_window,
+            args.image_feature_dir,
+            args.text_feature_dir,
+            args.image_aug,
+            args.aug_image_feature_dirs,
+            True,
+            False,
+            eeg_transform,
+            False,
+            args.image_test_aug,
+            args.eeg_test_aug,
+            args.frozen_eeg_prior
+        )
+        val_dataloader = DataLoader(val_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
+
     print('\n>>> Loading Test Data <<<')
     test_dataset = EEGPreImageDataset(
         args.test_subject_ids,
@@ -506,7 +589,7 @@ if __name__ == '__main__':
     reconstructor = None
     if args.architecture == 'baseline':
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
-    elif args.architecture == 'frozen_adapter':
+    elif args.architecture == 'clap_adapter':
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
         eeg_adapter = ResidualAdapter(args.feature_dim, args.adapter_hidden_dim, args.adapter_alpha).to(device)
     else:
@@ -557,9 +640,9 @@ if __name__ == '__main__':
 
     subject_to_index = {sid: idx for idx, sid in enumerate(args.train_subject_ids)}
 
-    if args.architecture == 'frozen_adapter':
+    if args.architecture == 'clap_adapter':
         if args.pretrain_epochs <= 0 or args.pretrain_epochs >= args.num_epochs:
-            raise ValueError("frozen_adapter requires 0 < pretrain_epochs < num_epochs.")
+            raise ValueError(f"{args.architecture} requires 0 < pretrain_epochs < num_epochs.")
         stage_schedule = [('pretrain', args.pretrain_epochs), ('adapter', args.num_epochs - args.pretrain_epochs)]
     else:
         stage_schedule = [('joint', args.num_epochs)]
@@ -590,7 +673,7 @@ if __name__ == '__main__':
     def configure_stage(stage_name):
         if args.architecture == 'baseline':
             active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
-        elif args.architecture == 'frozen_adapter':
+        elif args.architecture == 'clap_adapter':
             if stage_name == 'pretrain':
                 active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
             else:
@@ -640,7 +723,7 @@ if __name__ == '__main__':
             output['ssl_feature'] = output['eeg_feature']
             return output
 
-        if args.architecture == 'frozen_adapter':
+        if args.architecture == 'clap_adapter':
             base_feature = eeg_projector(eeg_backbone_batch)
             output['z_content'] = base_feature
             if stage_name == 'adapter':
@@ -691,6 +774,59 @@ if __name__ == '__main__':
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
         return checkpoint
+
+    def maybe_apply_clap_adapter_to_image(image_feature_proj, stage_name):
+        if args.architecture == 'clap_adapter' and stage_name == 'adapter' and eeg_adapter is not None:
+            return eeg_adapter(image_feature_proj)
+        return image_feature_proj
+
+    def evaluate_split(split_loader, stage_name, split_name):
+        if split_loader is None:
+            return float('nan'), float('nan'), float('nan')
+
+        total_loss_local = 0.0
+        eeg_feature_list = []
+        image_feature_list = []
+
+        with torch.no_grad():
+            for batch in split_loader:
+                eeg_batch = batch[0].to(device)
+                image_feature_batch = batch[1].to(device)
+                text_feature_batch = batch[2].to(device)
+                subject_id_batch = batch[3].to(device)
+                object_idx_batch = batch[4].to(device)
+                image_idx_batch = batch[5].to(device)
+
+                eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
+                arch_out = forward_architecture(eeg_backbone_batch, stage_name)
+                eeg_feature_batch = arch_out['eeg_feature']
+                image_feature_proj = img_projector(image_feature_batch)
+                image_feature_proj = maybe_apply_clap_adapter_to_image(image_feature_proj, stage_name)
+                text_feature_proj = text_projector(text_feature_batch)
+
+                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
+                loss = compute_cross_modal_loss(
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    text_feature_proj,
+                    positive_mask,
+                    args.multi_positive_loss
+                )
+                total_loss_local += loss.item()
+                eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
+                image_feature_list.append(image_feature_proj.cpu().numpy())
+
+        avg_loss_local = total_loss_local / len(split_loader)
+        eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
+        image_feature_all = np.concatenate(image_feature_list, axis=0)
+        top5_count, top1_count, total = retrieve_all(eeg_feature_all, image_feature_all, args.data_average)
+        top5_acc_local = top5_count / total * 100
+        top1_acc_local = top1_count / total * 100
+        log(
+            f"{split_name}: top5 acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
+        )
+        return avg_loss_local, top1_acc_local, top5_acc_local
 
     def run_representation_diagnostics():
         if train_eval_dataloader is None:
@@ -811,18 +947,33 @@ if __name__ == '__main__':
 
             eeg_feature_batch = arch_out['eeg_feature']
             image_feature_proj = img_projector(image_feature_batch)
+            image_feature_proj = maybe_apply_clap_adapter_to_image(image_feature_proj, stage)
             text_feature_proj = text_projector(text_feature_batch)
-            positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-            cl_loss = compute_cross_modal_loss(
-                criterion,
-                eeg_feature_batch,
-                image_feature_proj,
-                text_feature_proj,
-                positive_mask,
-                args.multi_positive_loss
-            )
-            loss = loss + cl_loss
-            total_cl_loss += cl_loss.item()
+            if args.architecture == 'clap_adapter' and stage == 'adapter':
+                valid_anchor_idx, partner_idx = sample_cross_subject_partner_indices(
+                    object_idx_batch, image_idx_batch, subject_id_batch
+                )
+                if valid_anchor_idx.numel() > 0:
+                    anchor_feature = eeg_feature_batch[valid_anchor_idx]
+                    positive_feature = eeg_feature_batch[partner_idx]
+                    cl_loss = compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, args.clap_tau)
+                    loss = loss + args.clap_loss_lambda * cl_loss
+                    total_cl_loss += cl_loss.item()
+                else:
+                    cl_loss = eeg_feature_batch.sum() * 0.0
+                    loss = loss + cl_loss
+            else:
+                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
+                cl_loss = compute_cross_modal_loss(
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    text_feature_proj,
+                    positive_mask,
+                    args.multi_positive_loss
+                )
+                loss = loss + cl_loss
+                total_cl_loss += cl_loss.item()
 
             if args.ssl_lambda > 0:
                 ssl_positive_mask = build_cross_subject_positive_mask(object_idx_batch, image_idx_batch, subject_id_batch)
@@ -905,49 +1056,17 @@ if __name__ == '__main__':
         if reconstructor is not None:
             reconstructor.eval()
 
-        total_test_loss = 0.0
-        eeg_feature_list = []
-        image_feature_list = []
-
-        with torch.no_grad():
-            for batch in test_dataloader:
-                eeg_batch = batch[0].to(device)
-                image_feature_batch = batch[1].to(device)
-                text_feature_batch = batch[2].to(device)
-                subject_id_batch = batch[3].to(device)
-                object_idx_batch = batch[4].to(device)
-                image_idx_batch = batch[5].to(device)
-
-                eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch, stage)
-                eeg_feature_batch = arch_out['eeg_feature']
-                image_feature_proj = img_projector(image_feature_batch)
-                text_feature_proj = text_projector(text_feature_batch)
-
-                positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-                loss = compute_cross_modal_loss(
-                    criterion,
-                    eeg_feature_batch,
-                    image_feature_proj,
-                    text_feature_proj,
-                    positive_mask,
-                    args.multi_positive_loss
-                )
-                total_test_loss += loss.item()
-                eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
-                image_feature_list.append(image_feature_proj.cpu().numpy())
-
-        avg_test_loss = total_test_loss / len(test_dataloader)
+        avg_test_loss, top1_acc, top5_acc = evaluate_split(test_dataloader, stage, "test")
         writer.add_scalar('Loss/test', avg_test_loss, epoch)
-
-        eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
-        image_feature_all = np.concatenate(image_feature_list, axis=0)
-        top5_count, top1_count, total = retrieve_all(eeg_feature_all, image_feature_all, args.data_average)
-        top5_acc = top5_count / total * 100
-        top1_acc = top1_count / total * 100
         writer.add_scalar('Acc/top1_test', top1_acc, epoch)
         writer.add_scalar('Acc/top5_test', top5_acc, epoch)
-        log(f"top5 acc {top5_acc:.2f}%\ttop1 acc {top1_acc:.2f}%\tTest Loss: {avg_test_loss:.4f}")
+
+        val_loss, val_top1, val_top5 = float('nan'), float('nan'), float('nan')
+        if val_dataloader is not None:
+            val_loss, val_top1, val_top5 = evaluate_split(val_dataloader, stage, "val")
+            writer.add_scalar('Loss/val', val_loss, epoch)
+            writer.add_scalar('Acc/top1_val', val_top1, epoch)
+            writer.add_scalar('Acc/top5_val', val_top5, epoch)
 
         if args.diagnostic_eval:
             diag_metrics = run_representation_diagnostics()
@@ -962,19 +1081,25 @@ if __name__ == '__main__':
         history['test_loss'].append(avg_test_loss)
         history['top1_acc'].append(top1_acc)
 
+        selected_loss = avg_test_loss
+        selected_top1 = top1_acc
+        if args.select_best_on == 'val' and not np.isnan(val_loss):
+            selected_loss = val_loss
+            selected_top1 = val_top1
+
         is_better = False
-        if avg_test_loss < best_test_loss:
+        if selected_loss < best_test_loss:
             is_better = True
-        elif avg_test_loss == best_test_loss and top1_acc > best_top1_acc:
+        elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
             is_better = True
 
         if is_better:
-            best_test_loss = avg_test_loss
+            best_test_loss = selected_loss
             best_top5_acc = top5_acc
             best_top1_acc = top1_acc
             best_test_epoch = epoch
             if args.save_weights:
-                torch.save(build_checkpoint(epoch, avg_test_loss, stage, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
+                torch.save(build_checkpoint(epoch, selected_loss, stage, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
 
     save_training_plot(history, os.path.join(log_dir, 'training_metrics.png'))
 

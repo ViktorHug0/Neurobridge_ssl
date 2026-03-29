@@ -20,7 +20,7 @@ SELECTED_CHANNELS=() # ('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3'
 OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
 # Configuration sweep: feature_dim values
-FEATURE_DIM_VALUES=(64 256)
+FEATURE_DIM_VALUES=(64)
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
