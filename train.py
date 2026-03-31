@@ -121,6 +121,29 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
     return criterion(eeg_feature, image_feature, text_feature)
 
 
+def compute_relic_prediction_consistency_loss(criterion, eeg_feature, image_feature, positive_mask):
+    eeg_feature, image_feature, _ = criterion._normalize_inputs(eeg_feature, image_feature, None)
+    logits = torch.matmul(eeg_feature, image_feature.T) * criterion._get_logit_scale()
+    log_probs = F.log_softmax(logits, dim=1)
+    probs = log_probs.exp()
+
+    pair_mask = positive_mask.clone()
+    pair_mask.fill_diagonal_(False)
+    if not torch.any(pair_mask):
+        return logits.new_tensor(0.0)
+
+    kl_forward = torch.sum(
+        probs.unsqueeze(1) * (log_probs.unsqueeze(1) - log_probs.unsqueeze(0)),
+        dim=-1,
+    )
+    kl_reverse = torch.sum(
+        probs.unsqueeze(0) * (log_probs.unsqueeze(0) - log_probs.unsqueeze(1)),
+        dim=-1,
+    )
+    sym_kl = 0.5 * (kl_forward + kl_reverse)
+    return sym_kl[pair_mask].mean()
+
+
 def save_training_plot(history, out_path):
     epochs = history['epoch']
     fig, ax_loss = plt.subplots(figsize=(9, 5))
@@ -133,7 +156,7 @@ def save_training_plot(history, out_path):
     ax_loss.set_xlabel('Epoch')
     ax_loss.set_ylabel('Loss')
     ax_acc.set_ylabel('Top-1 Accuracy (%)')
-    ax_acc.set_ylim(0, 40)
+    ax_acc.set_ylim(0, 60)
     ax_loss.grid(alpha=0.3)
 
     lines_1, labels_1 = ax_loss.get_legend_handles_labels()
@@ -319,6 +342,7 @@ if __name__ == '__main__':
     parser.add_argument('--img_l2norm', action='store_true')
     parser.add_argument('--text_l2norm', action='store_true')
     parser.add_argument('--eeg_l2norm', action='store_true')
+    parser.add_argument('--eeg_l2_norm_ssl', action='store_true', help='L2-normalize EEG embeddings only for cross-subject SSL loss')
     parser.add_argument('--multi_positive_loss', action='store_true', help='enable multi-positive EEG-image contrastive loss')
     parser.add_argument('--grouped_batch_sampler', action='store_true', help='sample multiple subjects per exact image in each batch')
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
@@ -326,12 +350,35 @@ if __name__ == '__main__':
     parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or full same-stimulus group mixing')
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
+    parser.add_argument('--relic_lambda', default=0.0, type=float, help='weight for RELIC-style prediction consistency across same-image different-subject EEG views')
+    parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'saw_csls', 'saw_adacsls', 'saw_adacsls_poe'], default='plain_cosine', help='test-time retrieval calibration mode')
+    parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='shrinkage used for subject-adaptive whitening during evaluation')
+    parser.add_argument('--sattc_saw_diag', action='store_true', help='use diagonal covariance for subject-adaptive whitening during evaluation')
+    parser.add_argument('--sattc_csls_k', default=12, type=int, help='fixed-k CSLS neighborhood size and adaptive CSLS base k')
+    parser.add_argument('--sattc_csls_kmin', default=5, type=int, help='minimum adaptive CSLS neighborhood size')
+    parser.add_argument('--sattc_csls_kmax', default=20, type=int, help='maximum adaptive CSLS neighborhood size')
+    parser.add_argument('--sattc_csls_alpha', default=1.0, type=float, help='row-density exponent for adaptive CSLS')
+    parser.add_argument('--sattc_csls_m', default=10, type=int, help='row-density window size for adaptive CSLS')
+    parser.add_argument('--sattc_csls_col_alpha', default=None, type=float, help='optional column-density exponent for adaptive CSLS')
+    parser.add_argument('--sattc_csls_col_m', default=None, type=int, help='optional column-density window size for adaptive CSLS')
+    parser.add_argument('--sattc_csls_col_kmin', default=None, type=int, help='optional minimum column adaptive neighborhood size')
+    parser.add_argument('--sattc_csls_col_kmax', default=None, type=int, help='optional maximum column adaptive neighborhood size')
+    parser.add_argument('--sattc_struct_top_l', default=5, type=int, help='bidirectional top-L threshold for the SATTC structural expert')
+    parser.add_argument('--sattc_struct_popularity_k', default=5, type=int, help='top-K used for class popularity and hubness statistics')
+    parser.add_argument('--sattc_struct_hub_high_quantile', default=0.95, type=float, help='high-hubness quantile for SATTC structural penalties')
+    parser.add_argument('--sattc_struct_hub_mid_quantile', default=0.80, type=float, help='mid-hubness quantile for SATTC structural penalties')
+    parser.add_argument('--sattc_poe_beta', default=1.9, type=float, help='PoE weight for the SATTC structural expert')
+    parser.add_argument('--sattc_poe_lambda_pen', default=None, type=float, help='optional manual SATTC penalty scale')
+    parser.add_argument('--sattc_poe_lambda_bonus', default=None, type=float, help='optional manual SATTC bonus scale')
     parser.add_argument('--architecture', type=str, choices=['baseline', 'clap_adapter', 'factorized_adv'], default='baseline', help='training architecture')
     parser.add_argument('--pretrain_epochs', default=0, type=int, help='baseline pretraining epochs before freezing the EEG encoder and training the CLAP adapter')
     parser.add_argument('--adapter_hidden_dim', default=256, type=int, help='hidden dimension of the frozen-adapter residual MLP')
     parser.add_argument('--adapter_alpha', default=1.0, type=float, help='inference-time alpha for the frozen-adapter residual MLP')
     parser.add_argument('--clap_loss_lambda', default=1.0, type=float, help='weight for CLAP stage-2 paired InfoNCE')
     parser.add_argument('--clap_tau', default=0.5, type=float, help='temperature for CLAP stage-2 paired InfoNCE (<=0 uses base logit scale)')
+    parser.add_argument('--clap_transfer', action='store_true', default=True, help='whether to apply the CLAP adapter to the image branch at inference')
+    parser.add_argument('--no_clap_transfer', action='store_false', dest='clap_transfer', help='disable CLAP adapter transfer to image branch')
+    parser.add_argument('--clap_mse_lambda', default=0.0, type=float, help='weight for identity anchor MSE loss in stage-2')
     parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
     parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
     parser.add_argument('--content_dim', default=256, type=int, help='content branch bottleneck dimension for factorized_adv')
@@ -416,9 +463,14 @@ if __name__ == '__main__':
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     log(f'Using device: {device}')
     log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
+    log(f'Evaluation mode: {args.eval_mode}')
 
     if args.grouped_batch_sampler and args.data_random:
         raise ValueError("Grouped batching requires deterministic indices. Disable --data_random when using --grouped_batch_sampler.")
+    if args.relic_lambda > 0 and not args.grouped_batch_sampler:
+        raise ValueError("RELIC prediction consistency requires --grouped_batch_sampler to form same-image cross-subject pairs.")
+    if args.relic_lambda > 0 and args.samples_per_image < 2:
+        raise ValueError("RELIC prediction consistency requires --samples_per_image >= 2.")
 
     print('\n>>> Loading Train Data <<<')
     if args.eeg_aug:
@@ -567,7 +619,12 @@ if __name__ == '__main__':
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
         'projector', 'feature_dim', 'eeg_backbone_dim', 'pretrain_epochs', 'adapter_hidden_dim',
-        'adapter_alpha', 'content_dim', 'style_dim', 'time_window', 'selected_channels'
+        'adapter_alpha', 'content_dim', 'style_dim', 'time_window', 'selected_channels',
+        'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_csls_kmin',
+        'sattc_csls_kmax', 'sattc_csls_alpha', 'sattc_csls_m', 'sattc_csls_col_alpha',
+        'sattc_csls_col_m', 'sattc_csls_col_kmin', 'sattc_csls_col_kmax', 'sattc_struct_top_l',
+        'sattc_struct_popularity_k', 'sattc_struct_hub_high_quantile', 'sattc_struct_hub_mid_quantile',
+        'sattc_poe_beta', 'sattc_poe_lambda_pen', 'sattc_poe_lambda_bonus'
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
     inference_config['eeg_sample_points'] = eeg_sample_points
@@ -633,10 +690,32 @@ if __name__ == '__main__':
         args.img_l2norm,
         args.text_l2norm,
         args.t_learnable,
-        args.softplus
+        args.softplus,
+        args.eeg_l2_norm_ssl,
     ).to(device)
     subject_criterion = torch.nn.CrossEntropyLoss().to(device)
     log(str(criterion))
+
+    sattc_params = {
+        'saw_shrink': args.sattc_saw_shrink,
+        'saw_diag': args.sattc_saw_diag,
+        'csls_k': args.sattc_csls_k,
+        'csls_kmin': args.sattc_csls_kmin,
+        'csls_kmax': args.sattc_csls_kmax,
+        'csls_alpha': args.sattc_csls_alpha,
+        'csls_m': args.sattc_csls_m,
+        'csls_col_alpha': args.sattc_csls_col_alpha,
+        'csls_col_m': args.sattc_csls_col_m,
+        'csls_col_kmin': args.sattc_csls_col_kmin,
+        'csls_col_kmax': args.sattc_csls_col_kmax,
+        'struct_top_l': args.sattc_struct_top_l,
+        'struct_popularity_k': args.sattc_struct_popularity_k,
+        'struct_hub_high_quantile': args.sattc_struct_hub_high_quantile,
+        'struct_hub_mid_quantile': args.sattc_struct_hub_mid_quantile,
+        'poe_beta': args.sattc_poe_beta,
+        'poe_lambda_pen': args.sattc_poe_lambda_pen,
+        'poe_lambda_bonus': args.sattc_poe_lambda_bonus,
+    }
 
     subject_to_index = {sid: idx for idx, sid in enumerate(args.train_subject_ids)}
 
@@ -776,7 +855,7 @@ if __name__ == '__main__':
         return checkpoint
 
     def maybe_apply_clap_adapter_to_image(image_feature_proj, stage_name):
-        if args.architecture == 'clap_adapter' and stage_name == 'adapter' and eeg_adapter is not None:
+        if args.architecture == 'clap_adapter' and args.clap_transfer and stage_name == 'adapter' and eeg_adapter is not None:
             return eeg_adapter(image_feature_proj)
         return image_feature_proj
 
@@ -787,6 +866,9 @@ if __name__ == '__main__':
         total_loss_local = 0.0
         eeg_feature_list = []
         image_feature_list = []
+        subjects = []
+        object_indices = []
+        image_indices = []
 
         with torch.no_grad():
             for batch in split_loader:
@@ -816,15 +898,30 @@ if __name__ == '__main__':
                 total_loss_local += loss.item()
                 eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
                 image_feature_list.append(image_feature_proj.cpu().numpy())
+                subjects.append(subject_id_batch.cpu().numpy())
+                object_indices.append(object_idx_batch.cpu().numpy())
+                image_indices.append(image_idx_batch.cpu().numpy())
 
         avg_loss_local = total_loss_local / len(split_loader)
         eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
         image_feature_all = np.concatenate(image_feature_list, axis=0)
-        top5_count, top1_count, total = retrieve_all(eeg_feature_all, image_feature_all, args.data_average)
+        subject_all = np.concatenate(subjects, axis=0)
+        object_all = np.concatenate(object_indices, axis=0)
+        image_all = np.concatenate(image_indices, axis=0)
+        top5_count, top1_count, total = retrieve_all(
+            eeg_feature_all,
+            image_feature_all,
+            args.data_average,
+            subject_ids=subject_all,
+            object_indices=object_all,
+            image_indices=image_all,
+            eval_mode=args.eval_mode,
+            sattc_params=sattc_params,
+        )
         top5_acc_local = top5_count / total * 100
         top1_acc_local = top1_count / total * 100
         log(
-            f"{split_name}: top5 acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
+            f"{split_name}: mode={args.eval_mode} top5 acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
         )
         return avg_loss_local, top1_acc_local, top5_acc_local
 
@@ -911,6 +1008,7 @@ if __name__ == '__main__':
 
         total_loss = 0.0
         total_ssl_loss = 0.0
+        total_relic_loss = 0.0
         total_cl_loss = 0.0
         total_subject_loss = 0.0
         total_adv_subject_loss = 0.0
@@ -958,6 +1056,11 @@ if __name__ == '__main__':
                     positive_feature = eeg_feature_batch[partner_idx]
                     cl_loss = compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, args.clap_tau)
                     loss = loss + args.clap_loss_lambda * cl_loss
+                    
+                    if args.clap_mse_lambda > 0:
+                        mse_loss = F.mse_loss(eeg_feature_batch, arch_out['z_content'].detach())
+                        loss = loss + args.clap_mse_lambda * mse_loss
+                    
                     total_cl_loss += cl_loss.item()
                 else:
                     cl_loss = eeg_feature_batch.sum() * 0.0
@@ -980,6 +1083,17 @@ if __name__ == '__main__':
                 ssl_loss = criterion.self_similarity_loss(arch_out['ssl_feature'], ssl_positive_mask)
                 loss = loss + args.ssl_lambda * ssl_loss
                 total_ssl_loss += ssl_loss.item()
+
+            if args.relic_lambda > 0:
+                relic_positive_mask = build_cross_subject_positive_mask(object_idx_batch, image_idx_batch, subject_id_batch)
+                relic_loss = compute_relic_prediction_consistency_loss(
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    relic_positive_mask,
+                )
+                loss = loss + args.relic_lambda * relic_loss
+                total_relic_loss += relic_loss.item()
 
             if args.architecture == 'factorized_adv':
                 if arch_out['subject_logits'] is not None and args.subject_loss_lambda > 0:
@@ -1022,6 +1136,7 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train', avg_loss, epoch)
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_ssl', total_ssl_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_relic', total_relic_loss / len(dataloader), epoch)
         if args.architecture == 'factorized_adv':
             writer.add_scalar('Loss/train_subject', total_subject_loss / len(dataloader), epoch)
             writer.add_scalar('Loss/train_adv_subject', total_adv_subject_loss / len(dataloader), epoch)
@@ -1033,7 +1148,8 @@ if __name__ == '__main__':
                 writer.add_scalar('Acc/train_adv_subject_head', total_adv_subject_acc / total_adv_subject_acc_steps, epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] Stage={stage} TrainLoss={avg_loss:.4f} "
-            f"CL={total_cl_loss / len(dataloader):.4f} SSL={total_ssl_loss / len(dataloader):.4f}"
+            f"CL={total_cl_loss / len(dataloader):.4f} SSL={total_ssl_loss / len(dataloader):.4f} "
+            f"RELIC={total_relic_loss / len(dataloader):.4f}"
         )
 
         if args.save_weights:
@@ -1105,6 +1221,7 @@ if __name__ == '__main__':
 
     result_dict = {
         'architecture': args.architecture,
+        'eval_mode': args.eval_mode,
         'top1 acc': f'{top1_acc:.2f}',
         'top5 acc': f'{top5_acc:.2f}',
         'best top1 acc': f'{best_top1_acc:.2f}',

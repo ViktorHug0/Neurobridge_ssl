@@ -11,7 +11,7 @@ DEVICE="${DEVICE:-cuda:0}"
 EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-TSConv}"
 BATCH_SIZE="${BATCH_SIZE:-1024}"
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
-NUM_EPOCHS="${NUM_EPOCHS:-50}"
+NUM_EPOCHS="${NUM_EPOCHS:-80}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 PROJECTOR="${PROJECTOR:-linear}"
 FEATURE_DIM="${FEATURE_DIM:-64}"
@@ -20,18 +20,21 @@ OUTPUT_ROOT="${OUTPUT_DIR:-./results/things_eeg/inter-subjects}"
 RUN_TAG="${RUN_TAG:-clap_$(date +'%Y%m%d-%H%M%S')}"
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
 UNIFIED_CSV="${RUN_ROOT}/clap_summary.csv"
-SEED="${SEED:-2026}"
+SEED="${SEED:-2050}"
 
 mkdir -p "$RUN_ROOT"
 
 SUBSET_CHANNELS=()
-HELD_OUT_SUBJECTS=(${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10})
-ADAPTER_ALPHAS=(${ADAPTER_ALPHAS:-0.1 0.3 0.5 1.0})
-CLAP_TAUS=(${CLAP_TAUS:-0.3 0.5})
+HELD_OUT_SUBJECTS=(${HELD_OUT_SUBJECTS:-1})
+ADAPTER_ALPHAS=(${ADAPTER_ALPHAS:-0.1})
+CLAP_TAUS=(${CLAP_TAUS:-0.1 0.3 0.5})
 ADAPTER_HIDDEN_DIMS=(${ADAPTER_HIDDEN_DIMS:-64})
 PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-40}"
 CLAP_LOSS_LAMBDA="${CLAP_LOSS_LAMBDA:-1.0}"
-SAMPLES_PER_IMAGE="${SAMPLES_PER_IMAGE:-8}"
+CLAP_MSE_LAMBDA="${CLAP_MSE_LAMBDA:-0.0}"
+CLAP_TRANSFER="${CLAP_TRANSFER:-true}"
+SAMPLES_PER_IMAGE="${SAMPLES_PER_IMAGE:-4}"
+RUN_BASELINE_FIRST="${RUN_BASELINE_FIRST:-false}"
 
 # Fixed validation subject per test subject (must differ from test).
 declare -A VAL_FOR_TEST
@@ -85,6 +88,64 @@ with open(out_csv, "a", newline="") as f:
 PY
 }
 
+if [ "$RUN_BASELINE_FIRST" = "true" ]; then
+    BASE_CFG_NAME="baseline"
+    BASE_RUN_DIR="${RUN_ROOT}/${BASE_CFG_NAME}_seed${SEED}"
+    mkdir -p "$BASE_RUN_DIR"
+
+    echo "=========================================================="
+    echo "Running baseline (no CLAP): ${BASE_CFG_NAME}"
+    echo "=========================================================="
+
+    for SUB_ID in "${HELD_OUT_SUBJECTS[@]}"
+    do
+        OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
+        VAL_ID=${VAL_FOR_TEST[$SUB_ID]}
+        TRAIN_IDS=""
+        for i in {1..10}
+        do
+            if [ "$i" -ne "$SUB_ID" ] && [ "$i" -ne "$VAL_ID" ]; then
+                TRAIN_IDS+="$i "
+            fi
+        done
+
+        PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+        python3 train.py \
+            --batch_size "$BATCH_SIZE" \
+            --num_workers "$NUM_WORKERS" \
+            --learning_rate "$LEARNING_RATE" \
+            --output_name "$OUTPUT_NAME" \
+            --eeg_encoder_type "$EEG_ENCODER_TYPE" \
+            --train_subject_ids $TRAIN_IDS \
+            --test_subject_ids "$SUB_ID" \
+            --val_subject_id "$VAL_ID" \
+            --select_best_on val \
+            --softplus \
+            --num_epochs "$NUM_EPOCHS" \
+            --image_feature_dir "$IMAGE_FEATURE_DIR" \
+            --text_feature_dir "$TEXT_FEATURE_DIR" \
+            --eeg_data_dir "$EEG_DATA_DIR" \
+            --device "$DEVICE" \
+            --output_dir "$BASE_RUN_DIR" \
+            --selected_channels "${SUBSET_CHANNELS[@]}" \
+            --img_l2norm \
+            --projector "$PROJECTOR" \
+            --feature_dim "$FEATURE_DIM" \
+            --eeg_backbone_dim "$EEG_BACKBONE_DIM" \
+            --data_average \
+            --save_weights \
+            --multi_positive_loss \
+            --grouped_batch_sampler \
+            --samples_per_image "$SAMPLES_PER_IMAGE" \
+            --architecture baseline \
+            --ssl_lambda 0.0 \
+            --seed "$SEED"
+    done
+
+    python3 compute_avg_results.py --result_dir "$BASE_RUN_DIR" --output_name "inter_subject_summary.csv"
+    append_average_row "$BASE_CFG_NAME" "$BASE_RUN_DIR"
+fi
+
 for ADAPTER_ALPHA in "${ADAPTER_ALPHAS[@]}"
 do
     for CLAP_TAU in "${CLAP_TAUS[@]}"
@@ -110,6 +171,14 @@ do
                         TRAIN_IDS+="$i "
                     fi
                 done
+
+                EXTRA_ARGS=""
+                if [ "$CLAP_TRANSFER" = "false" ]; then
+                    EXTRA_ARGS+=" --no_clap_transfer"
+                fi
+                if (( $(echo "$CLAP_MSE_LAMBDA > 0" | bc -l) )); then
+                    EXTRA_ARGS+=" --clap_mse_lambda $CLAP_MSE_LAMBDA"
+                fi
 
                 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
                 python3 train.py \
@@ -146,6 +215,7 @@ do
                     --adapter_hidden_dim "$ADAPTER_HIDDEN_DIM" \
                     --clap_tau "$CLAP_TAU" \
                     --clap_loss_lambda "$CLAP_LOSS_LAMBDA" \
+                    $EXTRA_ARGS \
                     --seed "$SEED"
             done
 

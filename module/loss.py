@@ -4,11 +4,12 @@ import torch
 import numpy as np
 
 class ContrastiveLoss(nn.Module):
-    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool):
+    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool, eeg_l2norm_ssl:bool=False):
         super(ContrastiveLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
         self.eeg_l2norm = eeg_l2norm
+        self.eeg_l2norm_ssl = eeg_l2norm_ssl
         self.img_l2norm = img_l2norm
         self.text_l2norm = text_l2norm
         
@@ -64,7 +65,7 @@ class ContrastiveLoss(nn.Module):
         return (loss_qk + loss_kq) / 2
 
     def self_similarity_loss(self, feature, positive_mask):
-        if self.eeg_l2norm:
+        if self.eeg_l2norm or self.eeg_l2norm_ssl:
             feature = F.normalize(feature, p=2, dim=1)
         logit_scale = self._get_logit_scale()
         logits = torch.matmul(feature, feature.T) * logit_scale

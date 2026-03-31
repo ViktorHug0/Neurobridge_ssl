@@ -47,7 +47,7 @@ class ResidualAdapter(nn.Module):
     def forward(self, x):
         alpha = 1.0 if self.training else self.alpha_inference
         h = self.linear2(self.act(self.linear1(x)))
-        return F.normalize(x + alpha * h, dim=-1)
+        return x + alpha * h
 
 
 class _GradReverse(Function):

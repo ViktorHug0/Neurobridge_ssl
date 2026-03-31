@@ -15,42 +15,30 @@ NUM_EPOCHS=50
 NUM_WORKERS=4
 SELECTED_CHANNELS=('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
 PROJECTOR="linear"
-# SSL lambda sweep below; contrastive temperature fixed via INIT_TEMPERATURE (default 0.07, train.py default).
+# RELIC sweep below; contrastive temperature fixed via INIT_TEMPERATURE (default 0.07, train.py default).
 INIT_TEMPERATURE="${INIT_TEMPERATURE:-0.07}"
 FEATURE_DIM=64
 EEG_BACKBONE_DIM=64
 OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
-# Configuration sweep: ssl_lambda (cross-subject SSL loss weight). Override with SSL_LAMBDA_VALUES env.
-SSL_LAMBDA_VALUES=(${SSL_LAMBDA_VALUES:-0.0 0.01 0.05 0.1 0.25 0.5 1})
+# Configuration sweep: relic_lambda (prediction-space same-image cross-subject consistency weight).
+# Override with RELIC_LAMBDA_VALUES env.
+RELIC_LAMBDA_VALUES=(${RELIC_LAMBDA_VALUES:-0.0 0.01 0.05 0.1 0.25 0.5 1})
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
-for val in "${SSL_LAMBDA_VALUES[@]}"
+for val in "${RELIC_LAMBDA_VALUES[@]}"
 do
-    CONFIG_NAMES+=("ssl_lambda_${val}")
-    CONFIG_ARGS+=("--init_temperature ${INIT_TEMPERATURE} --feature_dim ${FEATURE_DIM} 
-    --eeg_backbone_dim ${EEG_BACKBONE_DIM} --ssl_lambda ${val} --multi_positive_loss 
+    CONFIG_NAMES+=("relic_lambda_${val}")
+    CONFIG_ARGS+=("--init_temperature ${INIT_TEMPERATURE} --feature_dim ${FEATURE_DIM} \
+    --eeg_backbone_dim ${EEG_BACKBONE_DIM} --relic_lambda ${val} --ssl_lambda 0.0 --multi_positive_loss \
     --grouped_batch_sampler --samples_per_image 3")
 done
 
 # Default seed (can be overridden by environment variable SEED)
 SEED=${SEED:-9099}
 
-# Fixed validation subject per test subject (must differ from test). Best checkpoint from val, report on test.
-declare -A VAL_FOR_TEST
-VAL_FOR_TEST[1]=2
-VAL_FOR_TEST[2]=1
-VAL_FOR_TEST[3]=4
-VAL_FOR_TEST[4]=3
-VAL_FOR_TEST[5]=6
-VAL_FOR_TEST[6]=5
-VAL_FOR_TEST[7]=8
-VAL_FOR_TEST[8]=7
-VAL_FOR_TEST[9]=10
-VAL_FOR_TEST[10]=9
-
-# Create a dedicated session folder for this entire execution 
+# Create a dedicated session folder for this entire execution
 SESSION_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
 SESSION_DIR="${OUTPUT_DIR_BASE}/${SESSION_TIMESTAMP}_session_seed${SEED}"
 SESSION_SUMMARY="${SESSION_DIR}/session_summary.csv"
@@ -60,7 +48,7 @@ for c_idx in "${!CONFIG_NAMES[@]}"
 do
     CONFIG_NAME="${CONFIG_NAMES[$c_idx]}"
     EXTRA_ARGS="${CONFIG_ARGS[$c_idx]}"
-    
+
     echo "##########################################################"
     echo "Running Config: $CONFIG_NAME"
     echo "Args: $EXTRA_ARGS"
@@ -74,17 +62,15 @@ do
     do
         OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
         echo "Training subject ${SUB_ID} for $CONFIG_NAME..."
-        VAL_ID=${VAL_FOR_TEST[$SUB_ID]}
 
         TRAIN_IDS=""
         for i in {1..10}
         do
-            if [ "$i" -ne "$SUB_ID" ] && [ "$i" -ne "$VAL_ID" ]; then
+            if [ "$i" -ne "$SUB_ID" ]; then
                 TRAIN_IDS+="$i "
             fi
         done
 
-        PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
         python3 train.py \
             --batch_size "$BATCH_SIZE" \
             --num_workers "$NUM_WORKERS" \
@@ -93,8 +79,6 @@ do
             --eeg_encoder_type "$EEG_ENCODER_TYPE" \
             --train_subject_ids $TRAIN_IDS \
             --test_subject_ids $SUB_ID \
-            --val_subject_id "$VAL_ID" \
-            --select_best_on val \
             --softplus \
             --num_epochs "$NUM_EPOCHS" \
             --image_feature_dir "$IMAGE_FEATURE_DIR" \
@@ -104,7 +88,6 @@ do
             --output_dir "$RUN_DIR" \
             --selected_channels "${SELECTED_CHANNELS[@]}" \
             --img_l2norm \
-            --eeg_l2_norm_ssl \
             --projector "$PROJECTOR" \
             --data_average \
             --save_weights \
@@ -133,9 +116,7 @@ if os.path.exists(inter_summary_path):
         avg_row = df[df['sub'] == 'Average'].copy()
         if not avg_row.empty:
             avg_row.insert(0, 'config', config_name)
-            # Optionally remove 'sub' column as it's redundant
-            # avg_row = avg_row.drop(columns=['sub'])
-            
+
             header = not os.path.exists(session_summary_path)
             avg_row.to_csv(session_summary_path, mode='a', index=False, header=header)
             print(f'Successfully added {config_name} to {session_summary_path}')

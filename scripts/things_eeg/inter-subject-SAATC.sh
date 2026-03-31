@@ -16,71 +16,36 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 FEATURE_DIM="${FEATURE_DIM:-64}"
 EEG_BACKBONE_DIM="${EEG_BACKBONE_DIM:-64}"
 OUTPUT_ROOT="${OUTPUT_DIR:-./results/things_eeg/inter-subjects}"
-RUN_TAG="${RUN_TAG:-mixup_$(date +'%Y%m%d-%H%M%S')}"
+RUN_TAG="${RUN_TAG:-sattc_$(date +'%Y%m%d-%H%M%S')}"
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
-UNIFIED_CSV="${RUN_ROOT}/mixup_summary.csv"
-RUN_BASELINE="${RUN_BASELINE:-true}"
+UNIFIED_CSV="${RUN_ROOT}/sattc_summary.csv"
 
-# Base model recipe to compare mixup variants against.
+# Base model recipe to compare evaluation-only SATTC variants against.
 BASE_CONFIG_NAME="${BASE_CONFIG_NAME:-baseline}"
-BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:---architecture baseline --ssl_lambda 0.0}"
+BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:---architecture baseline --ssl_lambda 0.0 --relic_lambda 0.0 --subject_mixup_mode none}"
 
-# Space-separated values. Example:
-# MIXUP_ALPHAS="0.2 0.5 1.0 2.0"
-# MIXUP_MODES="raw_eeg embedding"
-MIXUP_ALPHAS="${MIXUP_ALPHAS:-0.5}"
-MIXUP_MODES="${MIXUP_MODES:-raw_eeg}"
-MIXUP_TYPES="${MIXUP_TYPES:-pairwise}"
+EVAL_MODES="${EVAL_MODES:-plain_cosine saw saw_csls saw_adacsls saw_adacsls_poe}"
 PROJECTORS="${PROJECTORS:-linear}"
-HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
-
-# Fixed validation subject per test subject (must differ from test). Best checkpoint from val, report on test.
-declare -A VAL_FOR_TEST
-VAL_FOR_TEST[1]=2
-VAL_FOR_TEST[2]=1
-VAL_FOR_TEST[3]=4
-VAL_FOR_TEST[4]=3
-VAL_FOR_TEST[5]=6
-VAL_FOR_TEST[6]=5
-VAL_FOR_TEST[7]=8
-VAL_FOR_TEST[8]=7
-VAL_FOR_TEST[9]=10
-VAL_FOR_TEST[10]=9
-
-SEEDS=(3300 3301 3302)
+HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2}"
+SEEDS="${SEEDS:-3300}"
 
 mkdir -p "$RUN_ROOT"
 
 SUBSET_CHANNELS=("P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
 
-read -r -a MIXUP_ALPHA_ARR <<< "$MIXUP_ALPHAS"
-read -r -a MIXUP_MODE_ARR <<< "$MIXUP_MODES"
-read -r -a MIXUP_TYPE_ARR <<< "$MIXUP_TYPES"
+read -r -a EVAL_MODE_ARR <<< "$EVAL_MODES"
 read -r -a PROJECTOR_ARR <<< "$PROJECTORS"
 read -r -a HELD_OUT_SUBJECT_ARR <<< "$HELD_OUT_SUBJECTS"
+read -r -a SEED_ARR <<< "$SEEDS"
 
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 ARCH="$EEG_ENCODER_TYPE"
 
-# Baseline (no subject mixup)
-if [ "$RUN_BASELINE" = "true" ]; then
-    for PROJECTOR in "${PROJECTOR_ARR[@]}"; do
-        CONFIG_NAMES+=("${BASE_CONFIG_NAME}_${PROJECTOR}")
-        CONFIG_ARGS+=("${BASE_EXTRA_ARGS} --subject_mixup_mode none --projector ${PROJECTOR}")
-    done
-fi
-
-# Mixup variants
-for MODE in "${MIXUP_MODE_ARR[@]}"; do
-    for MIXUP_TYPE in "${MIXUP_TYPE_ARR[@]}"; do
-        for PROJECTOR in "${PROJECTOR_ARR[@]}"; do
-            for ALPHA in "${MIXUP_ALPHA_ARR[@]}"; do
-                ALPHA_TAG="${ALPHA//./p}"
-                CONFIG_NAMES+=("mix_${MODE}_${MIXUP_TYPE}_${PROJECTOR}_a${ALPHA_TAG}")
-                CONFIG_ARGS+=("${BASE_EXTRA_ARGS} --subject_mixup_mode ${MODE} --mixup_type ${MIXUP_TYPE} --subject_mixup_alpha ${ALPHA} --projector ${PROJECTOR}")
-            done
-        done
+for PROJECTOR in "${PROJECTOR_ARR[@]}"; do
+    for MODE in "${EVAL_MODE_ARR[@]}"; do
+        CONFIG_NAMES+=("${BASE_CONFIG_NAME}_${PROJECTOR}_${MODE}")
+        CONFIG_ARGS+=("${BASE_EXTRA_ARGS} --projector ${PROJECTOR} --eval_mode ${MODE}")
     done
 done
 
@@ -97,6 +62,7 @@ summary_path = os.path.join(run_dir, "inter_subject_summary.csv")
 row = {
     "config": config_name,
     "architecture": "",
+    "eval_mode": "",
     "top1 acc": "",
     "top5 acc": "",
     "best top1 acc": "",
@@ -125,7 +91,7 @@ PY
 
 CURRENT_CHANNELS=("${SUBSET_CHANNELS[@]}")
 
-for SEED in "${SEEDS[@]}"
+for SEED in "${SEED_ARR[@]}"
 do
     for c_idx in "${!CONFIG_NAMES[@]}"
     do
@@ -135,18 +101,17 @@ do
         mkdir -p "$CONFIG_RUN_DIR"
 
         echo "=========================================================="
-        echo "Running Inter-subject Mixup Sweep: ${CONFIG_NAME} (Seed ${SEED})"
+        echo "Running Inter-subject SATTC Sweep: ${CONFIG_NAME} (Seed ${SEED})"
         echo "Args: ${EXTRA_ARGS}"
         echo "=========================================================="
 
         for SUB_ID in "${HELD_OUT_SUBJECT_ARR[@]}"
         do
             OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
-            VAL_ID=${VAL_FOR_TEST[$SUB_ID]}
             TRAIN_IDS=""
             for i in {1..10}
             do
-                if [ "$i" -ne "$SUB_ID" ] && [ "$i" -ne "$VAL_ID" ]; then
+                if [ "$i" -ne "$SUB_ID" ]; then
                     TRAIN_IDS+="$i "
                 fi
             done
@@ -160,8 +125,7 @@ do
                 --eeg_encoder_type "$ARCH" \
                 --train_subject_ids $TRAIN_IDS \
                 --test_subject_ids "$SUB_ID" \
-                --val_subject_id "$VAL_ID" \
-                --select_best_on val \
+                --select_best_on test \
                 --softplus \
                 --num_epochs "$NUM_EPOCHS" \
                 --image_feature_dir "$IMAGE_FEATURE_DIR" \
@@ -177,7 +141,7 @@ do
                 --save_weights \
                 --multi_positive_loss \
                 --grouped_batch_sampler \
-                --samples_per_image 5 \
+                --samples_per_image 3 \
                 --seed "$SEED" \
                 $EXTRA_ARGS
         done
@@ -187,4 +151,4 @@ do
     done
 done
 
-echo "Mixup sweep completed: ${UNIFIED_CSV}"
+echo "SATTC sweep completed: ${UNIFIED_CSV}"
