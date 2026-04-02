@@ -1,0 +1,16 @@
+{
+    "dataset_name": "mixed",
+    "components": [
+        {
+            "name": "things_eeg2",
+            "weight": 1.0
+        },
+        {
+            "name": "alljoined",
+            "weight": 1.0
+        }
+    ],
+    "test_dataset_name": "things_eeg2",
+    "eval_batch_size": 200,
+    "topk": 5
+}

@@ -13,12 +13,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
-from module.dataset import EEGPreImageDataset
+from module.dataset import EEGPreImageDataset, MixedEEGDataset
+from module.dataset_profiles import load_dataset_profile
 from module.eeg_encoder.atm.atm import ATMS
 from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer, TSConv30 
 from module.loss import ContrastiveLoss
@@ -27,6 +28,10 @@ from module.projector import *
 from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
 from module.eeg_augmentation import RandomTimeShift, RandomGaussianNoise, RandomChannelDropout, RandomSmooth
+
+DEFAULT_SUBJECT_IDS = [8]
+DEFAULT_SELECTED_CHANNELS = []
+DEFAULT_TIME_WINDOW = [0, 250]
 
 
 def seed_everything(seed: int = None):
@@ -86,7 +91,7 @@ def sample_cross_subject_partner_indices(object_indices, image_indices, subject_
     )
 
 
-def compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, tau):
+def compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, tau, sample_weights=None):
     if criterion.eeg_l2norm:
         anchor_feature = F.normalize(anchor_feature, p=2, dim=1)
         positive_feature = F.normalize(positive_feature, p=2, dim=1)
@@ -97,15 +102,38 @@ def compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, tau):
         logit_scale = 1.0 / tau
     logits = torch.matmul(anchor_feature, positive_feature.T) * logit_scale
     labels = torch.arange(anchor_feature.shape[0], device=anchor_feature.device)
-    return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2.0
+    loss_anchor = _weighted_mean(F.cross_entropy(logits, labels, reduction='none'), sample_weights)
+    loss_positive = _weighted_mean(F.cross_entropy(logits.T, labels, reduction='none'), sample_weights)
+    return (loss_anchor + loss_positive) / 2.0
 
 
-def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature, positive_mask, use_multi_positive):
+def _weighted_mean(values, sample_weights=None):
+    if sample_weights is None:
+        return values.mean()
+    weights = sample_weights.to(device=values.device, dtype=values.dtype)
+    weight_sum = weights.sum()
+    if weight_sum <= 0:
+        return values.new_tensor(0.0)
+    return (values * weights).sum() / weight_sum
+
+
+def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature, positive_mask, use_multi_positive, sample_weights=None):
     if use_multi_positive:
-        loss_contrastive_ie = criterion.multi_positive_pair_loss(eeg_feature, image_feature, positive_mask)
+        loss_contrastive_ie = criterion.multi_positive_pair_loss(
+            eeg_feature,
+            image_feature,
+            positive_mask,
+            query_weights=sample_weights,
+            key_weights=sample_weights,
+        )
         if criterion.beta != 1.0:
             loss_contrastive_te = criterion.multi_positive_pair_loss(
-                eeg_feature, text_feature, positive_mask, key_is_text=True
+                eeg_feature,
+                text_feature,
+                positive_mask,
+                key_is_text=True,
+                query_weights=sample_weights,
+                key_weights=sample_weights,
             )
             loss_contrastive = criterion.beta * loss_contrastive_ie + (1 - criterion.beta) * loss_contrastive_te
         else:
@@ -113,14 +141,40 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
 
         if criterion.alpha != 1.0:
             eeg_for_mse, image_for_mse, _ = criterion._normalize_inputs(eeg_feature, image_feature)
-            loss_mse = criterion.criterion_mse(eeg_for_mse, image_for_mse)
+            loss_mse = F.mse_loss(eeg_for_mse, image_for_mse, reduction='none').mean(dim=1)
+            loss_mse = _weighted_mean(loss_mse, sample_weights)
             return criterion.alpha * loss_contrastive + (1 - criterion.alpha) * loss_mse
         return loss_contrastive
 
-    return criterion(eeg_feature, image_feature, text_feature)
+    if sample_weights is None:
+        return criterion(eeg_feature, image_feature, text_feature)
+
+    eeg_feature, image_feature, text_feature = criterion._normalize_inputs(
+        eeg_feature, image_feature, text_feature if criterion.beta != 1.0 else None
+    )
+    logit_scale = criterion._get_logit_scale()
+    similarity_matrix_ie = torch.matmul(eeg_feature, image_feature.T) * logit_scale
+    labels = torch.arange(eeg_feature.shape[0], device=eeg_feature.device)
+
+    loss_eeg_ie = _weighted_mean(F.cross_entropy(similarity_matrix_ie, labels, reduction='none'), sample_weights)
+    loss_img_ie = _weighted_mean(F.cross_entropy(similarity_matrix_ie.T, labels, reduction='none'), sample_weights)
+    if criterion.beta != 1.0:
+        similarity_matrix_te = torch.matmul(eeg_feature, text_feature.T) * logit_scale
+        loss_eeg_te = _weighted_mean(F.cross_entropy(similarity_matrix_te, labels, reduction='none'), sample_weights)
+        loss_img_te = _weighted_mean(F.cross_entropy(similarity_matrix_te.T, labels, reduction='none'), sample_weights)
+        loss_contrastive_ie = (loss_eeg_ie + loss_img_ie) / 2
+        loss_contrastive_te = (loss_eeg_te + loss_img_te) / 2
+        loss_contrastive = criterion.beta * loss_contrastive_ie + (1 - criterion.beta) * loss_contrastive_te
+    else:
+        loss_contrastive = (loss_eeg_ie + loss_img_ie) / 2
+
+    if criterion.alpha != 1.0:
+        loss_mse = _weighted_mean(F.mse_loss(eeg_feature, image_feature, reduction='none').mean(dim=1), sample_weights)
+        return criterion.alpha * loss_contrastive + (1 - criterion.alpha) * loss_mse
+    return loss_contrastive
 
 
-def compute_relic_prediction_consistency_loss(criterion, eeg_feature, image_feature, positive_mask):
+def compute_relic_prediction_consistency_loss(criterion, eeg_feature, image_feature, positive_mask, sample_weights=None):
     eeg_feature, image_feature, _ = criterion._normalize_inputs(eeg_feature, image_feature, None)
     logits = torch.matmul(eeg_feature, image_feature.T) * criterion._get_logit_scale()
     log_probs = F.log_softmax(logits, dim=1)
@@ -139,7 +193,10 @@ def compute_relic_prediction_consistency_loss(criterion, eeg_feature, image_feat
 
     kl_forward = torch.sum(probs_src * (log_probs_src - log_probs_dst), dim=-1)
     kl_reverse = torch.sum(probs_dst * (log_probs_dst - log_probs_src), dim=-1)
-    return (0.5 * (kl_forward + kl_reverse)).mean()
+    pair_loss = 0.5 * (kl_forward + kl_reverse)
+    if sample_weights is None:
+        return pair_loss.mean()
+    return _weighted_mean(pair_loss, sample_weights[src_idx])
 
 
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
@@ -176,6 +233,144 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch):
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
     return model(eeg_batch)
+
+
+def _maybe_use_profile_subject_ids(cli_subject_ids, profile_subject_ids):
+    if profile_subject_ids is None:
+        return cli_subject_ids
+    if list(cli_subject_ids) == DEFAULT_SUBJECT_IDS:
+        return list(profile_subject_ids)
+    return cli_subject_ids
+
+
+def _profile_value_or_default(cli_value, default_value, profile_value):
+    if profile_value is None:
+        return cli_value
+    if cli_value == default_value:
+        return profile_value
+    return cli_value
+
+
+def _materialize_dataset_kwargs(args, profile, subject_ids, eeg_transform, train):
+    eeg_data_dir = _profile_value_or_default(args.eeg_data_dir, './things_eeg/data/preprocessed_eeg', profile.get("eeg_data_dir"))
+    image_feature_dir = _profile_value_or_default(
+        args.image_feature_dir,
+        '/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit',
+        profile.get("image_feature_dir"),
+    )
+    text_feature_dir = _profile_value_or_default(args.text_feature_dir, './data/things_eeg/text_feature/BLIP2', profile.get("text_feature_dir"))
+    selected_channels = _profile_value_or_default(list(args.selected_channels), DEFAULT_SELECTED_CHANNELS, profile.get("selected_channels"))
+    time_window = _profile_value_or_default(list(args.time_window), DEFAULT_TIME_WINDOW, profile.get("time_window"))
+    return {
+        "subject_ids": subject_ids,
+        "eeg_data_dir": eeg_data_dir,
+        "selected_channels": selected_channels,
+        "time_window": time_window,
+        "image_feature_dir": image_feature_dir,
+        "text_feature_dir": text_feature_dir,
+        "image_aug": args.image_aug,
+        "aug_image_feature_dirs": args.aug_image_feature_dirs,
+        "average": args.data_average if train else True,
+        "_random": args.data_random if train else False,
+        "eeg_transform": eeg_transform,
+        "train": train,
+        "image_test_aug": args.image_test_aug,
+        "eeg_test_aug": args.eeg_test_aug,
+        "frozen_eeg_prior": args.frozen_eeg_prior,
+    }
+
+
+def _build_single_dataset(args, profile, subject_ids, eeg_transform, train):
+    kwargs = _materialize_dataset_kwargs(args, profile, subject_ids, eeg_transform, train)
+    return EEGPreImageDataset(**kwargs)
+
+
+def _resolve_eval_batch_size(args, profile):
+    if args.eval_batch_size is not None:
+        return args.eval_batch_size
+    return int(profile.get("eval_batch_size", 200))
+
+
+def _resolve_eval_topk(args, profile):
+    if args.eval_topk != 5:
+        return int(args.eval_topk)
+    return int(profile.get("topk", args.eval_topk))
+
+
+def _build_runtime_datasets(args, eeg_transform):
+    base_profile = load_dataset_profile(args.dataset_name, args.dataset_config_path)
+    if args.dataset_name != 'mixed':
+        train_subject_ids = _maybe_use_profile_subject_ids(args.train_subject_ids, base_profile.get("train_subject_ids"))
+        test_subject_ids = _maybe_use_profile_subject_ids(args.test_subject_ids, base_profile.get("test_subject_ids"))
+        val_subject_id = args.val_subject_id
+        train_dataset = _build_single_dataset(args, base_profile, train_subject_ids, eeg_transform, True)
+        val_dataset = None
+        if val_subject_id is not None:
+            val_dataset = _build_single_dataset(args, base_profile, [val_subject_id], eeg_transform, False)
+        test_dataset = _build_single_dataset(args, base_profile, test_subject_ids, eeg_transform, False)
+        return {
+            "profile": base_profile,
+            "train_dataset": train_dataset,
+            "val_dataset": val_dataset,
+            "test_dataset": test_dataset,
+            "train_subject_ids": train_subject_ids,
+            "test_subject_ids": test_subject_ids,
+            "eval_batch_size": _resolve_eval_batch_size(args, base_profile),
+            "eval_topk": _resolve_eval_topk(args, base_profile),
+        }
+
+    if args.subject_probe_holdout:
+        raise ValueError("--subject_probe_holdout is not supported with --dataset_name mixed.")
+
+    component_profiles = []
+    component_datasets = []
+    component_names = []
+    component_weights = []
+    component_loss_weights = []
+    for component in base_profile.get("components", []):
+        component_profile = load_dataset_profile(component["name"], component.get("config_path"))
+        component_profiles.append(component_profile)
+        component_names.append(component["name"])
+        component_weights.append(float(component.get("weight", 1.0)))
+        component_loss_weights.append(float(component.get("loss_weight", 1.0)))
+        train_subject_ids = component_profile.get("train_subject_ids", DEFAULT_SUBJECT_IDS)
+        component_datasets.append(_build_single_dataset(args, component_profile, train_subject_ids, eeg_transform, True))
+
+    if args.mixed_dataset_weights:
+        if len(args.mixed_dataset_weights) != len(component_datasets):
+            raise ValueError("--mixed_dataset_weights must match the number of mixed dataset components.")
+        component_weights = [float(x) for x in args.mixed_dataset_weights]
+
+    mixed_train_dataset = MixedEEGDataset(
+        component_datasets,
+        dataset_names=component_names,
+        dataset_weights=component_weights,
+        dataset_loss_weights=component_loss_weights,
+    )
+    test_dataset_name = args.test_dataset_name or base_profile.get("test_dataset_name", component_names[0])
+    selected_profile = None
+    for name, profile in zip(component_names, component_profiles):
+        if name == test_dataset_name:
+            selected_profile = profile
+            break
+    if selected_profile is None:
+        raise ValueError(f"Unknown mixed test dataset '{test_dataset_name}'.")
+    test_subject_ids = selected_profile.get("test_subject_ids", DEFAULT_SUBJECT_IDS)
+    test_dataset = _build_single_dataset(args, selected_profile, test_subject_ids, eeg_transform, False)
+    return {
+        "profile": base_profile,
+        "train_dataset": mixed_train_dataset,
+        "val_dataset": None,
+        "test_dataset": test_dataset,
+        "train_subject_ids": list(mixed_train_dataset.subject_ids),
+        "test_subject_ids": test_subject_ids,
+        "eval_batch_size": _resolve_eval_batch_size(args, selected_profile),
+        "eval_topk": _resolve_eval_topk(args, selected_profile),
+        "component_names": component_names,
+        "component_weights": component_weights,
+        "component_loss_weights": component_loss_weights,
+        "test_dataset_name": test_dataset_name,
+    }
 
 
 def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise'):
@@ -267,6 +462,10 @@ def collect_trainable_parameters(modules):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_name', type=str, choices=['things_eeg2', 'alljoined', 'mixed'], default='things_eeg2', help='dataset family/profile to use')
+    parser.add_argument('--dataset_config_path', type=str, default=None, help='optional JSON override for the selected dataset profile')
+    parser.add_argument('--test_dataset_name', type=str, default=None, help='evaluation dataset when training with --dataset_name mixed')
+    parser.add_argument('--mixed_dataset_weights', nargs='+', type=float, default=None, help='optional per-component sampling weights for mixed training')
     parser.add_argument('--device', default='cuda:0', type=str, help='training device')
     parser.add_argument('--num_epochs', default=50, type=int, help='number of epochs')
     parser.add_argument('--batch_size', default=1024, type=int, help='batch size')
@@ -296,6 +495,8 @@ if __name__ == '__main__':
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--relic_lambda', default=0.0, type=float, help='weight for RELIC-style prediction consistency across same-image different-subject EEG views')
     parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'saw_csls'], default='plain_cosine', help='test-time retrieval: cosine, SAW whitening, or SAW + fixed-k CSLS')
+    parser.add_argument('--eval_batch_size', default=None, type=int, help='evaluation batch size (defaults to the dataset profile)')
+    parser.add_argument('--eval_topk', default=5, type=int, help='retrieval top-k used for evaluation summaries')
     parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='covariance shrinkage for subject-adaptive whitening (SAW) during evaluation')
     parser.add_argument('--sattc_saw_diag', action='store_true', help='use diagonal covariance for SAW during evaluation')
     parser.add_argument('--sattc_csls_k', default=2, type=int, help='fixed neighborhood size k for CSLS after SAW (eval_mode saw_csls)')
@@ -380,7 +581,7 @@ if __name__ == '__main__':
     for key, val in vars(args).items():
         log(f'{key:22} {val}')
 
-    if args.val_subject_id is not None and args.val_subject_id in args.train_subject_ids:
+    if args.dataset_name != 'mixed' and args.val_subject_id is not None and args.val_subject_id in args.train_subject_ids:
         args.train_subject_ids = [sid for sid in args.train_subject_ids if sid != args.val_subject_id]
         log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
         if len(args.train_subject_ids) == 0:
@@ -394,6 +595,7 @@ if __name__ == '__main__':
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     log(f'Using device: {device}')
+    log(f'Dataset profile: {args.dataset_name}')
     log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
     log(f'Evaluation mode: {args.eval_mode}')
 
@@ -417,23 +619,23 @@ if __name__ == '__main__':
     else:
         eeg_transform = None
 
-    train_dataset = EEGPreImageDataset(
-        args.train_subject_ids,
-        args.eeg_data_dir,
-        args.selected_channels,
-        args.time_window,
-        args.image_feature_dir,
-        args.text_feature_dir,
-        args.image_aug,
-        args.aug_image_feature_dirs,
-        args.data_average,
-        args.data_random,
-        eeg_transform,
-        True,
-        args.image_test_aug,
-        args.eeg_test_aug,
-        args.frozen_eeg_prior
-    )
+    dataset_bundle = _build_runtime_datasets(args, eeg_transform)
+    dataset_profile = dataset_bundle["profile"]
+    train_dataset = dataset_bundle["train_dataset"]
+    val_dataset = dataset_bundle["val_dataset"]
+    test_dataset = dataset_bundle["test_dataset"]
+    train_subject_ids_runtime = dataset_bundle["train_subject_ids"]
+    test_subject_ids_runtime = dataset_bundle["test_subject_ids"]
+    eval_batch_size = dataset_bundle["eval_batch_size"]
+    eval_topk = dataset_bundle["eval_topk"]
+    if train_subject_ids_runtime is not None:
+        args.train_subject_ids = train_subject_ids_runtime
+    if test_subject_ids_runtime is not None:
+        args.test_subject_ids = test_subject_ids_runtime
+    with open(os.path.join(writer.log_dir, "train_config.json"), 'w') as f:
+        json.dump(vars(args), f, indent=4)
+    log(f'Evaluation batch size: {eval_batch_size}')
+    log(f'Evaluation top-k: {eval_topk}')
 
     eeg_sample_points = train_dataset.num_sample_points
     image_feature_dim = train_dataset.image_features.shape[-1]
@@ -521,10 +723,20 @@ if __name__ == '__main__':
             f'samples_per_image={batch_sampler.samples_per_image}, effective_batch_size={effective_batch_size}'
         )
     else:
+        sampler = None
+        shuffle = True
+        if isinstance(train_main_dataset, MixedEEGDataset):
+            sampler = WeightedRandomSampler(
+                weights=train_main_dataset.get_sample_weights(),
+                num_samples=len(train_main_dataset),
+                replacement=True,
+            )
+            shuffle = False
         dataloader = DataLoader(
             train_main_dataset,
             batch_size=args.batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
             drop_last=True,
             num_workers=args.num_workers,
             pin_memory=pin_memory,
@@ -534,61 +746,31 @@ if __name__ == '__main__':
         raise ValueError("clap_adapter requires --grouped_batch_sampler to ensure cross-subject pairs.")
     if args.architecture == 'clap_adapter' and args.samples_per_image < 2:
         raise ValueError("clap_adapter requires --samples_per_image >= 2.")
-    if args.select_best_on == 'val' and args.val_subject_id is None:
+    if args.select_best_on == 'val' and val_dataset is None:
         raise ValueError("--select_best_on val requires --val_subject_id.")
-    if args.val_subject_id is not None:
+    if args.dataset_name != 'mixed' and args.val_subject_id is not None:
         if args.val_subject_id in args.test_subject_ids:
             raise ValueError("val_subject_id must be different from test_subject_ids.")
 
     val_dataloader = None
-    if args.val_subject_id is not None:
+    if val_dataset is not None:
         print('\n>>> Loading Validation Data <<<')
-        val_dataset = EEGPreImageDataset(
-            [args.val_subject_id],
-            args.eeg_data_dir,
-            args.selected_channels,
-            args.time_window,
-            args.image_feature_dir,
-            args.text_feature_dir,
-            args.image_aug,
-            args.aug_image_feature_dirs,
-            True,
-            False,
-            eeg_transform,
-            False,
-            args.image_test_aug,
-            args.eeg_test_aug,
-            args.frozen_eeg_prior
-        )
-        val_dataloader = DataLoader(val_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
+        val_dataloader = DataLoader(val_dataset, batch_size=eval_batch_size, shuffle=False, num_workers=args.num_workers)
 
     print('\n>>> Loading Test Data <<<')
-    test_dataset = EEGPreImageDataset(
-        args.test_subject_ids,
-        args.eeg_data_dir,
-        args.selected_channels,
-        args.time_window,
-        args.image_feature_dir,
-        args.text_feature_dir,
-        args.image_aug,
-        args.aug_image_feature_dirs,
-        True,
-        False,
-        eeg_transform,
-        False,
-        args.image_test_aug,
-        args.eeg_test_aug,
-        args.frozen_eeg_prior
-    )
-    test_dataloader = DataLoader(test_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
+    test_dataloader = DataLoader(test_dataset, batch_size=eval_batch_size, shuffle=False, num_workers=args.num_workers)
 
     inference_keys = [
+        'dataset_name', 'dataset_config_path', 'test_dataset_name',
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
         'projector', 'feature_dim', 'eeg_backbone_dim', 'pretrain_epochs', 'adapter_hidden_dim',
         'adapter_alpha', 'time_window', 'selected_channels',
-        'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
+        'eval_mode', 'eval_batch_size', 'eval_topk',
+        'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
+    inference_config['eval_batch_size'] = eval_batch_size
+    inference_config['eval_topk'] = eval_topk
     inference_config['eeg_sample_points'] = eeg_sample_points
     inference_config['backbone_feature_dim'] = backbone_feature_dim
     inference_config['image_feature_dim'] = image_feature_dim
@@ -804,11 +986,12 @@ if __name__ == '__main__':
             image_indices=image_all,
             eval_mode=args.eval_mode,
             sattc_params=sattc_params,
+            topk_value=eval_topk,
         )
         top5_acc_local = top5_count / total * 100
         top1_acc_local = top1_count / total * 100
         log(
-            f"{split_name}: mode={args.eval_mode} top5 acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
+            f"{split_name}: mode={args.eval_mode} top{eval_topk} acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
         )
         return avg_loss_local, top1_acc_local, top5_acc_local
 
@@ -850,6 +1033,7 @@ if __name__ == '__main__':
             subject_id_batch = batch[3].to(device)
             object_idx_batch = batch[4].to(device)
             image_idx_batch = batch[5].to(device)
+            sample_loss_weights = batch[7].to(device) if len(batch) > 7 else None
 
             optimizer.zero_grad()
             if args.subject_mixup_mode == 'raw_eeg':
@@ -878,11 +1062,23 @@ if __name__ == '__main__':
                 if valid_anchor_idx.numel() > 0:
                     anchor_feature = eeg_feature_batch[valid_anchor_idx]
                     positive_feature = eeg_feature_batch[partner_idx]
-                    cl_loss = compute_pair_infonce_loss(anchor_feature, positive_feature, criterion, args.clap_tau)
+                    clap_sample_weights = sample_loss_weights[valid_anchor_idx] if sample_loss_weights is not None else None
+                    cl_loss = compute_pair_infonce_loss(
+                        anchor_feature,
+                        positive_feature,
+                        criterion,
+                        args.clap_tau,
+                        clap_sample_weights,
+                    )
                     loss = loss + args.clap_loss_lambda * cl_loss
                     
                     if args.clap_mse_lambda > 0:
-                        mse_loss = F.mse_loss(eeg_feature_batch, arch_out['z_content'].detach())
+                        mse_loss = F.mse_loss(
+                            eeg_feature_batch,
+                            arch_out['z_content'].detach(),
+                            reduction='none',
+                        ).mean(dim=1)
+                        mse_loss = _weighted_mean(mse_loss, sample_loss_weights)
                         loss = loss + args.clap_mse_lambda * mse_loss
                     
                     total_cl_loss += cl_loss.item()
@@ -897,14 +1093,19 @@ if __name__ == '__main__':
                     image_feature_proj,
                     text_feature_proj,
                     positive_mask,
-                    args.multi_positive_loss
+                    args.multi_positive_loss,
+                    sample_loss_weights,
                 )
                 loss = loss + cl_loss
                 total_cl_loss += cl_loss.item()
 
             if args.ssl_lambda > 0:
                 ssl_positive_mask = build_cross_subject_positive_mask(object_idx_batch, image_idx_batch, subject_id_batch)
-                ssl_loss = criterion.self_similarity_loss(arch_out['ssl_feature'], ssl_positive_mask)
+                ssl_loss = criterion.self_similarity_loss(
+                    arch_out['ssl_feature'],
+                    ssl_positive_mask,
+                    row_weights=sample_loss_weights,
+                )
                 loss = loss + args.ssl_lambda * ssl_loss
                 total_ssl_loss += ssl_loss.item()
 
@@ -915,6 +1116,7 @@ if __name__ == '__main__':
                     eeg_feature_batch,
                     image_feature_proj,
                     relic_positive_mask,
+                    sample_loss_weights,
                 )
                 loss = loss + args.relic_lambda * relic_loss
                 total_relic_loss += relic_loss.item()
@@ -1052,13 +1254,14 @@ if __name__ == '__main__':
 
     result_dict = {
         'architecture': args.architecture,
+        'dataset_name': args.dataset_name,
         'eval_mode': args.eval_mode,
         'top1 acc': f'{top1_acc:.2f}',
-        'top5 acc': f'{top5_acc:.2f}',
+        f'top{eval_topk} acc': f'{top5_acc:.2f}',
         'best top1 acc': f'{best_top1_acc:.2f}',
-        'best top5 acc': f'{best_top5_acc:.2f}',
+        f'best top{eval_topk} acc': f'{best_top5_acc:.2f}',
         'best test loss': f'{best_test_loss:.4f}',
         'best epoch': best_test_epoch,
     }
     pd.DataFrame(result_dict, index=[0]).to_csv(os.path.join(log_dir, 'result.csv'), index=False)
-    log(f'best test loss: {best_test_loss:.4f} top5 acc: {best_top5_acc:.2f} top1 acc: {best_top1_acc:.2f} at epoch {best_test_epoch}')
+    log(f'best test loss: {best_test_loss:.4f} top{eval_topk} acc: {best_top5_acc:.2f} top1 acc: {best_top1_acc:.2f} at epoch {best_test_epoch}')

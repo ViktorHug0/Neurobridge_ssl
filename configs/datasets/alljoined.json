@@ -1,0 +1,21 @@
+{
+    "dataset_name": "alljoined",
+    "layout": "flat",
+    "eeg_data_dir": "./data/alljoined_adapter/eeg",
+    "image_feature_dir": "./data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit",
+    "text_feature_dir": "./data/things_eeg/text_feature/BLIP2",
+    "adapter_output_dir": "./data/alljoined_adapter",
+    "raw_config_path": "../ENIGMA/configs/Alljoined-1.6M.json",
+    "image_set_dir": "./data/things_eeg/image_set",
+    "selected_channels": [
+        "Cz", "FCz", "AFz", "Fp1", "F5", "F1", "CP5", "CP3",
+        "CP1", "P1", "P3", "P5", "P7", "PO7", "PO3", "O1",
+        "Pz", "POz", "Oz", "O2", "PO4", "PO8", "P8", "P6",
+        "P4", "P2", "CP2", "CP4", "CP6", "F2", "F6", "Fp2"
+    ],
+    "time_window": [0, 250],
+    "train_subject_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "test_subject_ids": [20],
+    "eval_batch_size": 256,
+    "topk": 5
+}

@@ -15,13 +15,25 @@ if not os.path.exists(args.result_dir):
 
 df_list = []
 for run in sorted(os.listdir(args.result_dir)):
-    if os.path.isdir(os.path.join(args.result_dir, run)):
-        file = os.path.join(args.result_dir, run, "result.csv")
-        df = pd.read_csv(file)
-        df['sub'] = run[-6:]
-        cols = ['sub'] + [col for col in df.columns if col != 'sub']
-        df = df[cols]
-        df_list.append(df)
+    run_path = os.path.join(args.result_dir, run)
+    if not os.path.isdir(run_path):
+        continue
+    file = os.path.join(run_path, "result.csv")
+    if not os.path.isfile(file):
+        # e.g. dataset_configs/ or other non-run folders under the batch root
+        continue
+    df = pd.read_csv(file)
+    df['sub'] = run[-6:]
+    cols = ['sub'] + [col for col in df.columns if col != 'sub']
+    df = df[cols]
+    df_list.append(df)
+
+if not df_list:
+    raise FileNotFoundError(
+        f"No result.csv files found under '{args.result_dir}'. "
+        "Expected one subdirectory per fold (e.g. YYYYMMDD-HHMMSS-sub-NN/) "
+        "each containing result.csv, as produced by train.py --output_dir."
+    )
 
 # Concatenate all DataFrames
 all_data = pd.concat(df_list, ignore_index=True)

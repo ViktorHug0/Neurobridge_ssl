@@ -12,9 +12,14 @@ import torch
 from torch.utils.data import DataLoader
 
 from module.dataset import EEGPreImageDataset
+from module.dataset_profiles import load_dataset_profile
 from module.projector import ResidualAdapter
 from module.util import retrieve_all
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
+
+DEFAULT_SUBJECT_IDS = [8]
+DEFAULT_SELECTED_CHANNELS = []
+DEFAULT_TIME_WINDOW = [0, 250]
 
 
 def _load_json(path):
@@ -88,12 +93,81 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["num_workers"] = cli_args.num_workers
     if cli_args.batch_size is not None:
         merged["eval_batch_size"] = cli_args.batch_size
+    if cli_args.eval_topk is not None:
+        merged["eval_topk"] = cli_args.eval_topk
+    if cli_args.dataset_name is not None:
+        merged["dataset_name"] = cli_args.dataset_name
+    if cli_args.dataset_config_path is not None:
+        merged["dataset_config_path"] = cli_args.dataset_config_path
+    if cli_args.test_dataset_name is not None:
+        merged["test_dataset_name"] = cli_args.test_dataset_name
 
     test_subject_id = cli_args.test_subject_id
     if test_subject_id is None:
         test_subject_id = _pick_single_subject(merged.get("test_subject_ids", [1]))
     merged["test_subject_id"] = int(test_subject_id)
     return SimpleNamespace(**merged)
+
+
+def _pick_profile_subject_id(test_subject_id, profile):
+    if test_subject_id is not None:
+        return int(test_subject_id)
+    subject_ids = profile.get("test_subject_ids", DEFAULT_SUBJECT_IDS)
+    if isinstance(subject_ids, list) and len(subject_ids) > 0:
+        return int(subject_ids[0])
+    return int(subject_ids)
+
+
+def _profile_value_or_default(cli_value, default_value, profile_value):
+    if profile_value is None:
+        return cli_value
+    if cli_value == default_value:
+        return profile_value
+    return cli_value
+
+
+def _build_eval_dataset(eval_args):
+    dataset_name = getattr(eval_args, "dataset_name", "things_eeg2")
+    dataset_config_path = getattr(eval_args, "dataset_config_path", None)
+    profile = load_dataset_profile(dataset_name, dataset_config_path)
+    if dataset_name == "mixed":
+        test_dataset_name = getattr(eval_args, "test_dataset_name", None) or profile.get("test_dataset_name")
+        component_config_path = None
+        for component in profile.get("components", []):
+            if component.get("name") == test_dataset_name:
+                component_config_path = component.get("config_path")
+                break
+        profile = load_dataset_profile(test_dataset_name, component_config_path)
+    test_subject_id = _pick_profile_subject_id(getattr(eval_args, "test_subject_id", None), profile)
+    eeg_data_dir = _profile_value_or_default(getattr(eval_args, "eeg_data_dir", './things_eeg/data/preprocessed_eeg'), './things_eeg/data/preprocessed_eeg', profile.get("eeg_data_dir"))
+    image_feature_dir = _profile_value_or_default(
+        getattr(eval_args, "image_feature_dir", '/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit'),
+        '/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit',
+        profile.get("image_feature_dir"),
+    )
+    text_feature_dir = _profile_value_or_default(getattr(eval_args, "text_feature_dir", './data/things_eeg/text_feature/BLIP2'), './data/things_eeg/text_feature/BLIP2', profile.get("text_feature_dir"))
+    selected_channels = _profile_value_or_default(list(getattr(eval_args, "selected_channels", DEFAULT_SELECTED_CHANNELS)), DEFAULT_SELECTED_CHANNELS, profile.get("selected_channels"))
+    time_window = _profile_value_or_default(list(getattr(eval_args, "time_window", DEFAULT_TIME_WINDOW)), DEFAULT_TIME_WINDOW, profile.get("time_window"))
+    dataset = EEGPreImageDataset(
+        [test_subject_id],
+        eeg_data_dir,
+        selected_channels,
+        time_window,
+        image_feature_dir,
+        text_feature_dir,
+        _to_bool(getattr(eval_args, "image_aug", False)),
+        getattr(eval_args, "aug_image_feature_dirs", []),
+        _to_bool(getattr(eval_args, "data_average", True), True),
+        False,
+        None,
+        False,
+        _to_bool(getattr(eval_args, "image_test_aug", False)),
+        _to_bool(getattr(eval_args, "eeg_test_aug", False)),
+        _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
+    )
+    eval_batch_size = getattr(eval_args, "eval_batch_size", None) or profile.get("eval_batch_size", 200)
+    eval_topk = getattr(eval_args, "eval_topk", None) or profile.get("topk", 5)
+    return dataset, int(test_subject_id), int(eval_batch_size), int(eval_topk)
 
 
 def _forward_feature(args, modules, eeg_backbone_batch):
@@ -122,6 +196,9 @@ def _maybe_apply_image_branch(args, modules, image_feature_proj):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_name", type=str, choices=["things_eeg2", "alljoined", "mixed"], default=None)
+    parser.add_argument("--dataset_config_path", type=str, default=None)
+    parser.add_argument("--test_dataset_name", type=str, default=None)
     parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory containing checkpoint_test_best.pth and train_config.json")
     parser.add_argument("--output_dir", required=True, type=str)
     parser.add_argument("--output_name", required=True, type=str)
@@ -131,6 +208,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--eval_topk", type=int, default=None)
 
     parser.add_argument("--sattc_saw_shrink", type=float, default=None)
     parser.add_argument("--sattc_saw_diag", action="store_true")
@@ -161,26 +239,10 @@ def main():
     device = torch.device(eval_args.device if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    test_dataset = EEGPreImageDataset(
-        [eval_args.test_subject_id],
-        eval_args.eeg_data_dir,
-        eval_args.selected_channels,
-        eval_args.time_window,
-        eval_args.image_feature_dir,
-        getattr(eval_args, "text_feature_dir", ""),
-        _to_bool(getattr(eval_args, "image_aug", False)),
-        getattr(eval_args, "aug_image_feature_dirs", []),
-        _to_bool(getattr(eval_args, "data_average", True), True),
-        False,
-        None,
-        False,
-        _to_bool(getattr(eval_args, "image_test_aug", False)),
-        _to_bool(getattr(eval_args, "eeg_test_aug", False)),
-        _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
-    )
+    test_dataset, resolved_test_subject_id, eval_batch_size, eval_topk = _build_eval_dataset(eval_args)
     test_loader = DataLoader(
         test_dataset,
-        batch_size=getattr(eval_args, "eval_batch_size", 200),
+        batch_size=eval_batch_size,
         shuffle=False,
         num_workers=getattr(eval_args, "num_workers", 0),
     )
@@ -271,17 +333,19 @@ def main():
         image_indices=image_all,
         eval_mode=eval_args.eval_mode,
         sattc_params=sattc_params,
+        topk_value=eval_topk,
     )
     top5_acc = top5_count / total * 100.0
     top1_acc = top1_count / total * 100.0
 
     result_dict = {
         "architecture": architecture,
+        "dataset_name": getattr(eval_args, "dataset_name", "things_eeg2"),
         "eval_mode": eval_args.eval_mode,
         "top1 acc": f"{top1_acc:.2f}",
-        "top5 acc": f"{top5_acc:.2f}",
+        f"top{eval_topk} acc": f"{top5_acc:.2f}",
         "best top1 acc": f"{top1_acc:.2f}",
-        "best top5 acc": f"{top5_acc:.2f}",
+        f"best top{eval_topk} acc": f"{top5_acc:.2f}",
         "best test loss": f"{float(checkpoint.get('loss', float('nan'))):.4f}",
         "best epoch": int(checkpoint.get("epoch", -1)),
     }
@@ -290,17 +354,17 @@ def main():
     summary = {
         "checkpoint_dir": checkpoint_dir,
         "checkpoint_path": checkpoint_path,
-        "test_subject_id": int(eval_args.test_subject_id),
+        "test_subject_id": resolved_test_subject_id,
         "eval_mode": eval_args.eval_mode,
         "top1_acc": top1_acc,
-        "top5_acc": top5_acc,
+        f"top{eval_topk}_acc": top5_acc,
     }
     with open(os.path.join(log_dir, "evaluation_summary.json"), "w") as f:
         json.dump(summary, f, indent=4)
 
     print(
-        f"eval_mode={eval_args.eval_mode} subject={eval_args.test_subject_id} "
-        f"top1={top1_acc:.2f} top5={top5_acc:.2f} checkpoint_epoch={checkpoint.get('epoch', -1)}"
+        f"eval_mode={eval_args.eval_mode} subject={resolved_test_subject_id} "
+        f"top1={top1_acc:.2f} top{eval_topk}={top5_acc:.2f} checkpoint_epoch={checkpoint.get('epoch', -1)}"
     )
 
 

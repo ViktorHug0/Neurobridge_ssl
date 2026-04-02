@@ -1,0 +1,13 @@
+{
+    "dataset_name": "things_eeg2",
+    "layout": "grid",
+    "eeg_data_dir": "./things_eeg/data/preprocessed_eeg",
+    "image_feature_dir": "./data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit",
+    "text_feature_dir": "./data/things_eeg/text_feature/BLIP2",
+    "selected_channels": [],
+    "time_window": [0, 250],
+    "train_subject_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "test_subject_ids": [10],
+    "eval_batch_size": 200,
+    "topk": 5
+}

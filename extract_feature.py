@@ -13,6 +13,29 @@ from tqdm import tqdm
 
 from module.image_augmentation import ColorJitter, HorizontalFlip, Mosaic, GrayScale, GaussianBlur, GaussianNoise, RandomCrop, LowResolution
 
+
+def resolve_split_dir(image_set_dir: str, split: str) -> str:
+    """
+    Resolve train/test split directory names across common conventions.
+    This repo historically used `train_images/`, but some datasets use `training_images/`.
+    """
+    if split == "train":
+        candidates = ["train_images", "training_images"]
+    elif split == "test":
+        candidates = ["test_images", "testing_images"]
+    else:
+        raise ValueError(f"Unknown split: {split}")
+
+    for name in candidates:
+        p = os.path.join(image_set_dir, name)
+        if os.path.isdir(p):
+            return p
+
+    raise FileNotFoundError(
+        f"Could not find a '{split}' split directory under '{image_set_dir}'. "
+        f"Tried: {', '.join(candidates)}"
+    )
+
 def extract_clip(image:str, processor, model, device):
     inputs = processor(images=image, return_tensors="pt").to(device)
     with torch.no_grad():
@@ -32,6 +55,127 @@ def extract_open_clip(image, processor, model, augmentation, device):
     return feature
 
 
+def extract_open_clip_intermediate(
+    image,
+    processor,
+    model,
+    augmentation,
+    device,
+    layer_idx: int,
+    pool_type: str,
+):
+    if augmentation is not None:
+        image = augmentation(image)
+    image = processor(image).unsqueeze(0).to(device)  # shape: (1, 3, H, W)
+
+    if not hasattr(model.visual, "transformer") or not hasattr(model.visual.transformer, "resblocks"):
+        raise ValueError("Selected OpenCLIP backbone does not expose visual.transformer.resblocks.")
+    resblocks = model.visual.transformer.resblocks
+    if layer_idx < 0 or layer_idx >= len(resblocks):
+        raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {len(resblocks)-1}]")
+
+    layer_output = {}
+
+    def hook_fn(module, _input, output):
+        layer_output["hidden"] = output
+
+    hook = resblocks[layer_idx].register_forward_hook(hook_fn)
+    try:
+        with torch.no_grad():
+            _ = model.encode_image(image)
+    finally:
+        hook.remove()
+
+    if "hidden" not in layer_output:
+        raise RuntimeError("Forward hook did not capture intermediate output.")
+
+    hidden = layer_output["hidden"]
+    if hidden.ndim != 3:
+        raise ValueError(f"Expected 3D hidden states, got shape {tuple(hidden.shape)}")
+
+    # OpenCLIP ViT blocks commonly output [seq_len, batch, dim].
+    # Normalize to [batch, seq_len, dim] before pooling.
+    if hidden.shape[0] == image.shape[0]:
+        tokens = hidden
+    elif hidden.shape[1] == image.shape[0]:
+        tokens = hidden.permute(1, 0, 2).contiguous()
+    else:
+        raise ValueError(
+            f"Cannot infer token layout for hidden shape {tuple(hidden.shape)} "
+            f"and batch size {image.shape[0]}"
+        )
+
+    if pool_type == "cls":
+        pooled = tokens[:, 0, :]
+    elif pool_type == "mean":
+        pooled = tokens[:, 1:, :].mean(dim=1) if tokens.shape[1] > 1 else tokens.mean(dim=1)
+    else:
+        raise ValueError(f"Unknown pool_type: {pool_type}")
+
+    feature = pooled.detach().cpu().numpy()  # shape: (1, D)
+    return feature
+
+
+def extract_internvit_intermediate(
+    image,
+    processor,
+    model,
+    augmentation,
+    device,
+    layer_idx: int,
+    pool_type: str,
+):
+    if augmentation is not None:
+        image = augmentation(image)
+    
+    # InternViT usually takes images as tensors
+    inputs = processor(images=image, return_tensors="pt").to(device)
+    pixel_values = inputs.pixel_values.to(model.dtype) if hasattr(model, "dtype") else inputs.pixel_values.to(torch.float16)
+
+    # InternViT structures often have model.encoder.layers or model.vision_model.encoder.layers
+    if hasattr(model, "vision_model") and hasattr(model.vision_model.encoder, "layers"):
+        resblocks = model.vision_model.encoder.layers
+    elif hasattr(model, "encoder") and hasattr(model.encoder, "layers"):
+        resblocks = model.encoder.layers
+    else:
+        raise ValueError("Selected InternViT backbone does not expose encoder.layers or vision_model.encoder.layers.")
+
+    if layer_idx < 0 or layer_idx >= len(resblocks):
+        raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {len(resblocks)-1}]")
+
+    layer_output = {}
+
+    def hook_fn(module, _input, output):
+        # InternViT layers typically return a tuple (hidden_states, ...)
+        if isinstance(output, tuple):
+            layer_output["hidden"] = output[0]
+        else:
+            layer_output["hidden"] = output
+
+    hook = resblocks[layer_idx].register_forward_hook(hook_fn)
+    try:
+        with torch.no_grad():
+            # Pass only pixel_values for pure InternViT models
+            _ = model(pixel_values)
+    finally:
+        hook.remove()
+
+    if "hidden" not in layer_output:
+        raise RuntimeError("Forward hook did not capture intermediate output.")
+
+    hidden = layer_output["hidden"] # shape: [batch, seq_len, dim]
+    
+    if pool_type == "cls":
+        pooled = hidden[:, 0, :]
+    elif pool_type == "mean":
+        pooled = hidden[:, 1:, :].mean(dim=1) if hidden.shape[1] > 1 else hidden.mean(dim=1)
+    else:
+        raise ValueError(f"Unknown pool_type: {pool_type}")
+
+    feature = pooled.detach().cpu().numpy()  # shape: (1, D)
+    return feature
+
+
 def extract_dinov2(image:str, processor, model, device):
     inputs = processor(images=image, return_tensors="pt").to(device)
     with torch.no_grad():
@@ -41,7 +185,18 @@ def extract_dinov2(image:str, processor, model, device):
     return feature
 
 
-def extract_image_features(image_dir, num_images_per_object, processor, model, model_type, augmentation, device):
+def extract_image_features(
+    image_dir,
+    num_images_per_object,
+    processor,
+    model,
+    model_type,
+    augmentation,
+    device,
+    feature_source="final",
+    intermediate_layer=11,
+    intermediate_pool="cls",
+):
     image_classes = sorted(os.listdir(image_dir))
     image_list = []
     for image_class in image_classes:
@@ -58,9 +213,46 @@ def extract_image_features(image_dir, num_images_per_object, processor, model, m
         if model_type == 'clip':
             feature = extract_clip(image, processor, model, device)
         elif model_type == 'open_clip':
-            feature = extract_open_clip(image, processor, model, augmentation, device)
+            if feature_source == "intermediate":
+                feature = extract_open_clip_intermediate(
+                    image,
+                    processor,
+                    model,
+                    augmentation,
+                    device,
+                    layer_idx=intermediate_layer,
+                    pool_type=intermediate_pool,
+                )
+            else:
+                feature = extract_open_clip(image, processor, model, augmentation, device)
         elif model_type == 'dinov2':
             feature = extract_dinov2(image, processor, model, device)
+        elif model_type == 'internvit':
+            if feature_source == "intermediate":
+                feature = extract_internvit_intermediate(
+                    image,
+                    processor,
+                    model,
+                    augmentation,
+                    device,
+                    layer_idx=intermediate_layer,
+                    pool_type=intermediate_pool,
+                )
+            else:
+                # InternViT usually returns (last_hidden_state, pooled_output, ...)
+                # and we'd want the CLS from last layer or the pooled output.
+                # Standardizing to mean pooling of tokens for final layer or using outputs.last_hidden_state
+                inputs = processor(images=image, return_tensors="pt").to(device)
+                pixel_values = inputs.pixel_values.to(model.dtype) if hasattr(model, "dtype") else inputs.pixel_values.to(torch.float16)
+                with torch.no_grad():
+                    outputs = model(pixel_values)
+                if hasattr(outputs, "last_hidden_state"):
+                    feature = outputs.last_hidden_state[:, 0].detach().cpu().numpy()
+                elif isinstance(outputs, tuple):
+                    feature = outputs[0][:, 0].detach().cpu().numpy()
+                else:
+                    # Fallback for InternVLChat vision_model
+                    feature = outputs[:, 0].detach().cpu().numpy()
         all_features.append(feature)
     
     all_features = np.concatenate(all_features, axis=0)
@@ -98,14 +290,18 @@ def preprocess(image:Image.Image, augmentation=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda:0", type=str, help="training device")
-    parser.add_argument("--model_type", type=str, choices=["clip", "open_clip", "dinov2"], default="open_clip")
-    parser.add_argument("--backbone", type=str, choices=["ViT-B-16", "ViT-B-32", "ViT-L-14", "ViT-H-14", "ViT-g-14", "ViT-bigG-14", "RN50", "RN101"], default="RN50")
-    parser.add_argument("--pretrained", type=str, choices=["laion2b_s32b_b79k", "laion2b_s32b_b82k", "laion2b_s34b_b79k", "laion2b_s34b_b88k", "laion2b_s39b_b160k", "openai"], default="openai")
+    parser.add_argument("--model_type", type=str, choices=["clip", "open_clip", "dinov2", "internvit"], default="open_clip")
+    parser.add_argument("--backbone", type=str, default="RN50")
+    parser.add_argument("--pretrained", type=str, default="openai")
     parser.add_argument("--repeat_times", type=int, default=1)
     parser.add_argument("--image_set_dir", type=str, default="./data/things_eeg/image_set")
     parser.add_argument("--output_dir", type=str, default="./data/things_eeg/image_feature/RN50")
     parser.add_argument("--aug_type", type=str, default="None", choices=["GaussianBlur", "GaussianNoise", "Mosaic", "RandomCrop", "LowResolution", "ColorJitter", "GrayScale", "None"])
     parser.add_argument("--num_images_per_object", type=int, default=10)
+    parser.add_argument("--feature_source", type=str, choices=["final", "intermediate"], default="final")
+    parser.add_argument("--intermediate_layer", type=int, default=11, help="0-indexed block index for OpenCLIP ViT intermediate extraction")
+    parser.add_argument("--intermediate_pool", type=str, choices=["cls", "mean"], default="cls", help="Pooling over intermediate tokens")
+    parser.add_argument("--quantization", type=str, choices=["none", "8bit", "4bit"], default="none", help="Quantization for InternViT models")
     args = parser.parse_args()
     
     print('Input arguments:')
@@ -128,7 +324,27 @@ if __name__ == "__main__":
         # small base large giant
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-giant")
         model = AutoModel.from_pretrained("facebook/dinov2-giant").to(device)
+    elif args.model_type == "internvit":
+        # Use args.backbone as the model ID, e.g. OpenGVLab/InternViT-6B-448px-V1-5
+        # Use quantization to fit 6B model on smaller GPUs (e.g. 10GB RTX 3080)
+        load_kwargs = {
+            "trust_remote_code": True,
+            "torch_dtype": torch.float16,
+        }
+        if args.quantization == "8bit":
+            load_kwargs.update({"load_in_8bit": True, "device_map": "auto"})
+        elif args.quantization == "4bit":
+            load_kwargs.update({"load_in_4bit": True, "device_map": "auto"})
+        
+        model = AutoModel.from_pretrained(args.backbone, **load_kwargs)
+        if args.quantization == "none":
+            model = model.to(device)
+            
+        processor = AutoImageProcessor.from_pretrained(args.backbone, trust_remote_code=True)
     model.eval()
+
+    if args.feature_source == "intermediate" and args.model_type not in ["open_clip", "internvit"]:
+        raise ValueError("--feature_source intermediate is currently only supported for --model_type open_clip and internvit")
     
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -151,28 +367,75 @@ if __name__ == "__main__":
         augmentation = None
     
     os.makedirs(args.output_dir, exist_ok=True)
+
+    train_dir = resolve_split_dir(args.image_set_dir, "train")
+    test_dir = resolve_split_dir(args.image_set_dir, "test")
     
     if augmentation is None:
-        train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device)
+        train_image_features = extract_image_features(
+            train_dir,
+            args.num_images_per_object,
+            processor,
+            model,
+            args.model_type,
+            augmentation,
+            device,
+            feature_source=args.feature_source,
+            intermediate_layer=args.intermediate_layer,
+            intermediate_pool=args.intermediate_pool,
+        )
         print(f"Train image feature shape: {train_image_features.shape}")
         np.save(os.path.join(args.output_dir, "image_train.npy"), train_image_features)
     else:
         train_image_features_list = []
         for i in range(args.repeat_times):
-            train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device)
+            train_image_features = extract_image_features(
+                train_dir,
+                args.num_images_per_object,
+                processor,
+                model,
+                args.model_type,
+                augmentation,
+                device,
+                feature_source=args.feature_source,
+                intermediate_layer=args.intermediate_layer,
+                intermediate_pool=args.intermediate_pool,
+            )
             train_image_features_list.append(train_image_features)
         train_image_features = np.stack(train_image_features_list, axis=0)
         print(f"Train image feature shape: {train_image_features.shape}")
         np.save(os.path.join(args.output_dir, "train.npy"), train_image_features)
     
     if augmentation is None:
-        test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device)
+        test_image_features = extract_image_features(
+            test_dir,
+            1,
+            processor,
+            model,
+            args.model_type,
+            augmentation,
+            device,
+            feature_source=args.feature_source,
+            intermediate_layer=args.intermediate_layer,
+            intermediate_pool=args.intermediate_pool,
+        )
         print(f"Test image feature shape: {test_image_features.shape}")
         np.save(os.path.join(args.output_dir, "image_test.npy"), test_image_features)
     else:
         test_image_features_list = []
         for i in range(args.repeat_times):
-            test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device)
+            test_image_features = extract_image_features(
+                test_dir,
+                1,
+                processor,
+                model,
+                args.model_type,
+                augmentation,
+                device,
+                feature_source=args.feature_source,
+                intermediate_layer=args.intermediate_layer,
+                intermediate_pool=args.intermediate_pool,
+            )
             test_image_features_list.append(test_image_features)
         test_image_features = np.stack(test_image_features_list, axis=0)
         print(f"Test image feature shape: {test_image_features.shape}")

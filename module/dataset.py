@@ -1,3 +1,4 @@
+import bisect
 import os
 import json
 import random
@@ -81,12 +82,20 @@ def _eeg_cache_path(eeg_data_dir: str, key: str) -> str:
     return os.path.join(cache_dir, f"{key}.npy")
 
 
-def _standardize_eeg_array(eeg_obj, train: bool, num_images_per_object: int = 10) -> np.ndarray:
+def _standardize_eeg_array(
+    eeg_obj,
+    train: bool,
+    num_images_per_object: int = 10,
+    layout: str = "grid",
+) -> np.ndarray:
     """
     Convert various EEG array layouts into this repo's internal format:
       train: (num_objects, num_images_per_object, num_reps, num_channels, num_time)
       test:  (num_objects, 1, num_reps, num_channels, num_time)
     """
+    if layout not in {"grid", "flat"}:
+        raise ValueError(f"Unsupported EEG layout: {layout}")
+
     # NICE-EEG dict
     if isinstance(eeg_obj, dict):
         if "preprocessed_eeg_data" in eeg_obj:
@@ -98,6 +107,11 @@ def _standardize_eeg_array(eeg_obj, train: bool, num_images_per_object: int = 10
 
     if not isinstance(x, np.ndarray):
         raise TypeError(f"EEG data must be a numpy array after loading, got {type(x)}")
+
+    if layout == "flat":
+        if x.ndim in {3, 4}:
+            return x
+        raise ValueError(f"Unsupported flat EEG array shape: {x.shape}")
 
     # This repo format already:
     # - train: (1654, 10, 4, 63, 250)
@@ -129,6 +143,7 @@ def _process_eeg_array(
     selected_idx: list[int] | None,
     time_window: list[int],
     average: bool,
+    layout: str = "grid",
 ) -> np.ndarray:
     """
     Memory-aware EEG processing:
@@ -137,19 +152,52 @@ def _process_eeg_array(
     - optionally select channels
 
     Expected standardized shapes (from `_standardize_eeg_array`):
-      train: (num_objects, num_images_per_object, num_reps, num_channels, num_time)
-      test:  (num_objects, 1,                   num_reps, num_channels, num_time)
+      grid train: (num_objects, num_images_per_object, num_reps, num_channels, num_time)
+      grid test:  (num_objects, 1,                   num_reps, num_channels, num_time)
+      flat:       (num_stimuli, num_reps, num_channels, num_time)
     Returns:
-      if average: (num_objects, num_images_per_object, num_sel_channels, num_time_window)
-      else:       (num_objects, num_images_per_object, num_reps, num_sel_channels, num_time_window)
+      grid if average: (num_objects, num_images_per_object, num_sel_channels, num_time_window)
+      grid else:       (num_objects, num_images_per_object, num_reps, num_sel_channels, num_time_window)
+      flat if average: (num_stimuli, num_sel_channels, num_time_window)
+      flat else:       (num_stimuli, num_reps, num_sel_channels, num_time_window)
     """
-    if eeg_data.ndim != 5:
-        raise ValueError(f"Expected standardized EEG with ndim=5, got shape={eeg_data.shape}")
+    if layout not in {"grid", "flat"}:
+        raise ValueError(f"Unsupported EEG layout: {layout}")
+    if layout == "grid" and eeg_data.ndim != 5:
+        raise ValueError(f"Expected standardized grid EEG with ndim=5, got shape={eeg_data.shape}")
+    if layout == "flat" and eeg_data.ndim not in {3, 4}:
+        raise ValueError(f"Expected standardized flat EEG with ndim in {{3, 4}}, got shape={eeg_data.shape}")
 
     start, end = time_window
     end = min(end, eeg_data.shape[-1])
     if end <= start:
         raise ValueError(f"Invalid time_window={time_window} for EEG length={eeg_data.shape[-1]}")
+
+    if layout == "flat":
+        if eeg_data.ndim == 3:
+            x = eeg_data[:, :, start:end].astype(np.float32, copy=False)
+            if selected_idx is None:
+                return x
+            return x[:, selected_idx, :]
+
+        if selected_idx is None:
+            if average:
+                return eeg_data[..., start:end].mean(axis=1, dtype=np.float32)
+            return eeg_data[..., start:end].astype(np.float32, copy=False)
+
+        n_stim, n_rep, _, _ = eeg_data.shape
+        n_t = end - start
+        n_ch = len(selected_idx)
+        if average:
+            out = np.empty((n_stim, n_ch, n_t), dtype=np.float32)
+            for j, ch in enumerate(selected_idx):
+                out[:, j, :] = eeg_data[:, :, ch, start:end].mean(axis=1, dtype=np.float32)
+            return out
+
+        out = np.empty((n_stim, n_rep, n_ch, n_t), dtype=np.float32)
+        for j, ch in enumerate(selected_idx):
+            out[:, :, j, :] = eeg_data[:, :, ch, start:end]
+        return out
 
     # If no channel selection is requested, keep all channels.
     if selected_idx is None:
@@ -176,6 +224,16 @@ def _process_eeg_array(
     for j, ch in enumerate(selected_idx):
         out[:, :, :, j, :] = eeg_data[:, :, :, ch, start:end]
     return out
+
+
+def _flatten_stimulus_features(features: np.ndarray) -> np.ndarray:
+    if features.ndim == 2:
+        return features
+    if features.ndim == 3:
+        return features.reshape(features.shape[0] * features.shape[1], features.shape[2])
+    if features.ndim == 4:
+        return features.reshape(features.shape[0], features.shape[1] * features.shape[2], features.shape[3])
+    raise ValueError(f"Unsupported feature shape for flat stimulus layout: {features.shape}")
 
 
 class EEGPreImageDataset(Dataset):
@@ -211,9 +269,19 @@ class EEGPreImageDataset(Dataset):
         self.eeg_test_aug = eeg_test_aug
         self.frozen_eeg_prior = frozen_eeg_prior
         self.info = {}
+        self.dataset_info = {}
+        self.layout = "grid"
+        self.stimulus_index = None
         info_json_path = os.path.join(eeg_data_dir, "info.json")
         if os.path.isfile(info_json_path):
             self.info = json.load(open(info_json_path, 'r'))
+        dataset_info_path = os.path.join(eeg_data_dir, "dataset_info.json")
+        if os.path.isfile(dataset_info_path):
+            self.dataset_info = json.load(open(dataset_info_path, 'r'))
+            self.layout = self.dataset_info.get("layout", self.layout)
+        self.stimulus_index = self._load_stimulus_index(eeg_data_dir, train)
+        if self.stimulus_index is not None:
+            self.layout = "flat"
         
         # Things-EEG
         # o+p: ['P7', 'P5', 'P3', 'P1','Pz', 'P2', 'P4', 'P6', 'P8', 'PO7', 'PO3', 'POz', 'PO4', 'PO8','O1', 'Oz', 'O2']
@@ -267,12 +335,18 @@ class EEGPreImageDataset(Dataset):
                             )
                         selected_idx.append(self.all_channels.index(ch))
 
-                eeg_data = _standardize_eeg_array(eeg_container, train=train)
+                eeg_data = _standardize_eeg_array(
+                    eeg_container,
+                    train=train,
+                    num_images_per_object=self.dataset_info.get("num_images_per_object", 10),
+                    layout=self.layout,
+                )
                 eeg_data = _process_eeg_array(
                     eeg_data,
                     selected_idx=selected_idx,
                     time_window=time_window,
                     average=self.average,
+                    layout=self.layout,
                 )
 
                 # Atomic write to avoid corrupt cache files in concurrent runs.
@@ -293,21 +367,42 @@ class EEGPreImageDataset(Dataset):
             # If it's the training set and a transform is specified, apply the EEG data transformation
             if self.frozen_eeg_prior:
                 if self.eeg_transform is not None and (self.train or self.eeg_test_aug):
-                    for object_idx in tqdm(range(eeg_data.shape[0]), desc="Objects", position=1, leave=False):
-                        for image_idx in range(eeg_data.shape[1]):
-                            if not self.average:
-                                for repetition_idx in range(eeg_data.shape[2]):
-                                    eeg_data[object_idx, image_idx, repetition_idx] = self.eeg_transform(eeg_data[object_idx, image_idx, repetition_idx])
+                    if self.layout == "flat":
+                        for stimulus_idx in tqdm(range(eeg_data.shape[0]), desc="Stimuli", position=1, leave=False):
+                            if not self.average and eeg_data.ndim == 4:
+                                for repetition_idx in range(eeg_data.shape[1]):
+                                    eeg_data[stimulus_idx, repetition_idx] = self.eeg_transform(
+                                        eeg_data[stimulus_idx, repetition_idx]
+                                    )
                             else:
-                                eeg_data[object_idx, image_idx] = self.eeg_transform(eeg_data[object_idx, image_idx])
+                                eeg_data[stimulus_idx] = self.eeg_transform(eeg_data[stimulus_idx])
+                    else:
+                        for object_idx in tqdm(range(eeg_data.shape[0]), desc="Objects", position=1, leave=False):
+                            for image_idx in range(eeg_data.shape[1]):
+                                if not self.average:
+                                    for repetition_idx in range(eeg_data.shape[2]):
+                                        eeg_data[object_idx, image_idx, repetition_idx] = self.eeg_transform(
+                                            eeg_data[object_idx, image_idx, repetition_idx]
+                                        )
+                                else:
+                                    eeg_data[object_idx, image_idx] = self.eeg_transform(eeg_data[object_idx, image_idx])
 
             self.eeg_data_list.append(eeg_data)
         
         self.num_subjects = len(self.eeg_data_list)
-        self.num_objects = eeg_data.shape[0]
-        self.num_images_per_object = eeg_data.shape[1]
-        if not self.average:
-            self.num_repetitions = eeg_data.shape[2]
+        if self.layout == "flat":
+            self.num_stimuli = eeg_data.shape[0]
+            if not self.average and eeg_data.ndim == 4:
+                self.num_repetitions = eeg_data.shape[1]
+            elif not self.average:
+                self.num_repetitions = 1
+            self.num_objects = len({int(item["object_idx"]) for item in self.stimulus_index}) if self.stimulus_index else 0
+            self.num_images_per_object = None
+        else:
+            self.num_objects = eeg_data.shape[0]
+            self.num_images_per_object = eeg_data.shape[1]
+            if not self.average:
+                self.num_repetitions = eeg_data.shape[2]
         self.num_channels = eeg_data.shape[-2]
         self.num_sample_points = eeg_data.shape[-1]
         self._image_group_indices = None
@@ -320,6 +415,8 @@ class EEGPreImageDataset(Dataset):
                 else:
                     aug_image_feature_path = os.path.join(aug_image_feature_dir, "test.npy")
                 aug_image_feature = np.load(aug_image_feature_path)
+                if self.layout == "flat":
+                    aug_image_feature = _flatten_stimulus_features(aug_image_feature)
                 self.aug_image_features.append(aug_image_feature)
         
         if train:
@@ -333,11 +430,39 @@ class EEGPreImageDataset(Dataset):
                 self.text_feature_path = os.path.join(self.text_feature_dir, "test.npy")
         
         self.image_features = np.load(self.image_feature_path)
+        if self.layout == "flat":
+            self.image_features = _flatten_stimulus_features(self.image_features)
         self.feature_dim = self.image_features.shape[-1]
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             self.text_features = np.load(self.text_feature_path)
+            if self.layout == "flat":
+                self.text_features = _flatten_stimulus_features(self.text_features)
+        if self.layout == "flat" and self.stimulus_index is not None:
+            if self.image_features.shape[0] != len(self.stimulus_index):
+                raise ValueError(
+                    f"Flat image feature count ({self.image_features.shape[0]}) does not match stimulus index "
+                    f"length ({len(self.stimulus_index)}). Ensure the Alljoined stimulus export uses the same "
+                    "THINGS image ordering as the shared image feature bank."
+                )
+            if self.text_feature_dir is not None and self.text_feature_dir != '':
+                if self.text_features.shape[0] != len(self.stimulus_index):
+                    raise ValueError(
+                        f"Flat text feature count ({self.text_features.shape[0]}) does not match stimulus index "
+                        f"length ({len(self.stimulus_index)})."
+                    )
     
     def __len__(self):
+        if self.layout == "flat":
+            if self.average and self.random:
+                length = self.num_stimuli
+            elif self.average and not self.random:
+                length = self.num_stimuli * self.num_subjects
+            elif not self.average and self.random:
+                length = self.num_stimuli
+            else:
+                length = self.num_stimuli * self.num_repetitions * self.num_subjects
+            return length
+
         if self.average and self.random:
             length = self.num_objects * self.num_images_per_object
         elif self.average and not self.random:
@@ -351,36 +476,61 @@ class EEGPreImageDataset(Dataset):
     def __getitem__(self, index):
         # When averaging, use default 0
         repetition_idx = 0
-        
-        # Average & Random: Loop through objects and images, random subject
-        if self.average and self.random:
-            subject_idx = random.randint(0, len(self.subject_ids) - 1)
-            object_idx = index // self.num_images_per_object
-            image_idx = index % self.num_images_per_object
-            eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx]
-        
-        # Average & Not Random: Loop through all subjects and images
-        elif self.average and not self.random:
-            subject_idx = index // (self.num_objects * self.num_images_per_object)
-            object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
-            image_idx = index % self.num_images_per_object
-            eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx]
-        
-        # Not Average & Random: Loop through objects and images, random subject and repetition
-        elif not self.average and self.random:
-            subject_idx = random.randint(0, self.num_subjects - 1)
-            repetition_idx = random.randint(0, self.num_repetitions - 1)
-            object_idx = index // self.num_images_per_object
-            image_idx = index % self.num_images_per_object
-            eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx][repetition_idx]
-        
-        # Not Average & Not Random: Complete loop through all EEG data
+        stimulus_idx = None
+
+        if self.layout == "flat":
+            if self.average and self.random:
+                subject_idx = random.randint(0, len(self.subject_ids) - 1)
+                stimulus_idx = index
+                eeg_data = self.eeg_data_list[subject_idx][stimulus_idx]
+            elif self.average and not self.random:
+                subject_idx = index // self.num_stimuli
+                stimulus_idx = index % self.num_stimuli
+                eeg_data = self.eeg_data_list[subject_idx][stimulus_idx]
+            elif not self.average and self.random:
+                subject_idx = random.randint(0, self.num_subjects - 1)
+                repetition_idx = random.randint(0, self.num_repetitions - 1)
+                stimulus_idx = index
+                eeg_data = self.eeg_data_list[subject_idx][stimulus_idx][repetition_idx]
+            else:
+                subject_idx = index // (self.num_stimuli * self.num_repetitions)
+                stimulus_idx = (index % (self.num_stimuli * self.num_repetitions)) // self.num_repetitions
+                repetition_idx = index % self.num_repetitions
+                eeg_data = self.eeg_data_list[subject_idx][stimulus_idx][repetition_idx]
+
+            stimulus_meta = self.stimulus_index[stimulus_idx]
+            object_idx = int(stimulus_meta["object_idx"])
+            image_idx = int(stimulus_meta["image_idx"])
         else:
-            subject_idx = index // (self.num_objects * self.num_images_per_object * self.num_repetitions)
-            object_idx = (index % (self.num_objects * self.num_images_per_object * self.num_repetitions)) // (self.num_images_per_object * self.num_repetitions)
-            image_idx = (index % (self.num_images_per_object * self.num_repetitions)) // self.num_repetitions
-            repetition_idx = index % self.num_repetitions
-            eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx][repetition_idx]
+            # Average & Random: Loop through objects and images, random subject
+            if self.average and self.random:
+                subject_idx = random.randint(0, len(self.subject_ids) - 1)
+                object_idx = index // self.num_images_per_object
+                image_idx = index % self.num_images_per_object
+                eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx]
+
+            # Average & Not Random: Loop through all subjects and images
+            elif self.average and not self.random:
+                subject_idx = index // (self.num_objects * self.num_images_per_object)
+                object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
+                image_idx = index % self.num_images_per_object
+                eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx]
+
+            # Not Average & Random: Loop through objects and images, random subject and repetition
+            elif not self.average and self.random:
+                subject_idx = random.randint(0, self.num_subjects - 1)
+                repetition_idx = random.randint(0, self.num_repetitions - 1)
+                object_idx = index // self.num_images_per_object
+                image_idx = index % self.num_images_per_object
+                eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx][repetition_idx]
+
+            # Not Average & Not Random: Complete loop through all EEG data
+            else:
+                subject_idx = index // (self.num_objects * self.num_images_per_object * self.num_repetitions)
+                object_idx = (index % (self.num_objects * self.num_images_per_object * self.num_repetitions)) // (self.num_images_per_object * self.num_repetitions)
+                image_idx = (index % (self.num_images_per_object * self.num_repetitions)) // self.num_repetitions
+                repetition_idx = index % self.num_repetitions
+                eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx][repetition_idx]
         
         # If it's the training set and a transform is specified, apply the EEG data transformation
         if not self.frozen_eeg_prior:
@@ -391,14 +541,17 @@ class EEGPreImageDataset(Dataset):
             if self.train or self.image_test_aug:
                 aug_idx = random.randint(0, len(self.aug_image_features) - 1)
                 rep_idx = random.randint(0, self.aug_image_features[0].shape[0] - 1)
-                image_feature = self.aug_image_features[aug_idx][rep_idx][object_idx][image_idx]
+                if self.layout == "flat":
+                    image_feature = self.aug_image_features[aug_idx][rep_idx][stimulus_idx]
+                else:
+                    image_feature = self.aug_image_features[aug_idx][rep_idx][object_idx][image_idx]
             else:
-                image_feature = self.image_features[object_idx][image_idx]
+                image_feature = self.image_features[stimulus_idx] if self.layout == "flat" else self.image_features[object_idx][image_idx]
         else:
-            image_feature = self.image_features[object_idx][image_idx]
+            image_feature = self.image_features[stimulus_idx] if self.layout == "flat" else self.image_features[object_idx][image_idx]
 
         if self.text_feature_dir is not None and self.text_feature_dir != '':
-            text_feature = self.text_features[object_idx][image_idx]
+            text_feature = self.text_features[stimulus_idx] if self.layout == "flat" else self.text_features[object_idx][image_idx]
         else:
             text_feature = np.zeros((self.feature_dim,))
         
@@ -414,6 +567,26 @@ class EEGPreImageDataset(Dataset):
 
     def decode_index(self, index: int):
         repetition_idx = 0
+
+        if self.layout == "flat":
+            if self.average and self.random:
+                subject_idx = None
+                stimulus_idx = index
+            elif self.average and not self.random:
+                subject_idx = index // self.num_stimuli
+                stimulus_idx = index % self.num_stimuli
+            elif not self.average and self.random:
+                subject_idx = None
+                stimulus_idx = index
+            else:
+                subject_idx = index // (self.num_stimuli * self.num_repetitions)
+                stimulus_idx = (index % (self.num_stimuli * self.num_repetitions)) // self.num_repetitions
+                repetition_idx = index % self.num_repetitions
+            stimulus_meta = self.stimulus_index[stimulus_idx]
+            object_idx = int(stimulus_meta["object_idx"])
+            image_idx = int(stimulus_meta["image_idx"])
+            subject_id = None if subject_idx is None else self.subject_ids[subject_idx]
+            return subject_id, object_idx, image_idx, repetition_idx
 
         if self.average and self.random:
             subject_idx = None
@@ -448,6 +621,92 @@ class EEGPreImageDataset(Dataset):
             self._image_group_indices = dict(image_group_indices)
 
         return self._image_group_indices
+
+    def _load_stimulus_index(self, eeg_data_dir: str, train: bool):
+        if not self.dataset_info:
+            return None
+        key = "stimulus_index_train" if train else "stimulus_index_test"
+        rel_path = self.dataset_info.get(key)
+        if not rel_path:
+            return None
+        path = rel_path if os.path.isabs(rel_path) else os.path.join(eeg_data_dir, rel_path)
+        with open(path, "r") as f:
+            return json.load(f)
+
+
+class MixedEEGDataset(Dataset):
+    def __init__(self, datasets, dataset_names=None, dataset_weights=None, dataset_loss_weights=None):
+        if len(datasets) == 0:
+            raise ValueError("MixedEEGDataset requires at least one dataset.")
+        self.datasets = list(datasets)
+        self.dataset_names = dataset_names or [f"dataset_{i}" for i in range(len(datasets))]
+        if len(self.dataset_names) != len(self.datasets):
+            raise ValueError("dataset_names must match datasets length.")
+        self.dataset_weights = [float(w) for w in (dataset_weights or [1.0] * len(self.datasets))]
+        if len(self.dataset_weights) != len(self.datasets):
+            raise ValueError("dataset_weights must match datasets length.")
+        self.dataset_loss_weights = [float(w) for w in (dataset_loss_weights or [1.0] * len(self.datasets))]
+        if len(self.dataset_loss_weights) != len(self.datasets):
+            raise ValueError("dataset_loss_weights must match datasets length.")
+
+        self.cumulative_sizes = []
+        total = 0
+        self.subject_offsets = []
+        self.subject_ids = []
+        subject_offset = 0
+        self.group_weight_map = {}
+        self.image_group_indices = {}
+        self.sample_weights = []
+        for dataset, weight in zip(self.datasets, self.dataset_weights):
+            total += len(dataset)
+            self.cumulative_sizes.append(total)
+            self.subject_offsets.append(subject_offset)
+            dataset_subject_ids = list(getattr(dataset, "subject_ids", []))
+            self.subject_ids.extend([subject_offset + int(sid) for sid in dataset_subject_ids])
+            subject_offset += len(dataset_subject_ids)
+            self.sample_weights.extend([weight] * len(dataset))
+            if hasattr(dataset, "get_image_group_indices"):
+                local_group_indices = dataset.get_image_group_indices()
+                for key in local_group_indices.keys():
+                    self.group_weight_map[key] = self.group_weight_map.get(key, 0.0) + weight
+                offset = self.cumulative_sizes[-2] if len(self.cumulative_sizes) > 1 else 0
+                for key, indices in local_group_indices.items():
+                    self.image_group_indices.setdefault(key, []).extend(offset + idx for idx in indices)
+
+        first_dataset = self.datasets[0]
+        self.num_sample_points = first_dataset.num_sample_points
+        self.channels_num = first_dataset.channels_num
+        self.feature_dim = first_dataset.feature_dim
+        self.image_features = np.empty((0, self.feature_dim), dtype=np.float32)
+
+        for dataset in self.datasets[1:]:
+            if dataset.num_sample_points != self.num_sample_points:
+                raise ValueError("All mixed datasets must share the same number of sample points.")
+            if dataset.channels_num != self.channels_num:
+                raise ValueError("All mixed datasets must share the same number of channels.")
+            if dataset.feature_dim != self.feature_dim:
+                raise ValueError("All mixed datasets must share the same feature dimension.")
+
+    def __len__(self):
+        return self.cumulative_sizes[-1]
+
+    def __getitem__(self, index):
+        dataset_idx = bisect.bisect_right(self.cumulative_sizes, index)
+        prev = 0 if dataset_idx == 0 else self.cumulative_sizes[dataset_idx - 1]
+        local_index = index - prev
+        sample = list(self.datasets[dataset_idx][local_index])
+        sample[3] = int(sample[3]) + self.subject_offsets[dataset_idx]
+        sample.append(float(self.dataset_loss_weights[dataset_idx]))
+        return tuple(sample)
+
+    def get_image_group_indices(self):
+        return self.image_group_indices
+
+    def get_group_sampling_weights(self):
+        return self.group_weight_map
+
+    def get_sample_weights(self):
+        return np.asarray(self.sample_weights, dtype=np.float64)
 
 
 if __name__ == '__main__':

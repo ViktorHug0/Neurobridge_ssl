@@ -202,10 +202,11 @@ def retrieve_all(
     image_indices=None,
     eval_mode='plain_cosine',
     sattc_params=None,
+    topk_value=5,
 ):
     if object_indices is None or image_indices is None:
         similarity_matrix = cosine_similarity(eeg_features, image_features)
-        count_5, count_1 = topk(similarity_matrix, 5)
+        count_5, count_1 = topk(similarity_matrix, topk_value)
         return count_5, count_1, eeg_features.shape[0]
 
     similarity_matrix, target_indices = compute_retrieval_scores(
@@ -217,5 +218,5 @@ def retrieve_all(
         eval_mode=eval_mode,
         sattc_params=sattc_params,
     )
-    count_5, count_1 = topk(similarity_matrix, 5, target_indices=target_indices)
+    count_5, count_1 = topk(similarity_matrix, topk_value, target_indices=target_indices)
     return count_5, count_1, eeg_features.shape[0]

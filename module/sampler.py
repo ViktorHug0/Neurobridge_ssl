@@ -20,8 +20,19 @@ class GroupedImageBatchSampler(BatchSampler):
         if not image_groups:
             raise ValueError("No grouped image indices found in dataset.")
 
+        group_weights = {}
+        if hasattr(dataset, "get_group_sampling_weights"):
+            group_weights = dataset.get_group_sampling_weights() or {}
+
         self.group_keys = list(image_groups.keys())
         self.image_groups = {key: list(indices) for key, indices in image_groups.items()}
+        self.group_weights = {key: float(group_weights.get(key, 1.0)) for key in self.group_keys}
+        positive_weights = [w for w in self.group_weights.values() if w > 0]
+        min_weight = min(positive_weights) if positive_weights else 1.0
+        self.group_key_pool = []
+        for key in self.group_keys:
+            repeat = max(1, int(round(self.group_weights[key] / min_weight)))
+            self.group_key_pool.extend([key] * repeat)
 
         smallest_group = min(len(indices) for indices in self.image_groups.values())
         self.samples_per_image = min(samples_per_image, smallest_group)
@@ -38,7 +49,7 @@ class GroupedImageBatchSampler(BatchSampler):
         rng = random.Random(self.seed + self.epoch)
         self.epoch += 1
 
-        shuffled_keys = list(self.group_keys)
+        shuffled_keys = list(self.group_key_pool)
         rng.shuffle(shuffled_keys)
 
         batch = []
@@ -59,7 +70,7 @@ class GroupedImageBatchSampler(BatchSampler):
             yield batch
 
     def __len__(self):
-        total_groups = len(self.group_keys)
+        total_groups = len(self.group_key_pool)
         if self.drop_last:
             return total_groups // self.images_per_batch
         return math.ceil(total_groups / self.images_per_batch)
