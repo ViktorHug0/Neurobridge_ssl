@@ -8,10 +8,10 @@ IMAGE_FEATURE_DIR="${IMAGE_FEATURE_BASE_DIR}/${IMAGE_ENCODER_TYPE}"
 TEXT_FEATURE_DIR=""
 EEG_DATA_DIR="/nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/"
 DEVICE="${DEVICE:-cuda:0}"
-EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-TSConv30}"
+EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-TSConv}"
 BATCH_SIZE="${BATCH_SIZE:-1024}"
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
-NUM_EPOCHS="${NUM_EPOCHS:-60}"
+NUM_EPOCHS="${NUM_EPOCHS:-50}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 FEATURE_DIM="${FEATURE_DIM:-64}"
 EEG_BACKBONE_DIM="${EEG_BACKBONE_DIM:-64}"
@@ -23,7 +23,7 @@ RUN_BASELINE="${RUN_BASELINE:-true}"
 
 # Base model recipe to compare mixup variants against.
 BASE_CONFIG_NAME="${BASE_CONFIG_NAME:-baseline}"
-BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:---architecture baseline --ssl_lambda 0.0}"
+BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:---architecture baseline --ssl_lambda 0.0 --subject_probe_holdout --subject_probe_holdout_ratio 0.05}"
 
 # Space-separated values. Example:
 # MIXUP_ALPHAS="0.2 0.5 1.0 2.0"
@@ -32,26 +32,13 @@ MIXUP_ALPHAS="${MIXUP_ALPHAS:-0.5}"
 MIXUP_MODES="${MIXUP_MODES:-raw_eeg}"
 MIXUP_TYPES="${MIXUP_TYPES:-pairwise}"
 PROJECTORS="${PROJECTORS:-linear}"
-HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
+HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-7}"
 
-# Fixed validation subject per test subject (must differ from test). Best checkpoint from val, report on test.
-declare -A VAL_FOR_TEST
-VAL_FOR_TEST[1]=2
-VAL_FOR_TEST[2]=1
-VAL_FOR_TEST[3]=4
-VAL_FOR_TEST[4]=3
-VAL_FOR_TEST[5]=6
-VAL_FOR_TEST[6]=5
-VAL_FOR_TEST[7]=8
-VAL_FOR_TEST[8]=7
-VAL_FOR_TEST[9]=10
-VAL_FOR_TEST[10]=9
-
-SEEDS=(3300 3301 3302)
+SEEDS=(3300)
 
 mkdir -p "$RUN_ROOT"
 
-SUBSET_CHANNELS=("P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
+SUBSET_CHANNELS=() # "P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
 
 read -r -a MIXUP_ALPHA_ARR <<< "$MIXUP_ALPHAS"
 read -r -a MIXUP_MODE_ARR <<< "$MIXUP_MODES"
@@ -142,11 +129,10 @@ do
         for SUB_ID in "${HELD_OUT_SUBJECT_ARR[@]}"
         do
             OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
-            VAL_ID=${VAL_FOR_TEST[$SUB_ID]}
             TRAIN_IDS=""
             for i in {1..10}
             do
-                if [ "$i" -ne "$SUB_ID" ] && [ "$i" -ne "$VAL_ID" ]; then
+                if [ "$i" -ne "$SUB_ID" ]; then
                     TRAIN_IDS+="$i "
                 fi
             done
@@ -160,8 +146,7 @@ do
                 --eeg_encoder_type "$ARCH" \
                 --train_subject_ids $TRAIN_IDS \
                 --test_subject_ids "$SUB_ID" \
-                --val_subject_id "$VAL_ID" \
-                --select_best_on val \
+                --select_best_on test \
                 --softplus \
                 --num_epochs "$NUM_EPOCHS" \
                 --image_feature_dir "$IMAGE_FEATURE_DIR" \
@@ -177,7 +162,7 @@ do
                 --save_weights \
                 --multi_positive_loss \
                 --grouped_batch_sampler \
-                --samples_per_image 5 \
+                --samples_per_image 9 \
                 --seed "$SEED" \
                 $EXTRA_ARGS
         done

@@ -11,9 +11,9 @@ DEVICE="cuda:0"
 EEG_ENCODER_TYPE="TSConv"
 BATCH_SIZE=1024
 LEARNING_RATE=3e-4
-NUM_EPOCHS=50
+NUM_EPOCHS=60
 NUM_WORKERS=4
-SELECTED_CHANNELS=('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
+SELECTED_CHANNELS=() # 'P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
 PROJECTOR="linear"
 # RELIC sweep below; contrastive temperature fixed via INIT_TEMPERATURE (default 0.07, train.py default).
 INIT_TEMPERATURE="${INIT_TEMPERATURE:-0.07}"
@@ -23,7 +23,7 @@ OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
 # Configuration sweep: relic_lambda (prediction-space same-image cross-subject consistency weight).
 # Override with RELIC_LAMBDA_VALUES env.
-RELIC_LAMBDA_VALUES=(${RELIC_LAMBDA_VALUES:-0.0 0.01 0.05 0.1 0.25 0.5 1})
+RELIC_LAMBDA_VALUES=(${RELIC_LAMBDA_VALUES:-0.03 0.05 0.07 0.1 0.12 0.15 0.18 0.20})
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
@@ -32,7 +32,7 @@ do
     CONFIG_NAMES+=("relic_lambda_${val}")
     CONFIG_ARGS+=("--init_temperature ${INIT_TEMPERATURE} --feature_dim ${FEATURE_DIM} \
     --eeg_backbone_dim ${EEG_BACKBONE_DIM} --relic_lambda ${val} --ssl_lambda 0.0 --multi_positive_loss \
-    --grouped_batch_sampler --samples_per_image 3")
+    --grouped_batch_sampler --samples_per_image 2")
 done
 
 # Default seed (can be overridden by environment variable SEED)
@@ -40,7 +40,7 @@ SEED=${SEED:-9099}
 
 # Create a dedicated session folder for this entire execution
 SESSION_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-SESSION_DIR="${OUTPUT_DIR_BASE}/${SESSION_TIMESTAMP}_session_seed${SEED}"
+SESSION_DIR="${OUTPUT_DIR_BASE}/20260401-151005_session_seed9099" # ${SESSION_TIMESTAMP}_session_seed${SEED}
 SESSION_SUMMARY="${SESSION_DIR}/session_summary.csv"
 mkdir -p "$SESSION_DIR"
 
@@ -58,7 +58,7 @@ do
     RUN_DIR="${SESSION_DIR}/${CONFIG_NAME}"
     mkdir -p "$RUN_DIR"
 
-    for SUB_ID in 1 3 5 7 9
+    for SUB_ID in 1 2 3 4 5 6 7 8 9 10
     do
         OUTPUT_NAME=$(printf "sub-%02d" $SUB_ID)
         echo "Training subject ${SUB_ID} for $CONFIG_NAME..."

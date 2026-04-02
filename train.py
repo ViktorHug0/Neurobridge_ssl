@@ -8,14 +8,12 @@ import time
 import sys
 import shutil
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -23,10 +21,11 @@ import pandas as pd
 from module.dataset import EEGPreImageDataset
 from module.eeg_encoder.atm.atm import ATMS
 from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer, TSConv30 
-from module.loss import ContrastiveLoss, cross_covariance_penalty
+from module.loss import ContrastiveLoss
 from module.util import retrieve_all
 from module.projector import *
 from module.sampler import GroupedImageBatchSampler
+from module.training_plots import save_probe_plot, save_training_plot
 from module.eeg_augmentation import RandomTimeShift, RandomGaussianNoise, RandomChannelDropout, RandomSmooth
 
 
@@ -132,40 +131,15 @@ def compute_relic_prediction_consistency_loss(criterion, eeg_feature, image_feat
     if not torch.any(pair_mask):
         return logits.new_tensor(0.0)
 
-    kl_forward = torch.sum(
-        probs.unsqueeze(1) * (log_probs.unsqueeze(1) - log_probs.unsqueeze(0)),
-        dim=-1,
-    )
-    kl_reverse = torch.sum(
-        probs.unsqueeze(0) * (log_probs.unsqueeze(0) - log_probs.unsqueeze(1)),
-        dim=-1,
-    )
-    sym_kl = 0.5 * (kl_forward + kl_reverse)
-    return sym_kl[pair_mask].mean()
+    src_idx, dst_idx = pair_mask.nonzero(as_tuple=True)
+    log_probs_src = log_probs[src_idx]
+    log_probs_dst = log_probs[dst_idx]
+    probs_src = probs[src_idx]
+    probs_dst = probs[dst_idx]
 
-
-def save_training_plot(history, out_path):
-    epochs = history['epoch']
-    fig, ax_loss = plt.subplots(figsize=(9, 5))
-    ax_acc = ax_loss.twinx()
-
-    ax_loss.plot(epochs, history['train_loss'], label='Train Loss', color='blue', linewidth=2)
-    ax_loss.plot(epochs, history['test_loss'], label='Test Loss', color='blue', linestyle='--', linewidth=2)
-    ax_acc.plot(epochs, history['top1_acc'], label='Top-1 Acc', color='black', linestyle='--', linewidth=2)
-
-    ax_loss.set_xlabel('Epoch')
-    ax_loss.set_ylabel('Loss')
-    ax_acc.set_ylabel('Top-1 Accuracy (%)')
-    ax_acc.set_ylim(0, 60)
-    ax_loss.grid(alpha=0.3)
-
-    lines_1, labels_1 = ax_loss.get_legend_handles_labels()
-    lines_2, labels_2 = ax_acc.get_legend_handles_labels()
-    ax_loss.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper right')
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+    kl_forward = torch.sum(probs_src * (log_probs_src - log_probs_dst), dim=-1)
+    kl_reverse = torch.sum(probs_dst * (log_probs_dst - log_probs_src), dim=-1)
+    return (0.5 * (kl_forward + kl_reverse)).mean()
 
 
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
@@ -258,47 +232,17 @@ def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_
     return mixed
 
 
-def map_subject_ids_to_indices(subject_ids, subject_to_index):
-    mapped = [subject_to_index[int(x)] for x in subject_ids.detach().cpu().tolist()]
-    return torch.tensor(mapped, device=subject_ids.device, dtype=torch.long)
+class _GroupedSubset(Subset):
+    """Subset that preserves get_image_group_indices for GroupedImageBatchSampler."""
 
-
-def compute_centroid_subject_accuracy(features, subject_ids):
-    unique_subjects = np.unique(subject_ids)
-    if unique_subjects.shape[0] < 2:
-        return float('nan')
-
-    feats = features / np.clip(np.linalg.norm(features, axis=1, keepdims=True), 1e-8, None)
-    centroids = {}
-    for sid in unique_subjects:
-        subject_feats = feats[subject_ids == sid]
-        centroid = subject_feats.mean(axis=0)
-        norm = np.linalg.norm(centroid)
-        centroids[sid] = centroid / max(norm, 1e-8)
-
-    ordered_subjects = sorted(centroids.keys())
-    centroid_matrix = np.stack([centroids[sid] for sid in ordered_subjects], axis=0)
-    logits = feats @ centroid_matrix.T
-    pred = np.array([ordered_subjects[idx] for idx in np.argmax(logits, axis=1)])
-    return float((pred == subject_ids).mean() * 100.0)
-
-
-def compute_same_image_cross_subject_cosine(features, object_indices, image_indices, subject_ids):
-    if features.shape[0] == 0:
-        return float('nan')
-
-    feats = torch.tensor(features, dtype=torch.float32)
-    feats = F.normalize(feats, p=2, dim=1)
-    sim = torch.matmul(feats, feats.T)
-
-    object_t = torch.tensor(object_indices)
-    image_t = torch.tensor(image_indices)
-    subject_t = torch.tensor(subject_ids)
-    mask = build_cross_subject_positive_mask(object_t, image_t, subject_t)
-    mask.fill_diagonal_(False)
-    if not torch.any(mask):
-        return float('nan')
-    return float(sim[mask].mean().item())
+    def get_image_group_indices(self):
+        index_map = {int(src_idx): sub_idx for sub_idx, src_idx in enumerate(self.indices)}
+        out = {}
+        for key, lst in self.dataset.get_image_group_indices().items():
+            sub = [index_map[i] for i in lst if i in index_map]
+            if sub:
+                out[key] = sub
+        return out
 
 
 def set_requires_grad(module, enabled):
@@ -351,26 +295,14 @@ if __name__ == '__main__':
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--relic_lambda', default=0.0, type=float, help='weight for RELIC-style prediction consistency across same-image different-subject EEG views')
-    parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'saw_csls', 'saw_adacsls', 'saw_adacsls_poe'], default='plain_cosine', help='test-time retrieval calibration mode')
-    parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='shrinkage used for subject-adaptive whitening during evaluation')
-    parser.add_argument('--sattc_saw_diag', action='store_true', help='use diagonal covariance for subject-adaptive whitening during evaluation')
-    parser.add_argument('--sattc_csls_k', default=12, type=int, help='fixed-k CSLS neighborhood size and adaptive CSLS base k')
-    parser.add_argument('--sattc_csls_kmin', default=5, type=int, help='minimum adaptive CSLS neighborhood size')
-    parser.add_argument('--sattc_csls_kmax', default=20, type=int, help='maximum adaptive CSLS neighborhood size')
-    parser.add_argument('--sattc_csls_alpha', default=1.0, type=float, help='row-density exponent for adaptive CSLS')
-    parser.add_argument('--sattc_csls_m', default=10, type=int, help='row-density window size for adaptive CSLS')
-    parser.add_argument('--sattc_csls_col_alpha', default=None, type=float, help='optional column-density exponent for adaptive CSLS')
-    parser.add_argument('--sattc_csls_col_m', default=None, type=int, help='optional column-density window size for adaptive CSLS')
-    parser.add_argument('--sattc_csls_col_kmin', default=None, type=int, help='optional minimum column adaptive neighborhood size')
-    parser.add_argument('--sattc_csls_col_kmax', default=None, type=int, help='optional maximum column adaptive neighborhood size')
-    parser.add_argument('--sattc_struct_top_l', default=5, type=int, help='bidirectional top-L threshold for the SATTC structural expert')
-    parser.add_argument('--sattc_struct_popularity_k', default=5, type=int, help='top-K used for class popularity and hubness statistics')
-    parser.add_argument('--sattc_struct_hub_high_quantile', default=0.95, type=float, help='high-hubness quantile for SATTC structural penalties')
-    parser.add_argument('--sattc_struct_hub_mid_quantile', default=0.80, type=float, help='mid-hubness quantile for SATTC structural penalties')
-    parser.add_argument('--sattc_poe_beta', default=1.9, type=float, help='PoE weight for the SATTC structural expert')
-    parser.add_argument('--sattc_poe_lambda_pen', default=None, type=float, help='optional manual SATTC penalty scale')
-    parser.add_argument('--sattc_poe_lambda_bonus', default=None, type=float, help='optional manual SATTC bonus scale')
-    parser.add_argument('--architecture', type=str, choices=['baseline', 'clap_adapter', 'factorized_adv'], default='baseline', help='training architecture')
+    parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'saw_csls'], default='plain_cosine', help='test-time retrieval: cosine, SAW whitening, or SAW + fixed-k CSLS')
+    parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='covariance shrinkage for subject-adaptive whitening (SAW) during evaluation')
+    parser.add_argument('--sattc_saw_diag', action='store_true', help='use diagonal covariance for SAW during evaluation')
+    parser.add_argument('--sattc_csls_k', default=2, type=int, help='fixed neighborhood size k for CSLS after SAW (eval_mode saw_csls)')
+    parser.add_argument('--sattc_cw', action='store_true', help='apply candidate-side whitening (CW) to the retrieval bank during evaluation')
+    parser.add_argument('--sattc_cw_shrink', default=0.05, type=float, help='covariance shrinkage for candidate-side whitening (CW)')
+    parser.add_argument('--sattc_cw_diag', action='store_true', help='use diagonal covariance for candidate-side whitening (CW)')
+    parser.add_argument('--architecture', type=str, choices=['baseline', 'clap_adapter'], default='baseline', help='training architecture')
     parser.add_argument('--pretrain_epochs', default=0, type=int, help='baseline pretraining epochs before freezing the EEG encoder and training the CLAP adapter')
     parser.add_argument('--adapter_hidden_dim', default=256, type=int, help='hidden dimension of the frozen-adapter residual MLP')
     parser.add_argument('--adapter_alpha', default=1.0, type=float, help='inference-time alpha for the frozen-adapter residual MLP')
@@ -381,14 +313,8 @@ if __name__ == '__main__':
     parser.add_argument('--clap_mse_lambda', default=0.0, type=float, help='weight for identity anchor MSE loss in stage-2')
     parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
     parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
-    parser.add_argument('--content_dim', default=256, type=int, help='content branch bottleneck dimension for factorized_adv')
-    parser.add_argument('--style_dim', default=256, type=int, help='style branch bottleneck dimension for factorized_adv')
-    parser.add_argument('--subject_loss_lambda', default=1.0, type=float, help='weight of the subject classification loss on z_style')
-    parser.add_argument('--adv_subject_loss_lambda', default=0.0, type=float, help='weight of the adversarial subject loss on z_content')
-    parser.add_argument('--recon_lambda', default=0.0, type=float, help='weight of the optional backbone reconstruction loss')
-    parser.add_argument('--ortho_lambda', default=0.0, type=float, help='weight of z_content/z_style decorrelation loss')
-    parser.add_argument('--diagnostic_eval', action='store_true', help='run representation diagnostics each epoch')
-    parser.add_argument('--train_eval_batch_size', default=512, type=int, help='batch size for diagnostic train-subject evaluation')
+    parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
+    parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
     parser.add_argument("--selected_channels", default=[], nargs='*', type=str, help="selected EEG channels, empty means all channels")
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
@@ -408,6 +334,9 @@ if __name__ == '__main__':
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
     args = parser.parse_args()
+    if args.subject_probe_holdout:
+        if not (0.0 < args.subject_probe_holdout_ratio < 1.0):
+            raise ValueError("--subject_probe_holdout_ratio must be strictly between 0 and 1.")
 
     seed = seed_everything(seed=args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -456,6 +385,9 @@ if __name__ == '__main__':
         log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
         if len(args.train_subject_ids) == 0:
             raise ValueError("After removing val_subject_id, train_subject_ids is empty.")
+
+    if args.subject_probe_holdout and args.architecture != 'baseline':
+        raise ValueError("--subject_probe_holdout is only supported with --architecture baseline.")
 
     with open(os.path.join(args.output_dir, "last_run.txt"), 'w') as f:
         f.write(writer.log_dir)
@@ -514,15 +446,75 @@ if __name__ == '__main__':
     log(f'data length: {len(train_dataset)}')
     log(f'number of channels: {channels_num}')
 
+    pin_memory = device.type == "cuda"
+    train_main_dataset = train_dataset
+    subj_probe_train_dataloader = None
+    subj_probe_val_dataloader = None
+    if args.subject_probe_holdout:
+        if args.data_random:
+            raise ValueError("--subject_probe_holdout requires deterministic indexing (disable --data_random).")
+        if len(args.train_subject_ids) <= 1:
+            raise ValueError("--subject_probe_holdout requires at least two training subjects.")
+        rng = np.random.default_rng(seed + 137)
+        main_train_indices = []
+        probe_val_indices = []
+        if args.grouped_batch_sampler:
+            image_group_keys = list(train_dataset.get_image_group_indices().keys())
+            holdout_group_count = min(
+                max(1, int(np.floor(len(image_group_keys) * float(args.subject_probe_holdout_ratio)))),
+                len(image_group_keys) - 1,
+            )
+            rng.shuffle(image_group_keys)
+            probe_group_keys = set(image_group_keys[:holdout_group_count])
+            for key, indices in train_dataset.get_image_group_indices().items():
+                if key in probe_group_keys:
+                    probe_val_indices.extend(indices)
+                else:
+                    main_train_indices.extend(indices)
+            log(
+                f"Subject probe holdout: train_groups={len(image_group_keys) - holdout_group_count}, "
+                f"probe_val_groups={holdout_group_count}, main_train={len(main_train_indices)}, "
+                f"probe_val={len(probe_val_indices)} (ratio={args.subject_probe_holdout_ratio:.3f})"
+            )
+        else:
+            n_subj = len(args.train_subject_ids)
+            if len(train_dataset) % n_subj != 0:
+                raise ValueError("Train dataset length not divisible by number of train subjects; cannot build per-subject probe split.")
+            per_subject_len = len(train_dataset) // n_subj
+            if per_subject_len <= 1:
+                raise ValueError("Per-subject train length too small for probe holdout.")
+            holdout_per_subject = min(
+                max(1, int(np.floor(per_subject_len * float(args.subject_probe_holdout_ratio)))),
+                per_subject_len - 1,
+            )
+            for subject_idx in range(n_subj):
+                start = subject_idx * per_subject_len
+                perm = rng.permutation(np.arange(start, start + per_subject_len, dtype=np.int64))
+                probe_val_indices.extend(perm[:holdout_per_subject].tolist())
+                main_train_indices.extend(perm[holdout_per_subject:].tolist())
+            log(
+                f"Subject probe holdout: per_subject={per_subject_len}, main_train={len(main_train_indices)}, "
+                f"probe_val={len(probe_val_indices)} (ratio={args.subject_probe_holdout_ratio:.3f})"
+            )
+        train_main_dataset = _GroupedSubset(train_dataset, main_train_indices) if args.grouped_batch_sampler else Subset(train_dataset, main_train_indices)
+        subj_probe_val_dataset = Subset(train_dataset, probe_val_indices)
+        pb = 256
+        subj_probe_train_dataloader = DataLoader(
+            train_main_dataset, batch_size=pb, shuffle=True, drop_last=False, num_workers=args.num_workers, pin_memory=pin_memory
+        )
+        subj_probe_val_dataloader = DataLoader(
+            subj_probe_val_dataset, batch_size=pb, shuffle=False, drop_last=False, num_workers=args.num_workers, pin_memory=pin_memory
+        )
+
     if args.grouped_batch_sampler:
         batch_sampler = GroupedImageBatchSampler(
-            train_dataset,
+            train_main_dataset,
             batch_size=args.batch_size,
             samples_per_image=args.samples_per_image,
             drop_last=True,
             seed=seed,
         )
-        dataloader = DataLoader(train_dataset, batch_sampler=batch_sampler, num_workers=args.num_workers)
+        dataloader = DataLoader(train_main_dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=pin_memory)
         effective_batch_size = batch_sampler.images_per_batch * batch_sampler.samples_per_image
         log(
             f'Grouped batch sampler enabled: images_per_batch={batch_sampler.images_per_batch}, '
@@ -530,11 +522,12 @@ if __name__ == '__main__':
         )
     else:
         dataloader = DataLoader(
-            train_dataset,
+            train_main_dataset,
             batch_size=args.batch_size,
             shuffle=True,
             drop_last=True,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
         )
 
     if args.architecture == 'clap_adapter' and not args.grouped_batch_sampler:
@@ -589,42 +582,11 @@ if __name__ == '__main__':
     )
     test_dataloader = DataLoader(test_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
-    train_eval_dataloader = None
-    if args.diagnostic_eval:
-        print('\n>>> Loading Diagnostic Train-Eval Data <<<')
-        train_eval_dataset = EEGPreImageDataset(
-            args.train_subject_ids,
-            args.eeg_data_dir,
-            args.selected_channels,
-            args.time_window,
-            args.image_feature_dir,
-            args.text_feature_dir,
-            args.image_aug,
-            args.aug_image_feature_dirs,
-            args.data_average,
-            False,
-            None,
-            False,
-            False,
-            False,
-            args.frozen_eeg_prior
-        )
-        train_eval_dataloader = DataLoader(
-            train_eval_dataset,
-            batch_size=args.train_eval_batch_size,
-            shuffle=False,
-            num_workers=args.num_workers
-        )
-
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir', 'architecture',
         'projector', 'feature_dim', 'eeg_backbone_dim', 'pretrain_epochs', 'adapter_hidden_dim',
-        'adapter_alpha', 'content_dim', 'style_dim', 'time_window', 'selected_channels',
-        'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_csls_kmin',
-        'sattc_csls_kmax', 'sattc_csls_alpha', 'sattc_csls_m', 'sattc_csls_col_alpha',
-        'sattc_csls_col_m', 'sattc_csls_col_kmin', 'sattc_csls_col_kmax', 'sattc_struct_top_l',
-        'sattc_struct_popularity_k', 'sattc_struct_hub_high_quantile', 'sattc_struct_hub_mid_quantile',
-        'sattc_poe_beta', 'sattc_poe_lambda_pen', 'sattc_poe_lambda_bonus'
+        'adapter_alpha', 'time_window', 'selected_channels',
+        'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
     inference_config['eeg_sample_points'] = eeg_sample_points
@@ -639,27 +601,11 @@ if __name__ == '__main__':
     log(str(model))
 
     eeg_adapter = None
-    content_projector = None
-    style_projector = None
-    subject_classifier = None
-    adv_subject_classifier = None
-    reconstructor = None
     if args.architecture == 'baseline':
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
-    elif args.architecture == 'clap_adapter':
+    else:
         eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
         eeg_adapter = ResidualAdapter(args.feature_dim, args.adapter_hidden_dim, args.adapter_alpha).to(device)
-    else:
-        if len(args.train_subject_ids) < 2 and (args.subject_loss_lambda > 0 or args.adv_subject_loss_lambda > 0):
-            raise ValueError("factorized_adv needs at least two training subjects when subject losses are enabled.")
-        content_projector = ProjectorMLP(backbone_feature_dim, args.content_dim).to(device)
-        style_projector = ProjectorMLP(backbone_feature_dim, args.style_dim).to(device)
-        eeg_projector = build_projector(args.projector, args.content_dim, args.feature_dim).to(device)
-        if len(args.train_subject_ids) >= 2:
-            subject_classifier = SubjectClassifier(args.style_dim, len(args.train_subject_ids)).to(device)
-            adv_subject_classifier = SubjectClassifier(args.content_dim, len(args.train_subject_ids)).to(device)
-        if args.recon_lambda > 0:
-            reconstructor = FeatureReconstructor(args.content_dim + args.style_dim, backbone_feature_dim).to(device)
 
     img_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
     text_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
@@ -670,17 +616,19 @@ if __name__ == '__main__':
     )
     if eeg_adapter is not None:
         projector_params += sum(p.numel() for p in eeg_adapter.parameters() if p.requires_grad)
-    if content_projector is not None:
-        projector_params += sum(p.numel() for p in content_projector.parameters() if p.requires_grad)
-    if style_projector is not None:
-        projector_params += sum(p.numel() for p in style_projector.parameters() if p.requires_grad)
-    if subject_classifier is not None:
-        projector_params += sum(p.numel() for p in subject_classifier.parameters() if p.requires_grad)
-    if adv_subject_classifier is not None:
-        projector_params += sum(p.numel() for p in adv_subject_classifier.parameters() if p.requires_grad)
-    if reconstructor is not None:
-        projector_params += sum(p.numel() for p in reconstructor.parameters() if p.requires_grad)
     log(f'Projector trainable parameters: {projector_params / 1e6:.2f}M')
+
+    align_dim = args.feature_dim if args.projector != 'direct' else backbone_feature_dim
+    probe_class_map = {sid: idx for idx, sid in enumerate(sorted(args.train_subject_ids))}
+    num_probe_classes = len(probe_class_map)
+    subj_probe_heads = None
+    subj_probe_optimizers = None
+    if args.subject_probe_holdout:
+        subj_probe_heads = nn.ModuleDict({
+            'eeg_backbone': nn.Linear(backbone_feature_dim, num_probe_classes).to(device),
+            'eeg_align': nn.Linear(align_dim, num_probe_classes).to(device),
+        })
+        subj_probe_optimizers = {name: optim.Adam(head.parameters(), lr=1e-3) for name, head in subj_probe_heads.items()}
 
     criterion = ContrastiveLoss(
         args.init_temperature,
@@ -693,31 +641,16 @@ if __name__ == '__main__':
         args.softplus,
         args.eeg_l2_norm_ssl,
     ).to(device)
-    subject_criterion = torch.nn.CrossEntropyLoss().to(device)
     log(str(criterion))
 
     sattc_params = {
         'saw_shrink': args.sattc_saw_shrink,
         'saw_diag': args.sattc_saw_diag,
         'csls_k': args.sattc_csls_k,
-        'csls_kmin': args.sattc_csls_kmin,
-        'csls_kmax': args.sattc_csls_kmax,
-        'csls_alpha': args.sattc_csls_alpha,
-        'csls_m': args.sattc_csls_m,
-        'csls_col_alpha': args.sattc_csls_col_alpha,
-        'csls_col_m': args.sattc_csls_col_m,
-        'csls_col_kmin': args.sattc_csls_col_kmin,
-        'csls_col_kmax': args.sattc_csls_col_kmax,
-        'struct_top_l': args.sattc_struct_top_l,
-        'struct_popularity_k': args.sattc_struct_popularity_k,
-        'struct_hub_high_quantile': args.sattc_struct_hub_high_quantile,
-        'struct_hub_mid_quantile': args.sattc_struct_hub_mid_quantile,
-        'poe_beta': args.sattc_poe_beta,
-        'poe_lambda_pen': args.sattc_poe_lambda_pen,
-        'poe_lambda_bonus': args.sattc_poe_lambda_bonus,
+        'cw_enabled': args.sattc_cw,
+        'cw_shrink': args.sattc_cw_shrink,
+        'cw_diag': args.sattc_cw_diag,
     }
-
-    subject_to_index = {sid: idx for idx, sid in enumerate(args.train_subject_ids)}
 
     if args.architecture == 'clap_adapter':
         if args.pretrain_epochs <= 0 or args.pretrain_epochs >= args.num_epochs:
@@ -734,11 +667,6 @@ if __name__ == '__main__':
         'img_projector': img_projector,
         'text_projector': text_projector,
         'eeg_adapter': eeg_adapter,
-        'content_projector': content_projector,
-        'style_projector': style_projector,
-        'subject_classifier': subject_classifier,
-        'adv_subject_classifier': adv_subject_classifier,
-        'reconstructor': reconstructor,
     }
 
     def get_epoch_stage(epoch_idx):
@@ -752,19 +680,11 @@ if __name__ == '__main__':
     def configure_stage(stage_name):
         if args.architecture == 'baseline':
             active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
-        elif args.architecture == 'clap_adapter':
+        else:
             if stage_name == 'pretrain':
                 active = {'model', 'eeg_projector', 'img_projector', 'text_projector'}
             else:
                 active = {'eeg_adapter'}
-        else:
-            active = {'model', 'content_projector', 'style_projector', 'eeg_projector', 'img_projector', 'text_projector'}
-            if subject_classifier is not None and args.subject_loss_lambda > 0:
-                active.add('subject_classifier')
-            if adv_subject_classifier is not None and args.adv_subject_loss_lambda > 0:
-                active.add('adv_subject_classifier')
-            if reconstructor is not None and args.recon_lambda > 0:
-                active.add('reconstructor')
         lr = args.learning_rate
 
         for name, module in module_registry.items():
@@ -788,42 +708,19 @@ if __name__ == '__main__':
         return optimizer
 
     def forward_architecture(eeg_backbone_batch, stage_name):
-        output = {
-            'eeg_feature': None,
-            'ssl_feature': None,
-            'z_content': None,
-            'z_style': None,
-            'subject_logits': None,
-            'adv_subject_logits': None,
-            'reconstruction': None,
-        }
+        output = {'eeg_feature': None, 'ssl_feature': None, 'z_content': None}
         if args.architecture == 'baseline':
             output['eeg_feature'] = eeg_projector(eeg_backbone_batch)
             output['ssl_feature'] = output['eeg_feature']
             return output
 
-        if args.architecture == 'clap_adapter':
-            base_feature = eeg_projector(eeg_backbone_batch)
-            output['z_content'] = base_feature
-            if stage_name == 'adapter':
-                output['eeg_feature'] = eeg_adapter(base_feature)
-            else:
-                output['eeg_feature'] = base_feature
-            output['ssl_feature'] = output['eeg_feature']
-            return output
-
-        z_content = content_projector(eeg_backbone_batch)
-        z_style = style_projector(eeg_backbone_batch)
-        output['z_content'] = z_content
-        output['z_style'] = z_style
-        output['eeg_feature'] = eeg_projector(z_content)
+        base_feature = eeg_projector(eeg_backbone_batch)
+        output['z_content'] = base_feature
+        if stage_name == 'adapter':
+            output['eeg_feature'] = eeg_adapter(base_feature)
+        else:
+            output['eeg_feature'] = base_feature
         output['ssl_feature'] = output['eeg_feature']
-        if subject_classifier is not None:
-            output['subject_logits'] = subject_classifier(z_style)
-        if adv_subject_classifier is not None:
-            output['adv_subject_logits'] = adv_subject_classifier(grad_reverse(z_content))
-        if reconstructor is not None:
-            output['reconstruction'] = reconstructor(torch.cat([z_content, z_style], dim=1))
         return output
 
     def build_checkpoint(epoch_idx, loss_value, stage_name, optimizer_obj):
@@ -840,16 +737,6 @@ if __name__ == '__main__':
         }
         if eeg_adapter is not None:
             checkpoint['eeg_adapter_state_dict'] = eeg_adapter.state_dict()
-        if content_projector is not None:
-            checkpoint['content_projector_state_dict'] = content_projector.state_dict()
-        if style_projector is not None:
-            checkpoint['style_projector_state_dict'] = style_projector.state_dict()
-        if subject_classifier is not None:
-            checkpoint['subject_classifier_state_dict'] = subject_classifier.state_dict()
-        if adv_subject_classifier is not None:
-            checkpoint['adv_subject_classifier_state_dict'] = adv_subject_classifier.state_dict()
-        if reconstructor is not None:
-            checkpoint['reconstructor_state_dict'] = reconstructor.state_dict()
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
         return checkpoint
@@ -925,75 +812,20 @@ if __name__ == '__main__':
         )
         return avg_loss_local, top1_acc_local, top5_acc_local
 
-    def run_representation_diagnostics():
-        if train_eval_dataloader is None:
-            return {}
-        model.eval()
-        eeg_projector.eval()
-        img_projector.eval()
-        text_projector.eval()
-        if eeg_adapter is not None:
-            eeg_adapter.eval()
-        if content_projector is not None:
-            content_projector.eval()
-        if style_projector is not None:
-            style_projector.eval()
-        if subject_classifier is not None:
-            subject_classifier.eval()
-        if adv_subject_classifier is not None:
-            adv_subject_classifier.eval()
-        if reconstructor is not None:
-            reconstructor.eval()
-
-        retrieval_features = []
-        z_content_features = []
-        z_style_features = []
-        subjects = []
-        object_indices = []
-        image_indices = []
-
-        with torch.no_grad():
-            for batch in train_eval_dataloader:
-                eeg_batch = batch[0].to(device)
-                subject_id_batch = batch[3].to(device)
-                object_idx_batch = batch[4].to(device)
-                image_idx_batch = batch[5].to(device)
-
-                eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch, active_stage if active_stage is not None else 'joint')
-                retrieval_features.append(arch_out['eeg_feature'].cpu().numpy())
-                if arch_out['z_content'] is not None:
-                    z_content_features.append(arch_out['z_content'].cpu().numpy())
-                if arch_out['z_style'] is not None:
-                    z_style_features.append(arch_out['z_style'].cpu().numpy())
-                subjects.append(subject_id_batch.cpu().numpy())
-                object_indices.append(object_idx_batch.cpu().numpy())
-                image_indices.append(image_idx_batch.cpu().numpy())
-
-        retrieval_features = np.concatenate(retrieval_features, axis=0)
-        subject_all = np.concatenate(subjects, axis=0)
-        object_all = np.concatenate(object_indices, axis=0)
-        image_all = np.concatenate(image_indices, axis=0)
-
-        metrics = {
-            'diag_subject_centroid_acc_retrieval': compute_centroid_subject_accuracy(retrieval_features, subject_all),
-            'diag_cross_subject_cos_retrieval': compute_same_image_cross_subject_cosine(
-                retrieval_features, object_all, image_all, subject_all
-            ),
-        }
-        if len(z_content_features) > 0:
-            z_content_all = np.concatenate(z_content_features, axis=0)
-            metrics['diag_subject_centroid_acc_z_content'] = compute_centroid_subject_accuracy(z_content_all, subject_all)
-        if len(z_style_features) > 0:
-            z_style_all = np.concatenate(z_style_features, axis=0)
-            metrics['diag_subject_centroid_acc_z_style'] = compute_centroid_subject_accuracy(z_style_all, subject_all)
-        return metrics
+    def encode_probe_labels(subject_ids: torch.Tensor) -> torch.Tensor:
+        ids = [int(x) for x in subject_ids.detach().cpu().tolist()]
+        return torch.tensor([probe_class_map[s] for s in ids], dtype=torch.long, device=subject_ids.device)
 
     best_top1_acc = 0.0
     best_top5_acc = 0.0
     best_test_loss = float('inf')
     best_test_epoch = 0
     history = {'epoch': [], 'train_loss': [], 'test_loss': [], 'top1_acc': []}
+    probe_history = (
+        {'epoch': [], 'eeg_backbone_val_acc': [], 'eeg_align_val_acc': []}
+        if args.subject_probe_holdout
+        else None
+    )
     optimizer = None
     active_stage = None
     top1_acc = 0.0
@@ -1010,14 +842,6 @@ if __name__ == '__main__':
         total_ssl_loss = 0.0
         total_relic_loss = 0.0
         total_cl_loss = 0.0
-        total_subject_loss = 0.0
-        total_adv_subject_loss = 0.0
-        total_ortho_loss = 0.0
-        total_recon_loss = 0.0
-        total_subject_acc = 0.0
-        total_subject_acc_steps = 0
-        total_adv_subject_acc = 0.0
-        total_adv_subject_acc_steps = 0
 
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [{stage}]"):
             eeg_batch = batch[0].to(device)
@@ -1095,39 +919,6 @@ if __name__ == '__main__':
                 loss = loss + args.relic_lambda * relic_loss
                 total_relic_loss += relic_loss.item()
 
-            if args.architecture == 'factorized_adv':
-                if arch_out['subject_logits'] is not None and args.subject_loss_lambda > 0:
-                    subject_targets = map_subject_ids_to_indices(subject_id_batch, subject_to_index)
-                    subject_loss = subject_criterion(arch_out['subject_logits'], subject_targets)
-                    loss = loss + args.subject_loss_lambda * subject_loss
-                    total_subject_loss += subject_loss.item()
-
-                    subject_pred = torch.argmax(arch_out['subject_logits'], dim=1)
-                    subject_acc = (subject_pred == subject_targets).float().mean().item() * 100.0
-                    total_subject_acc += subject_acc
-                    total_subject_acc_steps += 1
-
-                if arch_out['adv_subject_logits'] is not None and args.adv_subject_loss_lambda > 0:
-                    subject_targets = map_subject_ids_to_indices(subject_id_batch, subject_to_index)
-                    adv_subject_loss = subject_criterion(arch_out['adv_subject_logits'], subject_targets)
-                    loss = loss + args.adv_subject_loss_lambda * adv_subject_loss
-                    total_adv_subject_loss += adv_subject_loss.item()
-
-                    adv_subject_pred = torch.argmax(arch_out['adv_subject_logits'], dim=1)
-                    adv_subject_acc = (adv_subject_pred == subject_targets).float().mean().item() * 100.0
-                    total_adv_subject_acc += adv_subject_acc
-                    total_adv_subject_acc_steps += 1
-
-                if args.ortho_lambda > 0:
-                    ortho_loss = cross_covariance_penalty(arch_out['z_content'], arch_out['z_style'])
-                    loss = loss + args.ortho_lambda * ortho_loss
-                    total_ortho_loss += ortho_loss.item()
-
-                if arch_out['reconstruction'] is not None and args.recon_lambda > 0:
-                    recon_loss = F.mse_loss(arch_out['reconstruction'], eeg_backbone_batch.detach())
-                    loss = loss + args.recon_lambda * recon_loss
-                    total_recon_loss += recon_loss.item()
-
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -1137,15 +928,6 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_ssl', total_ssl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_relic', total_relic_loss / len(dataloader), epoch)
-        if args.architecture == 'factorized_adv':
-            writer.add_scalar('Loss/train_subject', total_subject_loss / len(dataloader), epoch)
-            writer.add_scalar('Loss/train_adv_subject', total_adv_subject_loss / len(dataloader), epoch)
-            writer.add_scalar('Loss/train_ortho', total_ortho_loss / len(dataloader), epoch)
-            writer.add_scalar('Loss/train_recon', total_recon_loss / len(dataloader), epoch)
-            if total_subject_acc_steps > 0:
-                writer.add_scalar('Acc/train_subject_head', total_subject_acc / total_subject_acc_steps, epoch)
-            if total_adv_subject_acc_steps > 0:
-                writer.add_scalar('Acc/train_adv_subject_head', total_adv_subject_acc / total_adv_subject_acc_steps, epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] Stage={stage} TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} SSL={total_ssl_loss / len(dataloader):.4f} "
@@ -1161,16 +943,6 @@ if __name__ == '__main__':
         text_projector.eval()
         if eeg_adapter is not None:
             eeg_adapter.eval()
-        if content_projector is not None:
-            content_projector.eval()
-        if style_projector is not None:
-            style_projector.eval()
-        if subject_classifier is not None:
-            subject_classifier.eval()
-        if adv_subject_classifier is not None:
-            adv_subject_classifier.eval()
-        if reconstructor is not None:
-            reconstructor.eval()
 
         avg_test_loss, top1_acc, top5_acc = evaluate_split(test_dataloader, stage, "test")
         writer.add_scalar('Loss/test', avg_test_loss, epoch)
@@ -1184,13 +956,68 @@ if __name__ == '__main__':
             writer.add_scalar('Acc/top1_val', val_top1, epoch)
             writer.add_scalar('Acc/top5_val', val_top5, epoch)
 
-        if args.diagnostic_eval:
-            diag_metrics = run_representation_diagnostics()
-            for metric_name, metric_value in diag_metrics.items():
-                if not np.isnan(metric_value):
-                    writer.add_scalar(f"Diag/{metric_name}", metric_value, epoch)
-            if len(diag_metrics) > 0:
-                log("Diagnostics: " + ", ".join([f"{k}={v:.3f}" for k, v in diag_metrics.items() if not np.isnan(v)]))
+        bb_probe_acc_pct = float('nan')
+        clip_probe_acc_pct = float('nan')
+        if (
+            args.subject_probe_holdout
+            and subj_probe_heads is not None
+            and subj_probe_train_dataloader is not None
+            and subj_probe_val_dataloader is not None
+        ):
+            model.eval()
+            eeg_projector.eval()
+            for h in subj_probe_heads.values():
+                h.train()
+            probe_train_loss_sum = {k: 0.0 for k in subj_probe_heads}
+            probe_train_batches = 0
+            for probe_batch in subj_probe_train_dataloader:
+                eeg_p = probe_batch[0].to(device)
+                sid_p = probe_batch[3].to(device)
+                with torch.no_grad():
+                    bb = run_eeg_backbone(model, args, eeg_p, sid_p)
+                    al = eeg_projector(bb)
+                y = encode_probe_labels(sid_p)
+                for name, head in subj_probe_heads.items():
+                    subj_probe_optimizers[name].zero_grad()
+                    feats = bb if name == 'eeg_backbone' else al
+                    pl = head(feats.detach())
+                    pls = F.cross_entropy(pl, y)
+                    pls.backward()
+                    subj_probe_optimizers[name].step()
+                    probe_train_loss_sum[name] += float(pls.item())
+                probe_train_batches += 1
+            for h in subj_probe_heads.values():
+                h.eval()
+            probe_val_acc_sum = {k: 0.0 for k in subj_probe_heads}
+            probe_val_batches = 0
+            with torch.no_grad():
+                for probe_batch in subj_probe_val_dataloader:
+                    eeg_p = probe_batch[0].to(device)
+                    sid_p = probe_batch[3].to(device)
+                    bb = run_eeg_backbone(model, args, eeg_p, sid_p)
+                    al = eeg_projector(bb)
+                    y = encode_probe_labels(sid_p)
+                    for name, head in subj_probe_heads.items():
+                        feats = bb if name == 'eeg_backbone' else al
+                        pred = torch.argmax(head(feats), dim=1)
+                        probe_val_acc_sum[name] += float((pred == y).float().mean().item())
+                    probe_val_batches += 1
+            if probe_train_batches > 0 and probe_val_batches > 0:
+                parts = []
+                for name in subj_probe_heads:
+                    tloss = probe_train_loss_sum[name] / probe_train_batches
+                    vacc = probe_val_acc_sum[name] / probe_val_batches
+                    writer.add_scalar(f'SubjectProbe/{name}_val_acc', vacc, epoch)
+                    writer.add_scalar(f'SubjectProbe/{name}_train_loss', tloss, epoch)
+                    parts.append(f"{name}:val_acc={vacc:.3f}")
+                log("SubjProbe " + " | ".join(parts))
+                bb_probe_acc_pct = (probe_val_acc_sum['eeg_backbone'] / probe_val_batches) * 100.0
+                clip_probe_acc_pct = (probe_val_acc_sum['eeg_align'] / probe_val_batches) * 100.0
+
+        if probe_history is not None:
+            probe_history['epoch'].append(epoch)
+            probe_history['eeg_backbone_val_acc'].append(bb_probe_acc_pct)
+            probe_history['eeg_align_val_acc'].append(clip_probe_acc_pct)
 
         history['epoch'].append(epoch)
         history['train_loss'].append(avg_loss)
@@ -1218,6 +1045,10 @@ if __name__ == '__main__':
                 torch.save(build_checkpoint(epoch, selected_loss, stage, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
 
     save_training_plot(history, os.path.join(log_dir, 'training_metrics.png'))
+    if probe_history is not None:
+        probe_plot_path = os.path.join(log_dir, 'probe_metrics.png')
+        save_probe_plot(probe_history, probe_plot_path)
+        log(f"Saved probe metrics plot: {probe_plot_path}")
 
     result_dict = {
         'architecture': args.architecture,

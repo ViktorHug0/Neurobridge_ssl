@@ -7,7 +7,7 @@ Guideline for THINGS-EEG-2 Image Decoding Project:
 - The main evaluation task is 200-way matching (identify the correct image among 200 candidates).
 - The primary goal is to optimize performance in the inter-subject setting: train on 9 subjects and test on a held-out 10th subject.
 - Please note:
-    - Factorized architectures are deprecated—do not include them in your answers.
-    - Data augmentation is not used anymore—do not reference it.
+    - Data augmentation is not used anymore — do not reference it.
     - The most critical files are: train.py, dataset.py, sampler.py, loss.py, model.py, and scripts/things_eeg/inter-subject*.py.
 - Always make minimal edits when modifying code.
+- Always run source .venv/bin/actiate before executing python scripts. They won't work otherwise.
