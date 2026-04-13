@@ -13,7 +13,16 @@ from torch.utils.data import DataLoader
 
 from module.dataset import EEGPreImageDataset
 from module.projector import ResidualAdapter
-from module.util import retrieve_all
+from module.util import (
+    apply_orthogonal_map,
+    fit_soft_assignment_procrustes,
+    prepare_candidate_bank,
+    process_query_features,
+    retrieve_all,
+    score_query_features,
+    sinkhorn_normalize,
+    topk,
+)
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
 
 
@@ -22,6 +31,55 @@ def _load_json(path):
         return {}
     with open(path, "r") as f:
         return json.load(f)
+
+
+def _refine_scores(query_features, image_features, object_indices, image_indices, eval_mode, sattc_params):
+    use_csls = (eval_mode == "saw_csls")
+    similarity_matrix, target_indices = score_query_features(
+        query_features,
+        image_features,
+        object_indices,
+        image_indices,
+        use_csls=use_csls,
+        sattc_params=sattc_params,
+    )
+    if sattc_params.get("soft_procrustes_enabled", False):
+        candidate_features, _ = prepare_candidate_bank(
+            image_features,
+            object_indices,
+            image_indices,
+            sattc_params=sattc_params,
+        )
+        for _ in range(max(1, int(sattc_params.get("soft_procrustes_steps", 1)))):
+            assignment = sinkhorn_normalize(
+                similarity_matrix,
+                tau=sattc_params.get("sinkhorn_tau", 0.05),
+                num_iters=sattc_params.get("sinkhorn_iters", 20),
+            )
+            ortho_weights = fit_soft_assignment_procrustes(
+                query_features,
+                candidate_features,
+                assignment,
+                power=sattc_params.get("soft_procrustes_power", 1.0),
+            )
+            if ortho_weights is None:
+                break
+            query_features = apply_orthogonal_map(query_features, ortho_weights)
+            similarity_matrix, target_indices = score_query_features(
+                query_features,
+                image_features,
+                object_indices,
+                image_indices,
+                use_csls=use_csls,
+                sattc_params=sattc_params,
+            )
+    if sattc_params.get("sinkhorn_enabled", False):
+        similarity_matrix = sinkhorn_normalize(
+            similarity_matrix,
+            tau=sattc_params.get("sinkhorn_tau", 0.05),
+            num_iters=sattc_params.get("sinkhorn_iters", 20),
+        )
+    return similarity_matrix, target_indices
 
 
 def _to_bool(value, default=False):
@@ -81,7 +139,18 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_cw_shrink"] = cli_args.sattc_cw_shrink
     if cli_args.sattc_cw_diag:
         merged["sattc_cw_diag"] = True
-
+    if cli_args.sattc_sinkhorn:
+        merged["sattc_sinkhorn"] = True
+    if cli_args.sattc_sinkhorn_tau is not None:
+        merged["sattc_sinkhorn_tau"] = cli_args.sattc_sinkhorn_tau
+    if cli_args.sattc_sinkhorn_iters is not None:
+        merged["sattc_sinkhorn_iters"] = cli_args.sattc_sinkhorn_iters
+    if cli_args.sattc_soft_procrustes:
+        merged["sattc_soft_procrustes"] = True
+    if cli_args.sattc_soft_procrustes_steps is not None:
+        merged["sattc_soft_procrustes_steps"] = cli_args.sattc_soft_procrustes_steps
+    if cli_args.sattc_soft_procrustes_power is not None:
+        merged["sattc_soft_procrustes_power"] = cli_args.sattc_soft_procrustes_power
     if cli_args.device is not None:
         merged["device"] = cli_args.device
     if cli_args.num_workers is not None:
@@ -100,24 +169,80 @@ def _forward_feature(args, modules, eeg_backbone_batch):
     architecture = getattr(args, "architecture", "baseline")
     if architecture == "baseline":
         return modules["eeg_projector"](eeg_backbone_batch)
-
     if architecture == "clap_adapter":
         base_feature = modules["eeg_projector"](eeg_backbone_batch)
-        checkpoint_stage = modules["checkpoint_stage"]
-        if checkpoint_stage == "adapter" and modules["eeg_adapter"] is not None:
+        if modules["checkpoint_stage"] == "adapter" and modules["eeg_adapter"] is not None:
             return modules["eeg_adapter"](base_feature)
         return base_feature
-
     raise ValueError(f"Unsupported architecture in evaluate.py: {architecture}")
 
 
 def _maybe_apply_image_branch(args, modules, image_feature_proj):
-    architecture = getattr(args, "architecture", "baseline")
-    if architecture == "clap_adapter":
+    if getattr(args, "architecture", "baseline") == "clap_adapter":
         if _to_bool(getattr(args, "clap_transfer", True), True) and modules["checkpoint_stage"] == "adapter":
             if modules["eeg_adapter"] is not None:
                 return modules["eeg_adapter"](image_feature_proj)
     return image_feature_proj
+
+
+def _encode_dataset_features(eval_args, modules, model, img_projector, device, subject_ids, average):
+    dataset = EEGPreImageDataset(
+        subject_ids,
+        eval_args.eeg_data_dir,
+        eval_args.selected_channels,
+        eval_args.time_window,
+        eval_args.image_feature_dir,
+        getattr(eval_args, "text_feature_dir", ""),
+        False,
+        getattr(eval_args, "aug_image_feature_dirs", []),
+        average,
+        False,
+        None,
+        False,
+        _to_bool(getattr(eval_args, "image_test_aug", False)),
+        _to_bool(getattr(eval_args, "eeg_test_aug", False)),
+        _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=getattr(eval_args, "eval_batch_size", 200),
+        shuffle=False,
+        num_workers=getattr(eval_args, "num_workers", 0),
+    )
+
+    eeg_feature_list = []
+    image_feature_list = []
+    subject_list = []
+    object_list = []
+    image_idx_list = []
+
+    with torch.no_grad():
+        for batch in loader:
+            eeg_batch = batch[0].to(device)
+            image_feature_batch = batch[1].to(device)
+            subject_id_batch = batch[3].to(device)
+            object_idx_batch = batch[4].to(device)
+            image_idx_batch = batch[5].to(device)
+
+            eeg_backbone_batch = run_eeg_backbone(model, eval_args, eeg_batch, subject_id_batch)
+            eeg_feature_batch = _forward_feature(eval_args, modules, eeg_backbone_batch)
+            image_feature_proj = img_projector(image_feature_batch)
+            image_feature_proj = _maybe_apply_image_branch(eval_args, modules, image_feature_proj)
+
+            eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
+            image_feature_list.append(image_feature_proj.cpu().numpy())
+            subject_list.append(subject_id_batch.cpu().numpy())
+            object_list.append(object_idx_batch.cpu().numpy())
+            image_idx_list.append(image_idx_batch.cpu().numpy())
+
+    return (
+        np.concatenate(eeg_feature_list, axis=0),
+        np.concatenate(image_feature_list, axis=0),
+        np.concatenate(subject_list, axis=0),
+        np.concatenate(object_list, axis=0),
+        np.concatenate(image_idx_list, axis=0),
+        dataset,
+    )
 
 
 def main():
@@ -131,13 +256,18 @@ def main():
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
-
     parser.add_argument("--sattc_saw_shrink", type=float, default=None)
     parser.add_argument("--sattc_saw_diag", action="store_true")
     parser.add_argument("--sattc_csls_k", type=int, default=None)
     parser.add_argument("--sattc_cw", action="store_true")
     parser.add_argument("--sattc_cw_shrink", type=float, default=None)
     parser.add_argument("--sattc_cw_diag", action="store_true")
+    parser.add_argument("--sattc_sinkhorn", action="store_true")
+    parser.add_argument("--sattc_sinkhorn_tau", type=float, default=None)
+    parser.add_argument("--sattc_sinkhorn_iters", type=int, default=None)
+    parser.add_argument("--sattc_soft_procrustes", action="store_true")
+    parser.add_argument("--sattc_soft_procrustes_steps", type=int, default=None)
+    parser.add_argument("--sattc_soft_procrustes_power", type=float, default=None)
     args = parser.parse_args()
 
     checkpoint_dir = os.path.abspath(args.checkpoint_dir)
@@ -154,13 +284,13 @@ def main():
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     log_dir = _prepare_output_dir(output_dir, args.output_name)
-
     with open(os.path.join(log_dir, "evaluate_runtime_config.json"), "w") as f:
         json.dump(vars(eval_args), f, indent=4)
 
     device = torch.device(eval_args.device if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
+    test_average = _to_bool(getattr(eval_args, "data_average", True), True)
     test_dataset = EEGPreImageDataset(
         [eval_args.test_subject_id],
         eval_args.eeg_data_dir,
@@ -170,19 +300,13 @@ def main():
         getattr(eval_args, "text_feature_dir", ""),
         _to_bool(getattr(eval_args, "image_aug", False)),
         getattr(eval_args, "aug_image_feature_dirs", []),
-        _to_bool(getattr(eval_args, "data_average", True), True),
+        test_average,
         False,
         None,
         False,
         _to_bool(getattr(eval_args, "image_test_aug", False)),
         _to_bool(getattr(eval_args, "eeg_test_aug", False)),
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=getattr(eval_args, "eval_batch_size", 200),
-        shuffle=False,
-        num_workers=getattr(eval_args, "num_workers", 0),
     )
 
     eeg_sample_points = test_dataset.num_sample_points
@@ -191,10 +315,8 @@ def main():
     backbone_feature_dim = getattr(eval_args, "eeg_backbone_dim", 0) or image_feature_dim
 
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
-    eeg_projector = None
     img_projector = build_projector(eval_args.projector, image_feature_dim, eval_args.feature_dim).to(device)
     eeg_adapter = None
-
     architecture = getattr(eval_args, "architecture", checkpoint.get("architecture", "baseline"))
     if architecture == "baseline":
         eeg_projector = build_projector(eval_args.projector, backbone_feature_dim, eval_args.feature_dim).to(device)
@@ -222,36 +344,15 @@ def main():
     if eeg_adapter is not None:
         eeg_adapter.eval()
 
-    eeg_feature_list = []
-    image_feature_list = []
-    subject_list = []
-    object_list = []
-    image_idx_list = []
-
-    with torch.no_grad():
-        for batch in test_loader:
-            eeg_batch = batch[0].to(device)
-            image_feature_batch = batch[1].to(device)
-            subject_id_batch = batch[3].to(device)
-            object_idx_batch = batch[4].to(device)
-            image_idx_batch = batch[5].to(device)
-
-            eeg_backbone_batch = run_eeg_backbone(model, eval_args, eeg_batch, subject_id_batch)
-            eeg_feature_batch = _forward_feature(eval_args, modules, eeg_backbone_batch)
-            image_feature_proj = img_projector(image_feature_batch)
-            image_feature_proj = _maybe_apply_image_branch(eval_args, modules, image_feature_proj)
-
-            eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
-            image_feature_list.append(image_feature_proj.cpu().numpy())
-            subject_list.append(subject_id_batch.cpu().numpy())
-            object_list.append(object_idx_batch.cpu().numpy())
-            image_idx_list.append(image_idx_batch.cpu().numpy())
-
-    eeg_feature_all = np.concatenate(eeg_feature_list, axis=0)
-    image_feature_all = np.concatenate(image_feature_list, axis=0)
-    subject_all = np.concatenate(subject_list, axis=0)
-    object_all = np.concatenate(object_list, axis=0)
-    image_all = np.concatenate(image_idx_list, axis=0)
+    eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
+        eval_args,
+        modules,
+        model,
+        img_projector,
+        device,
+        [eval_args.test_subject_id],
+        average=test_average,
+    )
 
     sattc_params = {
         "saw_shrink": getattr(eval_args, "sattc_saw_shrink", 0.2),
@@ -260,21 +361,45 @@ def main():
         "cw_enabled": _to_bool(getattr(eval_args, "sattc_cw", False)),
         "cw_shrink": getattr(eval_args, "sattc_cw_shrink", 0.05),
         "cw_diag": _to_bool(getattr(eval_args, "sattc_cw_diag", False)),
+        "sinkhorn_enabled": _to_bool(getattr(eval_args, "sattc_sinkhorn", False)),
+        "sinkhorn_tau": getattr(eval_args, "sattc_sinkhorn_tau", 0.05),
+        "sinkhorn_iters": getattr(eval_args, "sattc_sinkhorn_iters", 20),
+        "soft_procrustes_enabled": _to_bool(getattr(eval_args, "sattc_soft_procrustes", False)),
+        "soft_procrustes_steps": getattr(eval_args, "sattc_soft_procrustes_steps", 1),
+        "soft_procrustes_power": getattr(eval_args, "sattc_soft_procrustes_power", 1.0),
     }
 
-    top5_count, top1_count, total = retrieve_all(
-        eeg_feature_all,
-        image_feature_all,
-        _to_bool(getattr(eval_args, "data_average", True), True),
-        subject_ids=subject_all,
-        object_indices=object_all,
-        image_indices=image_all,
-        eval_mode=eval_args.eval_mode,
-        sattc_params=sattc_params,
-    )
+    if sattc_params["soft_procrustes_enabled"] or sattc_params["sinkhorn_enabled"]:
+        eeg_feature_all = process_query_features(
+            eeg_feature_all,
+            subject_all,
+            eval_mode=eval_args.eval_mode,
+            sattc_params=sattc_params,
+        )
+        similarity_matrix, target_indices = _refine_scores(
+            eeg_feature_all,
+            image_feature_all,
+            object_all,
+            image_all,
+            eval_args.eval_mode,
+            sattc_params,
+        )
+        top5_count, top1_count = topk(similarity_matrix, 5, target_indices=target_indices)
+        total = eeg_feature_all.shape[0]
+    else:
+        top5_count, top1_count, total = retrieve_all(
+            eeg_feature_all,
+            image_feature_all,
+            _to_bool(getattr(eval_args, "data_average", True), True),
+            subject_ids=subject_all,
+            object_indices=object_all,
+            image_indices=image_all,
+            eval_mode=eval_args.eval_mode,
+            sattc_params=sattc_params,
+        )
+
     top5_acc = top5_count / total * 100.0
     top1_acc = top1_count / total * 100.0
-
     result_dict = {
         "architecture": architecture,
         "eval_mode": eval_args.eval_mode,

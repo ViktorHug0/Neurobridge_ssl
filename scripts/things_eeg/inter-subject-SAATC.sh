@@ -10,14 +10,14 @@ RUN_TAG="${RUN_TAG:-sattc_$(date +'%Y%m%d-%H%M%S')}"
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
 UNIFIED_CSV="${RUN_ROOT}/sattc_summary.csv"
 
-# 10 LOSO checkpoints (mixup-trained base predictor). 
-SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/inter-subjects/mixup_20260330-231035/baseline_linear_seed3300}"
+# 10 LOSO checkpoints (mixup-trained base predictor).
+SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/inter-subjects/mixup_20260330-225732/mix_raw_eeg_pairwise_linear_a0p5_seed3301}"
 HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
 
 # SAW + CW + fixed-k CSLS sweep (override CSLS_KS / SAW_SHRINKS / CW_SHRINKS).
-CSLS_KS="${CSLS_KS:-1 2 3 4 6 8 10 12 14}"
-SAW_SHRINKS="${SAW_SHRINKS:- 0.8 0.9}"
-CW_SHRINKS="${CW_SHRINKS:-0.8 0.9}"
+CSLS_KS="${CSLS_KS:-2}"
+SAW_SHRINKS="${SAW_SHRINKS:- 0.85}"
+CW_SHRINKS="${CW_SHRINKS:-0.85}"
 
 mkdir -p "$RUN_ROOT"
 

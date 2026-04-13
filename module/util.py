@@ -1,7 +1,6 @@
 import json
-
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 # A custom JSON dumper that pretty-prints dictionaries with indentation, while keeping lists in a compact format.
 def dump_pretty(obj, fp, indent=4, ensure_ascii=False):
@@ -95,6 +94,13 @@ def candidate_whiten(features, shrink=0.05, diag=False):
     return _normalize_rows(whitened.astype(np.float32, copy=False))
 
 
+def apply_orthogonal_map(features, weights):
+    features = np.asarray(features, dtype=np.float32)
+    if weights is None:
+        return features
+    return _normalize_rows(features @ np.asarray(weights, dtype=np.float32))
+
+
 def csls_scores(similarities, k=10):
     similarities = np.asarray(similarities, dtype=np.float32)
     if similarities.ndim != 2:
@@ -148,6 +154,93 @@ def _build_candidate_bank(image_features, object_indices, image_indices):
     return np.stack(candidate_features, axis=0), np.asarray(target_indices, dtype=np.int64)
 
 
+def prepare_candidate_bank(image_features, object_indices, image_indices, sattc_params=None):
+    sattc_params = sattc_params or {}
+    candidate_features, target_indices = _build_candidate_bank(image_features, object_indices, image_indices)
+    if sattc_params.get('cw_enabled', False):
+        candidate_features = candidate_whiten(
+            candidate_features,
+            shrink=sattc_params.get('cw_shrink', 0.05),
+            diag=sattc_params.get('cw_diag', False),
+        )
+    return candidate_features, target_indices
+
+
+def sinkhorn_normalize(similarities, tau=0.05, num_iters=20, eps=1e-8):
+    similarities = np.asarray(similarities, dtype=np.float32)
+    if similarities.ndim != 2 or similarities.shape[0] == 0 or similarities.shape[1] == 0:
+        return similarities
+
+    tau = max(float(tau), eps)
+    scaled = similarities / tau
+    scaled = scaled - scaled.max(axis=1, keepdims=True)
+    matrix = np.exp(scaled).astype(np.float32, copy=False)
+    for _ in range(max(1, int(num_iters))):
+        matrix /= np.clip(matrix.sum(axis=1, keepdims=True), eps, None)
+        matrix /= np.clip(matrix.sum(axis=0, keepdims=True), eps, None)
+    return matrix.astype(np.float32, copy=False)
+
+
+def fit_soft_assignment_procrustes(query_features, candidate_features, assignment, power=1.0, eps=1e-8):
+    query_features = np.asarray(query_features, dtype=np.float32)
+    candidate_features = np.asarray(candidate_features, dtype=np.float32)
+    assignment = np.asarray(assignment, dtype=np.float32)
+    if query_features.ndim != 2 or candidate_features.ndim != 2 or assignment.ndim != 2:
+        return None
+    if query_features.shape[0] == 0 or candidate_features.shape[0] == 0:
+        return None
+    if assignment.shape != (query_features.shape[0], candidate_features.shape[0]):
+        return None
+
+    weights = np.clip(assignment, 0.0, None)
+    if float(power) != 1.0:
+        weights = np.power(weights, max(float(power), eps)).astype(np.float32, copy=False)
+    total_weight = float(weights.sum())
+    if total_weight <= eps:
+        return None
+
+    cross = query_features.T @ weights @ candidate_features
+    try:
+        u, _, vt = np.linalg.svd(cross, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return None
+    return (u @ vt).astype(np.float32, copy=False)
+
+
+def process_query_features(eeg_features, subject_ids, eval_mode='plain_cosine', sattc_params=None):
+    sattc_params = sattc_params or {}
+    eeg_features = np.asarray(eeg_features, dtype=np.float32)
+    subject_ids = np.asarray(subject_ids)
+
+    if eval_mode == 'plain_cosine':
+        return eeg_features
+    if eval_mode not in {'saw', 'saw_csls'}:
+        raise ValueError(f"Unsupported eval_mode: {eval_mode}")
+
+    processed_queries = subject_adaptive_whiten(
+        eeg_features,
+        subject_ids,
+        shrink=sattc_params.get('saw_shrink', 0.2),
+        diag=sattc_params.get('saw_diag', False),
+    )
+    return processed_queries
+
+
+def score_query_features(query_features, image_features, object_indices, image_indices, use_csls=False, sattc_params=None):
+    sattc_params = sattc_params or {}
+    candidate_features, target_indices = prepare_candidate_bank(
+        image_features,
+        object_indices,
+        image_indices,
+        sattc_params=sattc_params,
+    )
+
+    scores = cosine_similarity(query_features, candidate_features).astype(np.float32, copy=False)
+    if use_csls:
+        scores = csls_scores(scores, k=sattc_params.get('csls_k', 12))
+    return scores, target_indices
+
+
 def compute_retrieval_scores(
     eeg_features,
     image_features,
@@ -163,34 +256,30 @@ def compute_retrieval_scores(
     object_indices = np.asarray(object_indices)
     image_indices = np.asarray(image_indices)
 
-    candidate_features, target_indices = _build_candidate_bank(image_features, object_indices, image_indices)
-    if sattc_params.get('cw_enabled', False):
-        candidate_features = candidate_whiten(
-            candidate_features,
-            shrink=sattc_params.get('cw_shrink', 0.05),
-            diag=sattc_params.get('cw_diag', False),
-        )
-
     if eval_mode == 'plain_cosine':
-        similarity_matrix = cosine_similarity(eeg_features, candidate_features).astype(np.float32, copy=False)
-        return similarity_matrix, target_indices
-
-    processed_queries = eeg_features
-    if eval_mode in {'saw', 'saw_csls'}:
-        processed_queries = subject_adaptive_whiten(
+        return score_query_features(
             eeg_features,
-            subject_ids,
-            shrink=sattc_params.get('saw_shrink', 0.2),
-            diag=sattc_params.get('saw_diag', False),
+            image_features,
+            object_indices,
+            image_indices,
+            use_csls=False,
+            sattc_params=sattc_params,
         )
-    else:
-        raise ValueError(f"Unsupported eval_mode: {eval_mode}")
 
-    pre_csls = cosine_similarity(processed_queries, candidate_features).astype(np.float32, copy=False)
-    if eval_mode == 'saw':
-        return pre_csls, target_indices
-    scores = csls_scores(pre_csls, k=sattc_params.get('csls_k', 12))
-    return scores, target_indices
+    processed_queries = process_query_features(
+        eeg_features,
+        subject_ids,
+        eval_mode=eval_mode,
+        sattc_params=sattc_params,
+    )
+    return score_query_features(
+        processed_queries,
+        image_features,
+        object_indices,
+        image_indices,
+        use_csls=(eval_mode == 'saw_csls'),
+        sattc_params=sattc_params,
+    )
 
 
 def retrieve_all(

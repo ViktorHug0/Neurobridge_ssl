@@ -17,11 +17,16 @@ df_list = []
 for run in sorted(os.listdir(args.result_dir)):
     if os.path.isdir(os.path.join(args.result_dir, run)):
         file = os.path.join(args.result_dir, run, "result.csv")
+        if not os.path.isfile(file):
+            continue
         df = pd.read_csv(file)
         df['sub'] = run[-6:]
         cols = ['sub'] + [col for col in df.columns if col != 'sub']
         df = df[cols]
         df_list.append(df)
+
+if len(df_list) == 0:
+    raise FileNotFoundError(f"No result.csv files found in {args.result_dir}")
 
 # Concatenate all DataFrames
 all_data = pd.concat(df_list, ignore_index=True)
