@@ -16,7 +16,6 @@ from module.projector import ResidualAdapter
 from module.util import (
     apply_orthogonal_map,
     fit_soft_assignment_procrustes,
-    prepare_candidate_bank,
     process_query_features,
     retrieve_all,
     score_query_features,
@@ -33,53 +32,34 @@ def _load_json(path):
         return json.load(f)
 
 
-def _refine_scores(query_features, image_features, object_indices, image_indices, eval_mode, sattc_params):
+def _refine_scores(query_features, image_features, eval_mode, sattc_params):
+    """Iterative Procrustes refinement and optional Sinkhorn normalisation on top of base scores."""
     use_csls = (eval_mode == "saw_csls")
-    similarity_matrix, target_indices = score_query_features(
-        query_features,
-        image_features,
-        object_indices,
-        image_indices,
-        use_csls=use_csls,
-        sattc_params=sattc_params,
-    )
+    csls_k = sattc_params.get("csls_k", 12)
+    tau = sattc_params.get("sinkhorn_tau", 0.05)
+    n_iters = sattc_params.get("sinkhorn_iters", 20)
+
+    scores, targets = score_query_features(query_features, image_features, use_csls=use_csls, csls_k=csls_k)
+
     if sattc_params.get("soft_procrustes_enabled", False):
-        candidate_features, _ = prepare_candidate_bank(
-            image_features,
-            object_indices,
-            image_indices,
-            sattc_params=sattc_params,
-        )
         for _ in range(max(1, int(sattc_params.get("soft_procrustes_steps", 1)))):
-            assignment = sinkhorn_normalize(
-                similarity_matrix,
-                tau=sattc_params.get("sinkhorn_tau", 0.05),
-                num_iters=sattc_params.get("sinkhorn_iters", 20),
-            )
+            assignment = sinkhorn_normalize(scores, tau=tau, num_iters=n_iters)
             ortho_weights = fit_soft_assignment_procrustes(
                 query_features,
-                candidate_features,
+                image_features,
                 assignment,
                 power=sattc_params.get("soft_procrustes_power", 1.0),
+                normalize_inputs=sattc_params.get("soft_procrustes_normalize_inputs", False),
             )
             if ortho_weights is None:
                 break
             query_features = apply_orthogonal_map(query_features, ortho_weights)
-            similarity_matrix, target_indices = score_query_features(
-                query_features,
-                image_features,
-                object_indices,
-                image_indices,
-                use_csls=use_csls,
-                sattc_params=sattc_params,
-            )
+            scores, targets = score_query_features(query_features, image_features, use_csls=use_csls, csls_k=csls_k)
+
     if sattc_params.get("sinkhorn_enabled", False):
-        similarity_matrix = sinkhorn_normalize(
-            similarity_matrix,
-            tau=sattc_params.get("sinkhorn_tau", 0.05),
-            num_iters=sattc_params.get("sinkhorn_iters", 20),
-        )
-    return similarity_matrix, target_indices
+        scores = sinkhorn_normalize(scores, tau=tau, num_iters=n_iters)
+
+    return scores, targets
 
 
 def _to_bool(value, default=False):
@@ -131,14 +111,10 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_saw_shrink"] = cli_args.sattc_saw_shrink
     if cli_args.sattc_saw_diag:
         merged["sattc_saw_diag"] = True
+    if cli_args.sattc_saw_no_renorm:
+        merged["sattc_saw_no_renorm"] = True
     if cli_args.sattc_csls_k is not None:
         merged["sattc_csls_k"] = cli_args.sattc_csls_k
-    if cli_args.sattc_cw:
-        merged["sattc_cw"] = True
-    if cli_args.sattc_cw_shrink is not None:
-        merged["sattc_cw_shrink"] = cli_args.sattc_cw_shrink
-    if cli_args.sattc_cw_diag:
-        merged["sattc_cw_diag"] = True
     if cli_args.sattc_sinkhorn:
         merged["sattc_sinkhorn"] = True
     if cli_args.sattc_sinkhorn_tau is not None:
@@ -147,6 +123,8 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_sinkhorn_iters"] = cli_args.sattc_sinkhorn_iters
     if cli_args.sattc_soft_procrustes:
         merged["sattc_soft_procrustes"] = True
+    if cli_args.sattc_soft_procrustes_normalize_inputs:
+        merged["sattc_soft_procrustes_normalize_inputs"] = True
     if cli_args.sattc_soft_procrustes_steps is not None:
         merged["sattc_soft_procrustes_steps"] = cli_args.sattc_soft_procrustes_steps
     if cli_args.sattc_soft_procrustes_power is not None:
@@ -258,14 +236,13 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--sattc_saw_shrink", type=float, default=None)
     parser.add_argument("--sattc_saw_diag", action="store_true")
+    parser.add_argument("--sattc_saw_no_renorm", action="store_true")
     parser.add_argument("--sattc_csls_k", type=int, default=None)
-    parser.add_argument("--sattc_cw", action="store_true")
-    parser.add_argument("--sattc_cw_shrink", type=float, default=None)
-    parser.add_argument("--sattc_cw_diag", action="store_true")
     parser.add_argument("--sattc_sinkhorn", action="store_true")
     parser.add_argument("--sattc_sinkhorn_tau", type=float, default=None)
     parser.add_argument("--sattc_sinkhorn_iters", type=int, default=None)
     parser.add_argument("--sattc_soft_procrustes", action="store_true")
+    parser.add_argument("--sattc_soft_procrustes_normalize_inputs", action="store_true")
     parser.add_argument("--sattc_soft_procrustes_steps", type=int, default=None)
     parser.add_argument("--sattc_soft_procrustes_power", type=float, default=None)
     args = parser.parse_args()
@@ -357,14 +334,13 @@ def main():
     sattc_params = {
         "saw_shrink": getattr(eval_args, "sattc_saw_shrink", 0.2),
         "saw_diag": _to_bool(getattr(eval_args, "sattc_saw_diag", False)),
+        "saw_renorm": not _to_bool(getattr(eval_args, "sattc_saw_no_renorm", False)),
         "csls_k": getattr(eval_args, "sattc_csls_k", 12),
-        "cw_enabled": _to_bool(getattr(eval_args, "sattc_cw", False)),
-        "cw_shrink": getattr(eval_args, "sattc_cw_shrink", 0.05),
-        "cw_diag": _to_bool(getattr(eval_args, "sattc_cw_diag", False)),
         "sinkhorn_enabled": _to_bool(getattr(eval_args, "sattc_sinkhorn", False)),
         "sinkhorn_tau": getattr(eval_args, "sattc_sinkhorn_tau", 0.05),
         "sinkhorn_iters": getattr(eval_args, "sattc_sinkhorn_iters", 20),
         "soft_procrustes_enabled": _to_bool(getattr(eval_args, "sattc_soft_procrustes", False)),
+        "soft_procrustes_normalize_inputs": _to_bool(getattr(eval_args, "sattc_soft_procrustes_normalize_inputs", False)),
         "soft_procrustes_steps": getattr(eval_args, "sattc_soft_procrustes_steps", 1),
         "soft_procrustes_power": getattr(eval_args, "sattc_soft_procrustes_power", 1.0),
     }
@@ -379,8 +355,6 @@ def main():
         similarity_matrix, target_indices = _refine_scores(
             eeg_feature_all,
             image_feature_all,
-            object_all,
-            image_all,
             eval_args.eval_mode,
             sattc_params,
         )
@@ -390,10 +364,7 @@ def main():
         top5_count, top1_count, total = retrieve_all(
             eeg_feature_all,
             image_feature_all,
-            _to_bool(getattr(eval_args, "data_average", True), True),
             subject_ids=subject_all,
-            object_indices=object_all,
-            image_indices=image_all,
             eval_mode=eval_args.eval_mode,
             sattc_params=sattc_params,
         )

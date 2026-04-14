@@ -10,4 +10,4 @@ Guideline for THINGS-EEG-2 Image Decoding Project:
     - Data augmentation is not used anymore — do not reference it.
     - The most critical files are: train.py, dataset.py, sampler.py, loss.py, model.py, and scripts/things_eeg/inter-subject*.py.
 - Always make minimal edits when modifying code.
-- Always run source .venv/bin/actiate before executing python scripts. They won't work otherwise.
+- Always run source .venv/bin/activate before executing python scripts. They won't work otherwise.
