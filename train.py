@@ -22,7 +22,15 @@ from module.dataset import EEGPreImageDataset
 from module.eeg_encoder.atm.atm import ATMS
 from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer, TSConv30 
 from module.loss import ContrastiveLoss
-from module.util import retrieve_all
+from module.util import (
+    _estimate_mu_cov,
+    _inv_sqrt_cov,
+    apply_orthogonal_map,
+    csls_scores,
+    fit_soft_assignment_procrustes,
+    retrieve_all,
+    sinkhorn_normalize,
+)
 from module.projector import *
 from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
@@ -182,6 +190,11 @@ def _normalize_rows_torch(features, eps=1e-12):
     return features / torch.clamp(features.norm(dim=1, keepdim=True), min=eps)
 
 
+def _normalize_rows_np(features, eps=1e-12):
+    norms = np.linalg.norm(features, axis=1, keepdims=True)
+    return features / np.clip(norms, eps, None)
+
+
 def subject_adaptive_whiten_torch(features, subject_ids, shrink=0.2, diag=False, normalize=True, eps=1e-6):
     if subject_ids is None or features.ndim != 2 or features.shape[0] == 0:
         return features
@@ -229,6 +242,119 @@ def subject_adaptive_whiten_torch(features, subject_ids, shrink=0.2, diag=False,
         processed[mask] = _normalize_rows_torch(whitened, eps) if normalize else whitened
 
     return processed
+
+
+def _fit_subject_adapt_calibration(query_features, image_features, args):
+    normalize = not args.subject_adapt_saw_no_renorm
+    query_features = np.asarray(query_features, dtype=np.float32)
+    image_features = np.asarray(image_features, dtype=np.float32)
+    mu, cov = _estimate_mu_cov(
+        query_features,
+        shrink=args.subject_adapt_saw_shrink,
+        diag=args.subject_adapt_saw_diag,
+    )
+    whitener = _inv_sqrt_cov(cov)
+    transformed = (query_features - mu) @ whitener
+    if normalize:
+        transformed = _normalize_rows_np(transformed)
+    cumulative_map = np.eye(transformed.shape[1], dtype=np.float32)
+    for _ in range(max(1, int(args.subject_adapt_soft_procrustes_steps))):
+        scores = _normalize_rows_np(transformed) @ _normalize_rows_np(image_features).T
+        if args.subject_adapt_csls_k > 0:
+            scores = csls_scores(scores, k=args.subject_adapt_csls_k)
+        assignment = sinkhorn_normalize(
+            scores,
+            tau=args.subject_adapt_sinkhorn_tau,
+            num_iters=args.subject_adapt_sinkhorn_iters,
+        )
+        step_map = fit_soft_assignment_procrustes(
+            transformed,
+            image_features,
+            assignment,
+            power=args.subject_adapt_soft_procrustes_power,
+            normalize_inputs=False,
+        )
+        if step_map is None:
+            break
+        transformed = apply_orthogonal_map(transformed, step_map)
+        cumulative_map = (cumulative_map @ np.asarray(step_map, dtype=np.float32)).astype(np.float32, copy=False)
+    return mu, whitener, cumulative_map, normalize
+
+
+def _apply_subject_adapt_calibration_torch(features, mu, whitener, ortho_map, normalize_before_map):
+    transformed = (features - mu) @ whitener
+    if normalize_before_map:
+        transformed = _normalize_rows_torch(transformed)
+    transformed = transformed @ ortho_map
+    return _normalize_rows_torch(transformed)
+
+
+def compute_subject_adaptation_loss(
+    args,
+    criterion,
+    eeg_feature_batch,
+    image_feature_proj,
+    text_feature_proj,
+    subject_id_batch,
+    object_idx_batch,
+    image_idx_batch,
+):
+    if args.subject_adapt_lambda <= 0:
+        return eeg_feature_batch.new_tensor(0.0), 0
+
+    total_loss = eeg_feature_batch.new_tensor(0.0)
+    valid_subjects = 0
+    unique_subjects = torch.unique(subject_id_batch)
+    for sid in unique_subjects.tolist():
+        mask = subject_id_batch == sid
+        subject_indices = torch.nonzero(mask, as_tuple=False).squeeze(1)
+        num_subject_samples = int(subject_indices.numel())
+        if num_subject_samples < args.subject_adapt_min_samples_per_subject:
+            continue
+
+        split_a_size = int(np.floor(num_subject_samples * float(args.subject_adapt_split_a_ratio)))
+        split_a_size = max(1, min(split_a_size, num_subject_samples - 1))
+        split_b_size = num_subject_samples - split_a_size
+        if split_b_size <= 0:
+            continue
+
+        perm = torch.randperm(num_subject_samples, device=subject_indices.device)
+        split_a_indices = subject_indices[perm[:split_a_size]]
+        split_b_indices = subject_indices[perm[split_a_size:]]
+        if split_b_indices.numel() == 0:
+            continue
+
+        with torch.no_grad():
+            mu_np, whitener_np, ortho_np, normalize_before_map = _fit_subject_adapt_calibration(
+                eeg_feature_batch[split_a_indices].detach().float().cpu().numpy(),
+                image_feature_proj[split_a_indices].detach().float().cpu().numpy(),
+                args,
+            )
+
+        mu = torch.tensor(mu_np, device=eeg_feature_batch.device, dtype=eeg_feature_batch.dtype)
+        whitener = torch.tensor(whitener_np, device=eeg_feature_batch.device, dtype=eeg_feature_batch.dtype)
+        ortho_map = torch.tensor(ortho_np, device=eeg_feature_batch.device, dtype=eeg_feature_batch.dtype)
+        adapted_eeg_feature = _apply_subject_adapt_calibration_torch(
+            eeg_feature_batch[split_b_indices],
+            mu,
+            whitener,
+            ortho_map,
+            normalize_before_map,
+        )
+        positive_mask = build_image_positive_mask(object_idx_batch[split_b_indices], image_idx_batch[split_b_indices])
+        total_loss = total_loss + compute_cross_modal_loss(
+            criterion,
+            adapted_eeg_feature,
+            image_feature_proj[split_b_indices],
+            text_feature_proj[split_b_indices],
+            positive_mask,
+            args.multi_positive_loss,
+        )
+        valid_subjects += 1
+
+    if valid_subjects == 0:
+        return eeg_feature_batch.new_tensor(0.0), 0
+    return total_loss / valid_subjects, valid_subjects
 
 
 def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise'):
@@ -373,6 +499,17 @@ if __name__ == '__main__':
     parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
     parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
     parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
+    parser.add_argument('--subject_adapt_lambda', default=0.0, type=float, help='weight for unlabeled subject-adaptation loss fit on split A and supervised on split B')
+    parser.add_argument('--subject_adapt_split_a_ratio', default=0.5, type=float, help='per-subject within-batch ratio reserved for unlabeled split A')
+    parser.add_argument('--subject_adapt_min_samples_per_subject', default=8, type=int, help='minimum number of samples for a subject to contribute to subject adaptation')
+    parser.add_argument('--subject_adapt_saw_shrink', default=0.85, type=float, help='SAW shrinkage used when fitting unlabeled subject adaptation')
+    parser.add_argument('--subject_adapt_saw_diag', action='store_true', help='use diagonal covariance for subject-adaptation SAW')
+    parser.add_argument('--subject_adapt_saw_no_renorm', action='store_true', help='disable pre-map L2 renorm inside subject adaptation')
+    parser.add_argument('--subject_adapt_csls_k', default=1, type=int, help='CSLS neighborhood size for subject-adaptation Sinkhorn fitting')
+    parser.add_argument('--subject_adapt_sinkhorn_tau', default=0.1, type=float, help='Sinkhorn temperature for subject adaptation')
+    parser.add_argument('--subject_adapt_sinkhorn_iters', default=20, type=int, help='Sinkhorn iterations for subject adaptation')
+    parser.add_argument('--subject_adapt_soft_procrustes_steps', default=10, type=int, help='number of Sinkhorn+Procrustes refinement steps for subject adaptation')
+    parser.add_argument('--subject_adapt_soft_procrustes_power', default=1.0, type=float, help='power exponent for soft assignment weights in subject adaptation')
     parser.add_argument('--eeg_data_dir', default='./things_eeg/data/preprocessed_eeg', type=str, help='where your EEG data are')
     parser.add_argument("--selected_channels", default=[], nargs='*', type=str, help="selected EEG channels, empty means all channels")
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
@@ -395,6 +532,11 @@ if __name__ == '__main__':
     if args.subject_probe_holdout:
         if not (0.0 < args.subject_probe_holdout_ratio < 1.0):
             raise ValueError("--subject_probe_holdout_ratio must be strictly between 0 and 1.")
+    if args.subject_adapt_lambda > 0:
+        if not (0.0 < args.subject_adapt_split_a_ratio < 1.0):
+            raise ValueError("--subject_adapt_split_a_ratio must be strictly between 0 and 1.")
+        if args.subject_adapt_min_samples_per_subject < 2:
+            raise ValueError("--subject_adapt_min_samples_per_subject must be at least 2.")
     if args.train_saw_whiten_image and not args.train_saw:
         raise ValueError("--train_saw_whiten_image requires --train_saw.")
 
@@ -448,6 +590,8 @@ if __name__ == '__main__':
 
     if args.subject_probe_holdout and args.architecture != 'baseline':
         raise ValueError("--subject_probe_holdout is only supported with --architecture baseline.")
+    if args.subject_adapt_lambda > 0 and args.architecture != 'baseline':
+        raise ValueError("--subject_adapt_lambda is currently only supported with --architecture baseline.")
 
     with open(os.path.join(args.output_dir, "last_run.txt"), 'w') as f:
         f.write(writer.log_dir)
@@ -925,6 +1069,8 @@ if __name__ == '__main__':
         total_ssl_loss = 0.0
         total_relic_loss = 0.0
         total_cl_loss = 0.0
+        total_subject_adapt_loss = 0.0
+        total_subject_adapt_subjects = 0
 
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [{stage}]"):
             eeg_batch = batch[0].to(device)
@@ -1007,6 +1153,21 @@ if __name__ == '__main__':
                 loss = loss + args.relic_lambda * relic_loss
                 total_relic_loss += relic_loss.item()
 
+            if args.subject_adapt_lambda > 0 and stage != 'adapter':
+                subject_adapt_loss, valid_subjects = compute_subject_adaptation_loss(
+                    args,
+                    criterion,
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    text_feature_proj,
+                    subject_id_batch,
+                    object_idx_batch,
+                    image_idx_batch,
+                )
+                loss = loss + args.subject_adapt_lambda * subject_adapt_loss
+                total_subject_adapt_loss += subject_adapt_loss.item()
+                total_subject_adapt_subjects += valid_subjects
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -1016,10 +1177,13 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_ssl', total_ssl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_relic', total_relic_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_subject_adapt', total_subject_adapt_loss / len(dataloader), epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] Stage={stage} TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} SSL={total_ssl_loss / len(dataloader):.4f} "
-            f"RELIC={total_relic_loss / len(dataloader):.4f}"
+            f"RELIC={total_relic_loss / len(dataloader):.4f} "
+            f"SADAPT={total_subject_adapt_loss / len(dataloader):.4f} "
+            f"SADAPT_SUBJ={total_subject_adapt_subjects / len(dataloader):.2f}"
         )
 
         if args.save_weights:
