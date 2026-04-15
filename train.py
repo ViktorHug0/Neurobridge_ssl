@@ -178,6 +178,59 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch):
     return model(eeg_batch)
 
 
+def _normalize_rows_torch(features, eps=1e-12):
+    return features / torch.clamp(features.norm(dim=1, keepdim=True), min=eps)
+
+
+def subject_adaptive_whiten_torch(features, subject_ids, shrink=0.2, diag=False, normalize=True, eps=1e-6):
+    if subject_ids is None or features.ndim != 2 or features.shape[0] == 0:
+        return features
+
+    processed = torch.empty_like(features)
+    for sid in torch.unique(subject_ids):
+        mask = subject_ids == sid
+        sub_feats = features[mask]
+        if sub_feats.shape[0] <= 1:
+            processed[mask] = _normalize_rows_torch(sub_feats, eps) if normalize else sub_feats
+            continue
+
+        mu = sub_feats.mean(dim=0, keepdim=True)
+        centered = sub_feats - mu
+        cov = centered.T @ centered / float(max(sub_feats.shape[0] - 1, 1))
+        if diag:
+            cov = torch.diag(torch.diagonal(cov))
+        dim = cov.shape[0]
+        eye = torch.eye(dim, device=cov.device, dtype=cov.dtype)
+        trace_mean = torch.trace(cov) / max(dim, 1)
+        cov = (1.0 - float(shrink)) * cov + float(shrink) * trace_mean * eye
+        cov = cov + eps * eye
+        cov = 0.5 * (cov + cov.T)
+
+        cov_work = cov.to(torch.float64)
+        eye_work = eye.to(torch.float64)
+        centered_work = centered.to(torch.float64)
+        jitter = float(eps)
+        for _ in range(5):
+            try:
+                evals, evecs = torch.linalg.eigh(cov_work)
+                break
+            except torch._C._LinAlgError:
+                cov_work = cov_work + jitter * eye_work
+                jitter *= 10.0
+        else:
+            inv_diag = torch.rsqrt(torch.clamp(torch.diagonal(cov_work), min=eps))
+            whitened = centered_work * inv_diag.unsqueeze(0)
+            whitened = whitened.to(features.dtype)
+            processed[mask] = _normalize_rows_torch(whitened, eps) if normalize else whitened
+            continue
+
+        inv_sqrt = evecs @ torch.diag(torch.rsqrt(torch.clamp(evals, min=eps))) @ evecs.T
+        whitened = (centered_work @ inv_sqrt).to(features.dtype)
+        processed[mask] = _normalize_rows_torch(whitened, eps) if normalize else whitened
+
+    return processed
+
+
 def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise'):
     if features.shape[0] < 2:
         return features
@@ -295,7 +348,12 @@ if __name__ == '__main__':
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--ssl_lambda', default=0.0, type=float, help='weight for EEG-only cross-subject SSL loss')
     parser.add_argument('--relic_lambda', default=0.0, type=float, help='weight for RELIC-style prediction consistency across same-image different-subject EEG views')
-    parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'saw_csls'], default='plain_cosine', help='test-time retrieval: cosine, SAW whitening, or SAW + fixed-k CSLS')
+    parser.add_argument('--train_saw', action='store_true', help='apply subject-wise whitening to EEG embeddings before cross-modal losses during training')
+    parser.add_argument('--train_saw_whiten_image', action='store_true', help='also whiten image embeddings per subject batch when --train_saw is enabled')
+    parser.add_argument('--train_saw_shrink', default=0.2, type=float, help='covariance shrinkage for train-time subject whitening')
+    parser.add_argument('--train_saw_diag', action='store_true', help='use diagonal covariance for train-time subject whitening')
+    parser.add_argument('--train_saw_no_renorm', action='store_true', help='disable L2 renormalization after train-time subject whitening')
+    parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'csls', 'saw_csls'], default='plain_cosine', help='test-time retrieval: cosine, SAW whitening, or SAW + fixed-k CSLS')
     parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='covariance shrinkage for subject-adaptive whitening (SAW) during evaluation')
     parser.add_argument('--sattc_saw_diag', action='store_true', help='use diagonal covariance for SAW during evaluation')
     parser.add_argument('--sattc_csls_k', default=2, type=int, help='fixed neighborhood size k for CSLS after SAW (eval_mode saw_csls)')
@@ -337,6 +395,8 @@ if __name__ == '__main__':
     if args.subject_probe_holdout:
         if not (0.0 < args.subject_probe_holdout_ratio < 1.0):
             raise ValueError("--subject_probe_holdout_ratio must be strictly between 0 and 1.")
+    if args.train_saw_whiten_image and not args.train_saw:
+        raise ValueError("--train_saw_whiten_image requires --train_saw.")
 
     seed = seed_everything(seed=args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -746,6 +806,27 @@ if __name__ == '__main__':
             return eeg_adapter(image_feature_proj)
         return image_feature_proj
 
+    def maybe_apply_train_saw(eeg_feature_batch, image_feature_proj, subject_id_batch):
+        if not args.train_saw:
+            return eeg_feature_batch, image_feature_proj
+        normalize = not args.train_saw_no_renorm
+        eeg_feature_batch = subject_adaptive_whiten_torch(
+            eeg_feature_batch,
+            subject_id_batch,
+            shrink=args.train_saw_shrink,
+            diag=args.train_saw_diag,
+            normalize=normalize,
+        )
+        if args.train_saw_whiten_image:
+            image_feature_proj = subject_adaptive_whiten_torch(
+                image_feature_proj,
+                subject_id_batch,
+                shrink=args.train_saw_shrink,
+                diag=args.train_saw_diag,
+                normalize=normalize,
+            )
+        return eeg_feature_batch, image_feature_proj
+
     def evaluate_split(split_loader, stage_name, split_name):
         if split_loader is None:
             return float('nan'), float('nan'), float('nan')
@@ -772,12 +853,17 @@ if __name__ == '__main__':
                 image_feature_proj = img_projector(image_feature_batch)
                 image_feature_proj = maybe_apply_clap_adapter_to_image(image_feature_proj, stage_name)
                 text_feature_proj = text_projector(text_feature_batch)
+                eeg_feature_for_loss, image_feature_for_loss = maybe_apply_train_saw(
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    subject_id_batch,
+                )
 
                 positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
                 loss = compute_cross_modal_loss(
                     criterion,
-                    eeg_feature_batch,
-                    image_feature_proj,
+                    eeg_feature_for_loss,
+                    image_feature_for_loss,
                     text_feature_proj,
                     positive_mask,
                     args.multi_positive_loss
@@ -798,10 +884,7 @@ if __name__ == '__main__':
         top5_count, top1_count, total = retrieve_all(
             eeg_feature_all,
             image_feature_all,
-            args.data_average,
             subject_ids=subject_all,
-            object_indices=object_all,
-            image_indices=image_all,
             eval_mode=args.eval_mode,
             sattc_params=sattc_params,
         )
@@ -871,6 +954,11 @@ if __name__ == '__main__':
             image_feature_proj = img_projector(image_feature_batch)
             image_feature_proj = maybe_apply_clap_adapter_to_image(image_feature_proj, stage)
             text_feature_proj = text_projector(text_feature_batch)
+            eeg_feature_for_loss, image_feature_for_loss = maybe_apply_train_saw(
+                eeg_feature_batch,
+                image_feature_proj,
+                subject_id_batch,
+            )
             if args.architecture == 'clap_adapter' and stage == 'adapter':
                 valid_anchor_idx, partner_idx = sample_cross_subject_partner_indices(
                     object_idx_batch, image_idx_batch, subject_id_batch
@@ -893,8 +981,8 @@ if __name__ == '__main__':
                 positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
                 cl_loss = compute_cross_modal_loss(
                     criterion,
-                    eeg_feature_batch,
-                    image_feature_proj,
+                    eeg_feature_for_loss,
+                    image_feature_for_loss,
                     text_feature_proj,
                     positive_mask,
                     args.multi_positive_loss
@@ -912,8 +1000,8 @@ if __name__ == '__main__':
                 relic_positive_mask = build_cross_subject_positive_mask(object_idx_batch, image_idx_batch, subject_id_batch)
                 relic_loss = compute_relic_prediction_consistency_loss(
                     criterion,
-                    eeg_feature_batch,
-                    image_feature_proj,
+                    eeg_feature_for_loss,
+                    image_feature_for_loss,
                     relic_positive_mask,
                 )
                 loss = loss + args.relic_lambda * relic_loss

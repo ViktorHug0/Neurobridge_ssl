@@ -34,7 +34,7 @@ def _load_json(path):
 
 def _refine_scores(query_features, image_features, eval_mode, sattc_params):
     """Iterative Procrustes refinement and optional Sinkhorn normalisation on top of base scores."""
-    use_csls = (eval_mode == "saw_csls")
+    use_csls = (eval_mode in {"csls", "saw_csls"})
     csls_k = sattc_params.get("csls_k", 12)
     tau = sattc_params.get("sinkhorn_tau", 0.05)
     n_iters = sattc_params.get("sinkhorn_iters", 20)
@@ -228,7 +228,7 @@ def main():
     parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory containing checkpoint_test_best.pth and train_config.json")
     parser.add_argument("--output_dir", required=True, type=str)
     parser.add_argument("--output_name", required=True, type=str)
-    parser.add_argument("--eval_mode", required=True, type=str, choices=["plain_cosine", "saw", "saw_csls"])
+    parser.add_argument("--eval_mode", required=True, type=str, choices=["plain_cosine", "saw", "csls", "saw_csls"])
     parser.add_argument("--test_subject_id", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=None)

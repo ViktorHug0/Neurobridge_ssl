@@ -159,7 +159,7 @@ def process_query_features(eeg_features, subject_ids, eval_mode='plain_cosine', 
     """Apply subject-adaptive whitening (SAW) to EEG features when the eval mode requires it."""
     sattc_params = sattc_params or {}
     eeg_features = np.asarray(eeg_features, dtype=np.float32)
-    if eval_mode == 'plain_cosine':
+    if eval_mode in {'plain_cosine', 'csls'}:
         return eeg_features
     if eval_mode not in {'saw', 'saw_csls'}:
         raise ValueError(f"Unsupported eval_mode: {eval_mode}")
@@ -191,7 +191,7 @@ def compute_retrieval_scores(eeg_features, image_features, subject_ids=None, eva
     processed = process_query_features(eeg_features, subject_ids, eval_mode, sattc_params)
     return score_query_features(
         processed, image_features,
-        use_csls=(eval_mode == 'saw_csls'),
+        use_csls=(eval_mode in {'csls', 'saw_csls'}),
         csls_k=sattc_params.get('csls_k', 12),
     )
 
