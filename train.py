@@ -497,11 +497,13 @@ if __name__ == '__main__':
     parser.add_argument('--clap_mse_lambda', default=0.0, type=float, help='weight for identity anchor MSE loss in stage-2')
     parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
     parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
+    parser.add_argument('--select_best_metric', type=str, choices=['loss', 'top1'], default='loss', help='metric used to select the best checkpoint on the chosen split')
     parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
     parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
     parser.add_argument('--subject_adapt_lambda', default=0.0, type=float, help='weight for unlabeled subject-adaptation loss fit on split A and supervised on split B')
     parser.add_argument('--subject_adapt_split_a_ratio', default=0.5, type=float, help='per-subject within-batch ratio reserved for unlabeled split A')
     parser.add_argument('--subject_adapt_min_samples_per_subject', default=8, type=int, help='minimum number of samples for a subject to contribute to subject adaptation')
+    parser.add_argument('--subject_adapt_interval', default=1, type=int, help='run subject adaptation every N training batches')
     parser.add_argument('--subject_adapt_saw_shrink', default=0.85, type=float, help='SAW shrinkage used when fitting unlabeled subject adaptation')
     parser.add_argument('--subject_adapt_saw_diag', action='store_true', help='use diagonal covariance for subject-adaptation SAW')
     parser.add_argument('--subject_adapt_saw_no_renorm', action='store_true', help='disable pre-map L2 renorm inside subject adaptation')
@@ -537,6 +539,8 @@ if __name__ == '__main__':
             raise ValueError("--subject_adapt_split_a_ratio must be strictly between 0 and 1.")
         if args.subject_adapt_min_samples_per_subject < 2:
             raise ValueError("--subject_adapt_min_samples_per_subject must be at least 2.")
+        if args.subject_adapt_interval < 1:
+            raise ValueError("--subject_adapt_interval must be at least 1.")
     if args.train_saw_whiten_image and not args.train_saw:
         raise ValueError("--train_saw_whiten_image requires --train_saw.")
 
@@ -1072,7 +1076,7 @@ if __name__ == '__main__':
         total_subject_adapt_loss = 0.0
         total_subject_adapt_subjects = 0
 
-        for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [{stage}]"):
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [{stage}]"), start=1):
             eeg_batch = batch[0].to(device)
             image_feature_batch = batch[1].to(device)
             text_feature_batch = batch[2].to(device)
@@ -1153,7 +1157,7 @@ if __name__ == '__main__':
                 loss = loss + args.relic_lambda * relic_loss
                 total_relic_loss += relic_loss.item()
 
-            if args.subject_adapt_lambda > 0 and stage != 'adapter':
+            if args.subject_adapt_lambda > 0 and stage != 'adapter' and (batch_idx % args.subject_adapt_interval == 0):
                 subject_adapt_loss, valid_subjects = compute_subject_adaptation_loss(
                     args,
                     criterion,
@@ -1283,10 +1287,16 @@ if __name__ == '__main__':
             selected_top1 = val_top1
 
         is_better = False
-        if selected_loss < best_test_loss:
-            is_better = True
-        elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
-            is_better = True
+        if args.select_best_metric == 'top1':
+            if selected_top1 > best_top1_acc:
+                is_better = True
+            elif selected_top1 == best_top1_acc and selected_loss < best_test_loss:
+                is_better = True
+        else:
+            if selected_loss < best_test_loss:
+                is_better = True
+            elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
+                is_better = True
 
         if is_better:
             best_test_loss = selected_loss
