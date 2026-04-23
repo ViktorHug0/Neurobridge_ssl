@@ -18,7 +18,6 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from module.dataset import EEGPreImageDataset
-from module.projector import ResidualAdapter
 from module.util import apply_orthogonal_map, fit_soft_assignment_procrustes, sinkhorn_normalize, topk
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
 
@@ -281,60 +280,30 @@ def _load_modules(eval_args, checkpoint_dir, test_dataset):
 
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
     img_projector = build_projector(eval_args.projector, image_feature_dim, eval_args.feature_dim).to(device)
-    eeg_adapter = None
     architecture = getattr(eval_args, "architecture", checkpoint.get("architecture", "baseline"))
-    if architecture == "baseline":
-        eeg_projector = build_projector(eval_args.projector, backbone_feature_dim, eval_args.feature_dim).to(device)
-    elif architecture == "clap_adapter":
-        eeg_projector = build_projector(eval_args.projector, backbone_feature_dim, eval_args.feature_dim).to(device)
-        eeg_adapter = ResidualAdapter(
-            eval_args.feature_dim,
-            eval_args.adapter_hidden_dim,
-            getattr(eval_args, "adapter_alpha", 1.0),
-        ).to(device)
-    else:
+    if architecture != "baseline":
         raise ValueError(f"Unsupported architecture in checkpoint: {architecture}")
+    eeg_projector = build_projector(eval_args.projector, backbone_feature_dim, eval_args.feature_dim).to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
     eeg_projector.load_state_dict(checkpoint["eeg_projector_state_dict"])
     img_projector.load_state_dict(checkpoint["img_projector_state_dict"])
-    if eeg_adapter is not None and "eeg_adapter_state_dict" in checkpoint:
-        eeg_adapter.load_state_dict(checkpoint["eeg_adapter_state_dict"])
 
     model.eval()
     eeg_projector.eval()
     img_projector.eval()
-    if eeg_adapter is not None:
-        eeg_adapter.eval()
 
     return {
         "model": model,
         "eeg_projector": eeg_projector,
         "img_projector": img_projector,
-        "eeg_adapter": eeg_adapter,
         "architecture": architecture,
-        "checkpoint_stage": checkpoint.get("stage", "joint"),
         "device": device,
     }
 
 
 def _forward_feature(modules, eeg_backbone_batch):
-    if modules["architecture"] == "baseline":
-        return modules["eeg_projector"](eeg_backbone_batch)
-    if modules["architecture"] == "clap_adapter":
-        base_feature = modules["eeg_projector"](eeg_backbone_batch)
-        if modules["checkpoint_stage"] == "adapter" and modules["eeg_adapter"] is not None:
-            return modules["eeg_adapter"](base_feature)
-        return base_feature
-    raise ValueError(f"Unsupported architecture: {modules['architecture']}")
-
-
-def _maybe_apply_image_branch(eval_args, modules, image_feature_proj):
-    if modules["architecture"] == "clap_adapter":
-        if _to_bool(getattr(eval_args, "clap_transfer", True), True) and modules["checkpoint_stage"] == "adapter":
-            if modules["eeg_adapter"] is not None:
-                return modules["eeg_adapter"](image_feature_proj)
-    return image_feature_proj
+    return modules["eeg_projector"](eeg_backbone_batch)
 
 
 def _encode_subset_features(eval_args, modules, dataset, subset_indices):
@@ -357,7 +326,6 @@ def _encode_subset_features(eval_args, modules, dataset, subset_indices):
             eeg_backbone_batch = run_eeg_backbone(modules["model"], eval_args, eeg_batch, subject_id_batch)
             eeg_feature_batch = _forward_feature(modules, eeg_backbone_batch)
             image_feature_proj = modules["img_projector"](image_feature_batch)
-            image_feature_proj = _maybe_apply_image_branch(eval_args, modules, image_feature_proj)
 
             eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
             image_feature_list.append(image_feature_proj.cpu().numpy())

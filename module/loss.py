@@ -4,12 +4,11 @@ import torch
 import numpy as np
 
 class ContrastiveLoss(nn.Module):
-    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool, eeg_l2norm_ssl:bool=False):
+    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool):
         super(ContrastiveLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
         self.eeg_l2norm = eeg_l2norm
-        self.eeg_l2norm_ssl = eeg_l2norm_ssl
         self.img_l2norm = img_l2norm
         self.text_l2norm = text_l2norm
         
@@ -63,16 +62,6 @@ class ContrastiveLoss(nn.Module):
         loss_qk = self._multi_positive_cross_entropy(logits, positive_mask)
         loss_kq = self._multi_positive_cross_entropy(logits.T, positive_mask.T)
         return (loss_qk + loss_kq) / 2
-
-    def self_similarity_loss(self, feature, positive_mask):
-        if self.eeg_l2norm or self.eeg_l2norm_ssl:
-            feature = F.normalize(feature, p=2, dim=1)
-        logit_scale = self._get_logit_scale()
-        logits = torch.matmul(feature, feature.T) * logit_scale
-        logits = logits.masked_fill(torch.eye(logits.shape[0], dtype=torch.bool, device=logits.device), float('-inf'))
-        positive_mask = positive_mask.clone()
-        positive_mask.fill_diagonal_(False)
-        return self._multi_positive_cross_entropy(logits, positive_mask)
 
     def forward(self, eeg_feature, image_feature, text_feature):
         eeg_feature, image_feature, text_feature = self._normalize_inputs(

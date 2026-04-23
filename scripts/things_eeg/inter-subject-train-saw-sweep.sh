@@ -117,7 +117,6 @@ run_config() {
             --save_weights \
             --feature_dim "$FEATURE_DIM" \
             --eeg_backbone_dim "$EEG_BACKBONE_DIM" \
-            --ssl_lambda 0 \
             --multi_positive_loss \
             --grouped_batch_sampler \
             --samples_per_image 6 \

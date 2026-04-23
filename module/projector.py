@@ -1,5 +1,4 @@
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ProjectorLinear(nn.Module):
@@ -32,19 +31,3 @@ class ProjectorDirect(nn.Module):
 
     def forward(self, x):
         return x
-
-
-class ResidualAdapter(nn.Module):
-    """Small CLAP-style residual adapter on top of aligned features."""
-    def __init__(self, d_in, d_mid, alpha_inference=1.0):
-        super().__init__()
-        self.alpha_inference = alpha_inference
-        self.linear1 = nn.Linear(d_in, d_mid)
-        self.act = nn.SiLU()
-        self.linear2 = nn.Linear(d_mid, d_in, bias=False)
-        nn.init.zeros_(self.linear2.weight)
-
-    def forward(self, x):
-        alpha = 1.0 if self.training else self.alpha_inference
-        h = self.linear2(self.act(self.linear1(x)))
-        return x + alpha * h

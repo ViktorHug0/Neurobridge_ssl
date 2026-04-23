@@ -13,6 +13,20 @@ from tqdm import tqdm
 
 from module.image_augmentation import ColorJitter, HorizontalFlip, Mosaic, GrayScale, GaussianBlur, GaussianNoise, RandomCrop, LowResolution
 
+'''
+Example usage for InternVIT
+source .venv/bin/activate
+python extract_feature.py 
+  --model_type internvit 
+  --backbone OpenGVLab/InternViT-6B-448px-V1-5 
+  --quantization 8bit 
+  --feature_source intermediate 
+  --intermediate_layer 28 
+  --intermediate_pool mean 
+  --output_dir ./data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit
+'''
+
+
 def extract_clip(image:str, processor, model, device):
     inputs = processor(images=image, return_tensors="pt").to(device)
     with torch.no_grad():
@@ -32,6 +46,62 @@ def extract_open_clip(image, processor, model, augmentation, device):
     return feature
 
 
+def extract_internvit_intermediate(
+    image,
+    processor,
+    model,
+    augmentation,
+    device,
+    layer_idx: int,
+    pool_type: str,
+):
+    if augmentation is not None:
+        image = augmentation(image)
+
+    inputs = processor(images=image, return_tensors="pt").to(device)
+    pixel_values = inputs.pixel_values.to(model.dtype) if hasattr(model, "dtype") else inputs.pixel_values.to(torch.float16)
+
+    if hasattr(model, "vision_model") and hasattr(model.vision_model.encoder, "layers"):
+        resblocks = model.vision_model.encoder.layers
+    elif hasattr(model, "encoder") and hasattr(model.encoder, "layers"):
+        resblocks = model.encoder.layers
+    else:
+        raise ValueError("Selected InternViT backbone does not expose encoder.layers or vision_model.encoder.layers.")
+
+    if layer_idx < 0 or layer_idx >= len(resblocks):
+        raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {len(resblocks)-1}]")
+
+    layer_output = {}
+
+    def hook_fn(module, _input, output):
+        if isinstance(output, tuple):
+            layer_output["hidden"] = output[0]
+        else:
+            layer_output["hidden"] = output
+
+    hook = resblocks[layer_idx].register_forward_hook(hook_fn)
+    try:
+        with torch.no_grad():
+            _ = model(pixel_values)
+    finally:
+        hook.remove()
+
+    if "hidden" not in layer_output:
+        raise RuntimeError("Forward hook did not capture intermediate output.")
+
+    hidden = layer_output["hidden"]
+
+    if pool_type == "cls":
+        pooled = hidden[:, 0, :]
+    elif pool_type == "mean":
+        pooled = hidden[:, 1:, :].mean(dim=1) if hidden.shape[1] > 1 else hidden.mean(dim=1)
+    else:
+        raise ValueError(f"Unknown pool_type: {pool_type}")
+
+    feature = pooled.detach().cpu().numpy()
+    return feature
+
+
 def extract_dinov2(image:str, processor, model, device):
     inputs = processor(images=image, return_tensors="pt").to(device)
     with torch.no_grad():
@@ -41,7 +111,18 @@ def extract_dinov2(image:str, processor, model, device):
     return feature
 
 
-def extract_image_features(image_dir, num_images_per_object, processor, model, model_type, augmentation, device):
+def extract_image_features(
+    image_dir,
+    num_images_per_object,
+    processor,
+    model,
+    model_type,
+    augmentation,
+    device,
+    feature_source="final",
+    intermediate_layer=11,
+    intermediate_pool="cls",
+):
     image_classes = sorted(os.listdir(image_dir))
     image_list = []
     for image_class in image_classes:
@@ -61,13 +142,37 @@ def extract_image_features(image_dir, num_images_per_object, processor, model, m
             feature = extract_open_clip(image, processor, model, augmentation, device)
         elif model_type == 'dinov2':
             feature = extract_dinov2(image, processor, model, device)
+        elif model_type == 'internvit':
+            if feature_source == "intermediate":
+                feature = extract_internvit_intermediate(
+                    image,
+                    processor,
+                    model,
+                    augmentation,
+                    device,
+                    layer_idx=intermediate_layer,
+                    pool_type=intermediate_pool,
+                )
+            else:
+                inputs = processor(images=image, return_tensors="pt").to(device)
+                pixel_values = inputs.pixel_values.to(model.dtype) if hasattr(model, "dtype") else inputs.pixel_values.to(torch.float16)
+                with torch.no_grad():
+                    outputs = model(pixel_values)
+                if hasattr(outputs, "last_hidden_state"):
+                    feature = outputs.last_hidden_state[:, 0].detach().cpu().numpy()
+                elif isinstance(outputs, tuple):
+                    feature = outputs[0][:, 0].detach().cpu().numpy()
+                else:
+                    feature = outputs[:, 0].detach().cpu().numpy()
+        else:
+            raise ValueError(f"Unknown model_type: {model_type}")
         all_features.append(feature)
-    
+
     all_features = np.concatenate(all_features, axis=0)
     print(all_features.shape)
-    
+
     assert all_features.shape[0] % num_images_per_object == 0
-    
+
     reshaped_features = all_features.reshape(-1, num_images_per_object, all_features.shape[-1])
     return reshaped_features
 
@@ -98,26 +203,33 @@ def preprocess(image:Image.Image, augmentation=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda:0", type=str, help="training device")
-    parser.add_argument("--model_type", type=str, choices=["clip", "open_clip", "dinov2"], default="open_clip")
-    parser.add_argument("--backbone", type=str, choices=["ViT-B-16", "ViT-B-32", "ViT-L-14", "ViT-H-14", "ViT-g-14", "ViT-bigG-14", "RN50", "RN101"], default="RN50")
-    parser.add_argument("--pretrained", type=str, choices=["laion2b_s32b_b79k", "laion2b_s32b_b82k", "laion2b_s34b_b79k", "laion2b_s34b_b88k", "laion2b_s39b_b160k", "openai"], default="openai")
+    parser.add_argument("--model_type", type=str, choices=["clip", "open_clip", "dinov2", "internvit"], default="open_clip")
+    parser.add_argument("--backbone", type=str, default="RN50")
+    parser.add_argument("--pretrained", type=str, default="openai")
     parser.add_argument("--repeat_times", type=int, default=1)
     parser.add_argument("--image_set_dir", type=str, default="./data/things_eeg/image_set")
     parser.add_argument("--output_dir", type=str, default="./data/things_eeg/image_feature/RN50")
     parser.add_argument("--aug_type", type=str, default="None", choices=["GaussianBlur", "GaussianNoise", "Mosaic", "RandomCrop", "LowResolution", "ColorJitter", "GrayScale", "None"])
     parser.add_argument("--num_images_per_object", type=int, default=10)
+    parser.add_argument("--feature_source", type=str, choices=["final", "intermediate"], default="final")
+    parser.add_argument("--intermediate_layer", type=int, default=11, help="0-indexed block index for InternViT intermediate extraction")
+    parser.add_argument("--intermediate_pool", type=str, choices=["cls", "mean"], default="cls")
+    parser.add_argument("--quantization", type=str, choices=["none", "8bit", "4bit"], default="none", help="Quantization for InternViT models")
     args = parser.parse_args()
-    
+
     print('Input arguments:')
     for key, val in vars(args).items():
         print(f'{key:22} {val}')
-    
+
     # Check if output directory exists
     if os.path.exists(args.output_dir):
        print(f"Output directory {args.output_dir} already exists, skipping feature extraction...")
-       sys.exit(0) 
+       sys.exit(0)
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+
+    if args.feature_source == "intermediate" and args.model_type != "internvit":
+        raise ValueError("--feature_source intermediate is only supported for --model_type internvit")
 
     if args.model_type == "clip":
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
@@ -128,11 +240,28 @@ if __name__ == "__main__":
         # small base large giant
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-giant")
         model = AutoModel.from_pretrained("facebook/dinov2-giant").to(device)
+    elif args.model_type == "internvit":
+        load_kwargs = {
+            "trust_remote_code": True,
+            "torch_dtype": torch.float16,
+        }
+        if args.quantization == "8bit":
+            load_kwargs.update({"load_in_8bit": True, "device_map": "auto"})
+        elif args.quantization == "4bit":
+            load_kwargs.update({"load_in_4bit": True, "device_map": "auto"})
+
+        model = AutoModel.from_pretrained(args.backbone, **load_kwargs)
+        if args.quantization == "none":
+            model = model.to(device)
+
+        processor = AutoImageProcessor.from_pretrained(args.backbone, trust_remote_code=True)
+    else:
+        raise ValueError(f"Unknown model_type: {args.model_type}")
     model.eval()
-    
+
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    
+
     if args.aug_type == "GaussianBlur":
         augmentation = GaussianBlur(blur_kernel_size=15, fluctuation_range=0)
     elif args.aug_type == "GaussianNoise":
@@ -149,30 +278,36 @@ if __name__ == "__main__":
         augmentation = GrayScale(p=1.0)
     else:
         augmentation = None
-    
+
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
+    _feat_kw = dict(
+        feature_source=args.feature_source,
+        intermediate_layer=args.intermediate_layer,
+        intermediate_pool=args.intermediate_pool,
+    )
+
     if augmentation is None:
-        train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device)
+        train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
         print(f"Train image feature shape: {train_image_features.shape}")
         np.save(os.path.join(args.output_dir, "image_train.npy"), train_image_features)
     else:
         train_image_features_list = []
         for i in range(args.repeat_times):
-            train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device)
+            train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
             train_image_features_list.append(train_image_features)
         train_image_features = np.stack(train_image_features_list, axis=0)
         print(f"Train image feature shape: {train_image_features.shape}")
         np.save(os.path.join(args.output_dir, "train.npy"), train_image_features)
-    
+
     if augmentation is None:
-        test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device)
+        test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device, **_feat_kw)
         print(f"Test image feature shape: {test_image_features.shape}")
         np.save(os.path.join(args.output_dir, "image_test.npy"), test_image_features)
     else:
         test_image_features_list = []
         for i in range(args.repeat_times):
-            test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device)
+            test_image_features = extract_image_features(os.path.join(args.image_set_dir, "test_images"), 1, processor, model, args.model_type, augmentation, device, **_feat_kw)
             test_image_features_list.append(test_image_features)
         test_image_features = np.stack(test_image_features_list, axis=0)
         print(f"Test image feature shape: {test_image_features.shape}")

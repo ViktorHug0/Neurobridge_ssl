@@ -23,7 +23,7 @@ RUN_BASELINE="${RUN_BASELINE:-true}"
 
 # Base model recipe to compare mixup variants against.
 BASE_CONFIG_NAME="${BASE_CONFIG_NAME:-baseline}"
-BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:---architecture baseline --ssl_lambda 0.0 --subject_probe_holdout --subject_probe_holdout_ratio 0.05}"
+BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:-}"
 
 # Space-separated values. Example:
 # MIXUP_ALPHAS="0.2 0.5 1.0 2.0"
@@ -32,9 +32,9 @@ MIXUP_ALPHAS="${MIXUP_ALPHAS:-0.5}"
 MIXUP_MODES="${MIXUP_MODES:-raw_eeg}"
 MIXUP_TYPES="${MIXUP_TYPES:-pairwise}"
 PROJECTORS="${PROJECTORS:-linear}"
-HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-7}"
+HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
 
-SEEDS=(3300)
+SEEDS=(3300 3301 3302)
 
 mkdir -p "$RUN_ROOT"
 

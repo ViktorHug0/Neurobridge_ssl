@@ -44,7 +44,6 @@ fi
 EXTRA_ARGS="--multi_positive_loss --grouped_batch_sampler --samples_per_image 9"
 
 SEED=${SEED:-2009}
-SSL_LAMBDA=0
 
 SESSION_TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
 SESSION_DIR="${OUTPUT_DIR_BASE}/${SESSION_TIMESTAMP}_seed${SEED}_test${TEST_SUBJECT_ID}"
@@ -86,7 +85,6 @@ do
         --eeg_backbone_dim "$EEG_BACKBONE_DIM" \
         --data_average \
         --save_weights \
-        --ssl_lambda "$SSL_LAMBDA" \
         $EXTRA_ARGS \
         --seed "$SEED"
 

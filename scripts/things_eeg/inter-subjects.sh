@@ -2,6 +2,14 @@
 set -e
 trap 'echo "Script Error"' ERR
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
+    # shellcheck source=/dev/null
+    source "${REPO_ROOT}/.venv/bin/activate"
+fi
+cd "$REPO_ROOT"
+
 IMAGE_FEATURE_BASE_DIR="/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature"
 IMAGE_ENCODER_TYPE="InternViT-6B_layer28_mean_8bit"
 IMAGE_FEATURE_DIR="${IMAGE_FEATURE_BASE_DIR}/${IMAGE_ENCODER_TYPE}"
@@ -11,23 +19,23 @@ DEVICE="cuda:0"
 EEG_ENCODER_TYPE="TSConv"
 BATCH_SIZE=1024
 LEARNING_RATE=3e-4
+# Match recorded runs (e.g. 20260327-163130_session_seed2099 train_config.json).
 NUM_EPOCHS=50
 NUM_WORKERS=4
 SELECTED_CHANNELS=() # ('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
-    PROJECTOR="linear"
-    # FEATURE_DIM sweep handled below
-    EEG_BACKBONE_DIM=128
+PROJECTOR="linear"
 OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
-# Configuration sweep: feature_dim values
-FEATURE_DIM_VALUES=(128)
+# Configuration sweep: feature_dim / eeg_backbone_dim (projector output dim).
+# Reproduces: results/things_eeg/inter-subjects/20260327-163130_session_seed2099
+FEATURE_DIM_VALUES=(16 32 64 128 256 512 1024)
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
 for val in "${FEATURE_DIM_VALUES[@]}"
 do
     CONFIG_NAMES+=("featdim_${val}")
-    CONFIG_ARGS+=("--feature_dim ${val} --eeg_backbone_dim ${val} --ssl_lambda 0 --multi_positive_loss --grouped_batch_sampler --samples_per_image 9")
+    CONFIG_ARGS+=("--feature_dim ${val} --eeg_backbone_dim ${val} --multi_positive_loss --grouped_batch_sampler --samples_per_image 9")
 done
 
 # Default seed (can be overridden by environment variable SEED)

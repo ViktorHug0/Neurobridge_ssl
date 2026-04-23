@@ -24,7 +24,12 @@ class GroupedImageBatchSampler(BatchSampler):
         self.image_groups = {key: list(indices) for key, indices in image_groups.items()}
 
         smallest_group = min(len(indices) for indices in self.image_groups.values())
+        max_group = max(len(indices) for indices in self.image_groups.values())
         self.samples_per_image = min(samples_per_image, smallest_group)
+        
+        # Calculate how many passes through the unique images are needed to see all samples
+        self.num_passes = math.ceil(max_group / self.samples_per_image)
+
         if self.samples_per_image <= 0:
             raise ValueError("Grouped sampler found an empty image group.")
 
@@ -38,28 +43,29 @@ class GroupedImageBatchSampler(BatchSampler):
         rng = random.Random(self.seed + self.epoch)
         self.epoch += 1
 
-        shuffled_keys = list(self.group_keys)
-        rng.shuffle(shuffled_keys)
-
         batch = []
         groups_in_batch = 0
 
-        for key in shuffled_keys:
-            group_indices = list(self.image_groups[key])
-            rng.shuffle(group_indices)
-            batch.extend(group_indices[:self.samples_per_image])
-            groups_in_batch += 1
+        for _ in range(self.num_passes):
+            shuffled_keys = list(self.group_keys)
+            rng.shuffle(shuffled_keys)
 
-            if groups_in_batch == self.images_per_batch:
-                yield batch
-                batch = []
-                groups_in_batch = 0
+            for key in shuffled_keys:
+                group_indices = list(self.image_groups[key])
+                rng.shuffle(group_indices)
+                batch.extend(group_indices[:self.samples_per_image])
+                groups_in_batch += 1
+
+                if groups_in_batch == self.images_per_batch:
+                    yield batch
+                    batch = []
+                    groups_in_batch = 0
 
         if batch and not self.drop_last:
             yield batch
 
     def __len__(self):
-        total_groups = len(self.group_keys)
+        total_encounters = len(self.group_keys) * self.num_passes
         if self.drop_last:
-            return total_groups // self.images_per_batch
-        return math.ceil(total_groups / self.images_per_batch)
+            return total_encounters // self.images_per_batch
+        return math.ceil(total_encounters / self.images_per_batch)
