@@ -7,85 +7,66 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
+    # shellcheck source=/dev/null
     source "${REPO_ROOT}/.venv/bin/activate"
 fi
 
-IMAGE_FEATURE_BASE_DIR="/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature"
-IMAGE_ENCODER_TYPE="InternViT-6B_layer28_mean_8bit"
-IMAGE_FEATURE_DIR="${IMAGE_FEATURE_BASE_DIR}/${IMAGE_ENCODER_TYPE}"
-TEXT_FEATURE_DIR=""
-EEG_DATA_DIR="/nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/"
+IMAGE_FEATURE_BASE_DIR="${IMAGE_FEATURE_BASE_DIR:-${REPO_ROOT}/data/things_eeg/image_feature}"
+IMAGE_ENCODER_TYPE="${IMAGE_ENCODER_TYPE:-InternViT-6B_layer28_mean_8bit}"
+IMAGE_FEATURE_DIR="${IMAGE_FEATURE_DIR:-${IMAGE_FEATURE_BASE_DIR}/${IMAGE_ENCODER_TYPE}}"
+TEXT_FEATURE_DIR="${TEXT_FEATURE_DIR:-}"
+
+# Put the alljoined EEG data here by default, or override with:
+EEG_DATA_DIR="${EEG_DATA_DIR:-${REPO_ROOT}/data/alljoined/preprocessed_eeg}"
+
 DEVICE="${DEVICE:-cuda:0}"
-EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-TSConv}"
 BATCH_SIZE="${BATCH_SIZE:-1024}"
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
 NUM_EPOCHS="${NUM_EPOCHS:-50}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
-FEATURE_DIM="${FEATURE_DIM:-64}"
-EEG_BACKBONE_DIM="${EEG_BACKBONE_DIM:-64}"
-OUTPUT_ROOT="${OUTPUT_DIR:-${REPO_ROOT}/results/things_eeg/inter-subjects}"
+OUTPUT_ROOT="${OUTPUT_DIR:-${REPO_ROOT}/results/alljoined/inter-subjects}"
 
-# HARDCODED FOR CONTINUATION:
-RUN_TAG="mixup_20260421-190931"
-SEEDS=(3300)
+SEEDS="${SEEDS:-3300 3301 3302}"
+SUBJECT_IDS="${SUBJECT_IDS:-1 2 3 4 5 6 7 8 9 10}"
+HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-${SUBJECT_IDS}}"
+MIXUP_ALPHA="${MIXUP_ALPHA:-0.5}"
+TSCONV_FEATURE_DIM="${TSCONV_FEATURE_DIM:-64}"
 
+# InternViT-6B_layer28_mean_8bit currently has width 3200, which the direct
+# projector baseline must match.
+EEGPROJECT_FEATURE_DIM="${EEGPROJECT_FEATURE_DIM:-3200}"
+
+RUN_TAG="${RUN_TAG:-alljoined_compare_$(date +'%Y%m%d-%H%M%S')}"
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
-UNIFIED_CSV="${RUN_ROOT}/mixup_summary.csv"
-
-echo "----------------------------------------------------------"
-echo "FORCED CONFIGURATION:"
-echo "RUN_ROOT:  $RUN_ROOT"
-echo "SEEDS:     ${SEEDS[*]}"
-echo "----------------------------------------------------------"
-RUN_BASELINE="${RUN_BASELINE:-true}"
-
-# Base model recipe to compare mixup variants against.
-BASE_CONFIG_NAME="${BASE_CONFIG_NAME:-baseline}"
-BASE_EXTRA_ARGS="${BASE_EXTRA_ARGS:-}"
-
-# Space-separated values. Example:
-# MIXUP_ALPHAS="0.2 0.5 1.0 2.0"
-# MIXUP_MODES="raw_eeg embedding"
-MIXUP_ALPHAS="${MIXUP_ALPHAS:-0.5}"
-MIXUP_MODES="${MIXUP_MODES:-raw_eeg}"
-MIXUP_TYPES="${MIXUP_TYPES:-pairwise}"
-PROJECTORS="${PROJECTORS:-linear}"
-HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
+UNIFIED_CSV="${RUN_ROOT}/comparison_summary.csv"
 
 mkdir -p "$RUN_ROOT"
 
-SUBSET_CHANNELS=() # "P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2")
+SUBSET_CHANNELS=() # Example: "P7" "P5" "P3" "P1" "Pz" "P2" "P4" "P6" "P8" "PO7" "PO3" "POz" "PO4" "PO8" "O1" "Oz" "O2"
 
-read -r -a MIXUP_ALPHA_ARR <<< "$MIXUP_ALPHAS"
-read -r -a MIXUP_MODE_ARR <<< "$MIXUP_MODES"
-read -r -a MIXUP_TYPE_ARR <<< "$MIXUP_TYPES"
-read -r -a PROJECTOR_ARR <<< "$PROJECTORS"
+read -r -a SEED_ARR <<< "$SEEDS"
+read -r -a SUBJECT_ID_ARR <<< "$SUBJECT_IDS"
 read -r -a HELD_OUT_SUBJECT_ARR <<< "$HELD_OUT_SUBJECTS"
 
-CONFIG_NAMES=()
-CONFIG_ARGS=()
-ARCH="$EEG_ENCODER_TYPE"
+CONFIG_NAMES=(
+    "eegproject_internvit_direct"
+    "tsconv_fd${TSCONV_FEATURE_DIM}_mixup_raw_pairwise_linear_a${MIXUP_ALPHA//./p}"
+)
+CONFIG_ARGS=(
+    "--eeg_encoder_type EEGProject --projector direct --feature_dim ${EEGPROJECT_FEATURE_DIM} --subject_mixup_mode none"
+    "--eeg_encoder_type TSConv --projector linear --feature_dim ${TSCONV_FEATURE_DIM} --eeg_backbone_dim ${TSCONV_FEATURE_DIM} --subject_mixup_mode raw_eeg --mixup_type pairwise --subject_mixup_alpha ${MIXUP_ALPHA}"
+)
 
-# Baseline (no subject mixup)
-if [ "$RUN_BASELINE" = "true" ]; then
-    for PROJECTOR in "${PROJECTOR_ARR[@]}"; do
-        CONFIG_NAMES+=("${BASE_CONFIG_NAME}_${PROJECTOR}")
-        CONFIG_ARGS+=("${BASE_EXTRA_ARGS} --subject_mixup_mode none --projector ${PROJECTOR}")
-    done
-fi
-
-# Mixup variants
-for MODE in "${MIXUP_MODE_ARR[@]}"; do
-    for MIXUP_TYPE in "${MIXUP_TYPE_ARR[@]}"; do
-        for PROJECTOR in "${PROJECTOR_ARR[@]}"; do
-            for ALPHA in "${MIXUP_ALPHA_ARR[@]}"; do
-                ALPHA_TAG="${ALPHA//./p}"
-                CONFIG_NAMES+=("mix_${MODE}_${MIXUP_TYPE}_${PROJECTOR}_a${ALPHA_TAG}")
-                CONFIG_ARGS+=("${BASE_EXTRA_ARGS} --subject_mixup_mode ${MODE} --mixup_type ${MIXUP_TYPE} --subject_mixup_alpha ${ALPHA} --projector ${PROJECTOR}")
-            done
-        done
-    done
-done
+echo "----------------------------------------------------------"
+echo "Alljoined inter-subject comparison"
+echo "RUN_ROOT:           ${RUN_ROOT}"
+echo "EEG_DATA_DIR:       ${EEG_DATA_DIR}"
+echo "IMAGE_FEATURE_DIR:  ${IMAGE_FEATURE_DIR}"
+echo "SEEDS:              ${SEED_ARR[*]}"
+echo "SUBJECT_IDS:        ${SUBJECT_ID_ARR[*]}"
+echo "HELD_OUT_SUBJECTS:  ${HELD_OUT_SUBJECT_ARR[*]}"
+echo "CONFIGS:            ${CONFIG_NAMES[*]}"
+echo "----------------------------------------------------------"
 
 append_average_row() {
     local config_name="$1"
@@ -128,7 +109,7 @@ PY
 
 CURRENT_CHANNELS=("${SUBSET_CHANNELS[@]}")
 
-for SEED in "${SEEDS[@]}"
+for SEED in "${SEED_ARR[@]}"
 do
     for c_idx in "${!CONFIG_NAMES[@]}"
     do
@@ -138,7 +119,7 @@ do
         mkdir -p "$CONFIG_RUN_DIR"
 
         echo "=========================================================="
-        echo "Running Inter-subject Mixup Sweep: ${CONFIG_NAME} (Seed ${SEED})"
+        echo "Running alljoined comparison: ${CONFIG_NAME} (Seed ${SEED})"
         echo "Args: ${EXTRA_ARGS}"
         echo "=========================================================="
 
@@ -146,10 +127,10 @@ do
         do
             OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
             TRAIN_IDS=""
-            for i in {1..10}
+            for TRAIN_SUB_ID in "${SUBJECT_ID_ARR[@]}"
             do
-                if [ "$i" -ne "$SUB_ID" ]; then
-                    TRAIN_IDS+="$i "
+                if [ "$TRAIN_SUB_ID" -ne "$SUB_ID" ]; then
+                    TRAIN_IDS+="$TRAIN_SUB_ID "
                 fi
             done
 
@@ -159,7 +140,6 @@ do
                 --num_workers "$NUM_WORKERS" \
                 --learning_rate "$LEARNING_RATE" \
                 --output_name "$OUTPUT_NAME" \
-                --eeg_encoder_type "$ARCH" \
                 --train_subject_ids $TRAIN_IDS \
                 --test_subject_ids "$SUB_ID" \
                 --select_best_on test \
@@ -172,8 +152,6 @@ do
                 --output_dir "$CONFIG_RUN_DIR" \
                 --selected_channels "${CURRENT_CHANNELS[@]}" \
                 --img_l2norm \
-                --feature_dim "$FEATURE_DIM" \
-                --eeg_backbone_dim "$EEG_BACKBONE_DIM" \
                 --data_average \
                 --save_weights \
                 --multi_positive_loss \
@@ -188,4 +166,4 @@ do
     done
 done
 
-echo "Mixup sweep completed: ${UNIFIED_CSV}"
+echo "Alljoined comparison completed: ${UNIFIED_CSV}"
