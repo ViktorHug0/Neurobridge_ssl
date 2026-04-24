@@ -2,6 +2,14 @@
 set -e
 trap 'echo "Script Error"' ERR
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
+    source "${REPO_ROOT}/.venv/bin/activate"
+fi
+
 IMAGE_FEATURE_BASE_DIR="/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature"
 IMAGE_ENCODER_TYPE="InternViT-6B_layer28_mean_8bit"
 IMAGE_FEATURE_DIR="${IMAGE_FEATURE_BASE_DIR}/${IMAGE_ENCODER_TYPE}"
@@ -15,10 +23,20 @@ NUM_EPOCHS="${NUM_EPOCHS:-50}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 FEATURE_DIM="${FEATURE_DIM:-64}"
 EEG_BACKBONE_DIM="${EEG_BACKBONE_DIM:-64}"
-OUTPUT_ROOT="${OUTPUT_DIR:-./results/things_eeg/inter-subjects}"
-RUN_TAG="${RUN_TAG:-mixup_$(date +'%Y%m%d-%H%M%S')}"
+OUTPUT_ROOT="${OUTPUT_DIR:-${REPO_ROOT}/results/things_eeg/inter-subjects}"
+
+# HARDCODED FOR CONTINUATION:
+RUN_TAG="mixup_20260421-190931"
+SEEDS=(3299 3298)
+
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
 UNIFIED_CSV="${RUN_ROOT}/mixup_summary.csv"
+
+echo "----------------------------------------------------------"
+echo "FORCED CONFIGURATION:"
+echo "RUN_ROOT:  $RUN_ROOT"
+echo "SEEDS:     ${SEEDS[*]}"
+echo "----------------------------------------------------------"
 RUN_BASELINE="${RUN_BASELINE:-true}"
 
 # Base model recipe to compare mixup variants against.
@@ -33,8 +51,6 @@ MIXUP_MODES="${MIXUP_MODES:-raw_eeg}"
 MIXUP_TYPES="${MIXUP_TYPES:-pairwise}"
 PROJECTORS="${PROJECTORS:-linear}"
 HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
-
-SEEDS=(3300 3301 3302)
 
 mkdir -p "$RUN_ROOT"
 
@@ -138,7 +154,7 @@ do
             done
 
             PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-            python3 train.py \
+            python3 "${REPO_ROOT}/train.py" \
                 --batch_size "$BATCH_SIZE" \
                 --num_workers "$NUM_WORKERS" \
                 --learning_rate "$LEARNING_RATE" \
@@ -167,7 +183,7 @@ do
                 $EXTRA_ARGS
         done
 
-        python3 compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
+        python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
         append_average_row "${CONFIG_NAME}_seed${SEED}" "$CONFIG_RUN_DIR"
     done
 done

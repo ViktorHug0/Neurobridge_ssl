@@ -196,6 +196,7 @@ class EEGPreImageDataset(Dataset):
         image_test_aug=False,
         eeg_test_aug=False,
         frozen_eeg_prior=False,
+        abstraction_image_feature_dirs: list[str] | None = None,
     ):
         super().__init__()
         self.subject_ids = subject_ids
@@ -210,6 +211,7 @@ class EEGPreImageDataset(Dataset):
         self.image_test_aug = image_test_aug
         self.eeg_test_aug = eeg_test_aug
         self.frozen_eeg_prior = frozen_eeg_prior
+        self.sample_abstraction_levels = bool(abstraction_image_feature_dirs)
         self.info = {}
         info_json_path = os.path.join(eeg_data_dir, "info.json")
         if os.path.isfile(info_json_path):
@@ -334,6 +336,13 @@ class EEGPreImageDataset(Dataset):
         
         self.image_features = np.load(self.image_feature_path)
         self.feature_dim = self.image_features.shape[-1]
+        self.abstraction_image_features = []
+        for abstraction_image_feature_dir in abstraction_image_feature_dirs or []:
+            abstraction_image_feature_path = os.path.join(
+                abstraction_image_feature_dir,
+                "image_train.npy" if train else "image_test.npy",
+            )
+            self.abstraction_image_features.append(np.load(abstraction_image_feature_path))
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             self.text_features = np.load(self.text_feature_path)
     
@@ -387,7 +396,13 @@ class EEGPreImageDataset(Dataset):
             if self.eeg_transform is not None and (self.train or self.eeg_test_aug):
                 eeg_data = self.eeg_transform(eeg_data)
         
-        if self.image_aug:
+        if self.sample_abstraction_levels and (self.train or self.image_test_aug):
+            abstraction_idx = random.randint(0, len(self.abstraction_image_features))
+            if abstraction_idx == 0:
+                image_feature = self.image_features[object_idx][image_idx]
+            else:
+                image_feature = self.abstraction_image_features[abstraction_idx - 1][object_idx][image_idx]
+        elif self.image_aug:
             if self.train or self.image_test_aug:
                 aug_idx = random.randint(0, len(self.aug_image_features) - 1)
                 rep_idx = random.randint(0, self.aug_image_features[0].shape[0] - 1)

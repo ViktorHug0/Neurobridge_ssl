@@ -55,6 +55,15 @@ def seed_everything(seed: int = None):
     return seed
 
 
+def resolve_abstraction_image_feature_dirs(image_feature_dir: str) -> list[str]:
+    base_name = os.path.basename(os.path.normpath(image_feature_dir))
+    parent_dir = os.path.dirname(os.path.normpath(image_feature_dir))
+    return [
+        os.path.join(parent_dir, base_name.replace("layer28", "layer25", 1)),
+        os.path.join(parent_dir, base_name.replace("layer28", "layer31", 1)),
+    ]
+
+
 def build_image_positive_mask(object_indices, image_indices):
     same_object = object_indices.unsqueeze(1) == object_indices.unsqueeze(0)
     same_image = image_indices.unsqueeze(1) == image_indices.unsqueeze(0)
@@ -79,6 +88,18 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
         return loss_contrastive
 
     return criterion(eeg_feature, image_feature, text_feature)
+
+
+def compute_subject_mixup_regularization(mixed_eeg_feature, original_eeg_feature, partner_indices, mixed_mask):
+    if partner_indices is None or mixed_mask is None or not torch.any(mixed_mask):
+        return mixed_eeg_feature.new_tensor(0.0)
+    mixed_subset = mixed_eeg_feature[mixed_mask]
+    original_subset = original_eeg_feature[mixed_mask]
+    partner_subset = original_eeg_feature[partner_indices[mixed_mask]]
+    return (
+        torch.norm(mixed_subset - original_subset, p=2, dim=1).sum()
+        + torch.norm(mixed_subset - partner_subset, p=2, dim=1).sum()
+    ) / mixed_eeg_feature.shape[0]
 
 
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
@@ -288,8 +309,12 @@ def compute_subject_adaptation_loss(
     return total_loss / valid_subjects, valid_subjects
 
 
-def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise'):
+def cross_subject_stimulus_mix(
+    features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise', return_mixup_metadata=False
+):
     if features.shape[0] < 2:
+        if return_mixup_metadata:
+            return features, {'partner_indices': None, 'mixed_mask': None}
         return features
 
     obj = object_indices.detach().cpu().tolist()
@@ -301,6 +326,8 @@ def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_
         groups.setdefault((int(o), int(im)), []).append(i)
 
     mixed = features.clone()
+    partner_indices = torch.arange(features.shape[0], device=features.device)
+    mixed_mask = torch.zeros(features.shape[0], device=features.device, dtype=torch.bool)
     dist_alpha = max(float(alpha), 1e-3)
 
     for indices in groups.values():
@@ -331,6 +358,8 @@ def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_
                     partner_pos.append(random.choice(candidates))
                 partner_pos = torch.tensor(partner_pos, device=features.device, dtype=torch.long)
 
+            partner_indices[group_idx] = group_idx[partner_pos]
+            mixed_mask[group_idx] = True
             concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
             lam = torch.distributions.Beta(concentration, concentration).sample().to(group_features.dtype)
             lam_shape = [group_size] + [1] * (group_features.dim() - 1)
@@ -339,6 +368,8 @@ def cross_subject_stimulus_mix(features, object_indices, image_indices, subject_
 
         mixed[group_idx] = mixed_group
 
+    if return_mixup_metadata:
+        return mixed, {'partner_indices': partner_indices, 'mixed_mask': mixed_mask}
     return mixed
 
 
@@ -402,6 +433,8 @@ if __name__ == '__main__':
     parser.add_argument('--subject_mixup_mode', type=str, choices=['none', 'raw_eeg', 'embedding'], default='none', help='cross-subject same-stimulus convex mixing mode')
     parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or full same-stimulus group mixing')
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
+    parser.add_argument('--subject_mixup_reg_lambda', default=0.0, type=float, help='weight for raw_eeg pairwise mixup embedding regularization')
+    parser.add_argument('--single_emb_stop_grad', action='store_true', help='detach original single-subject embeddings in mixup regularization')
     parser.add_argument('--train_saw', action='store_true', help='apply subject-wise whitening to EEG embeddings before cross-modal losses during training')
     parser.add_argument('--train_saw_whiten_image', action='store_true', help='also whiten image embeddings per subject batch when --train_saw is enabled')
     parser.add_argument('--train_saw_shrink', default=0.2, type=float, help='covariance shrinkage for train-time subject whitening')
@@ -444,10 +477,15 @@ if __name__ == '__main__':
     parser.add_argument('--eeg_backbone_dim', type=int, default=0, help='EEG encoder output dimension (0 means use image feature dimension)')
     parser.add_argument('--image_feature_dir', default='/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit', type=str, help='where your image feature are')
     parser.add_argument('--aug_image_feature_dirs', default=[], nargs='+', type=str, help='where your augmentation image feature are')
+    parser.add_argument('--sample_abstraction_levels', action='store_true', help='uniformly sample InternViT layer27/28/29 image embeddings per image during training')
     parser.add_argument('--text_feature_dir', default='./data/things_eeg/text_feature/BLIP2', type=str, help='where your text feature are')
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
     args = parser.parse_args()
+    if args.subject_mixup_reg_lambda < 0:
+        raise ValueError("--subject_mixup_reg_lambda must be non-negative.")
+    if args.subject_mixup_reg_lambda > 0 and (args.subject_mixup_mode != 'raw_eeg' or args.mixup_type != 'pairwise'):
+        raise ValueError("--subject_mixup_reg_lambda currently requires --subject_mixup_mode raw_eeg and --mixup_type pairwise.")
     if args.subject_probe_holdout:
         if not (0.0 < args.subject_probe_holdout_ratio < 1.0):
             raise ValueError("--subject_probe_holdout_ratio must be strictly between 0 and 1.")
@@ -458,6 +496,8 @@ if __name__ == '__main__':
             raise ValueError("--subject_adapt_min_samples_per_subject must be at least 2.")
     if args.train_saw_whiten_image and not args.train_saw:
         raise ValueError("--train_saw_whiten_image requires --train_saw.")
+    if args.sample_abstraction_levels and args.image_aug:
+        raise ValueError("--sample_abstraction_levels cannot be combined with --image_aug.")
 
     seed = seed_everything(seed=args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -531,6 +571,10 @@ if __name__ == '__main__':
     else:
         eeg_transform = None
 
+    abstraction_image_feature_dirs = []
+    if args.sample_abstraction_levels:
+        abstraction_image_feature_dirs = resolve_abstraction_image_feature_dirs(args.image_feature_dir)
+
     train_dataset = EEGPreImageDataset(
         args.train_subject_ids,
         args.eeg_data_dir,
@@ -546,7 +590,8 @@ if __name__ == '__main__':
         True,
         args.image_test_aug,
         args.eeg_test_aug,
-        args.frozen_eeg_prior
+        args.frozen_eeg_prior,
+        abstraction_image_feature_dirs,
     )
 
     eeg_sample_points = train_dataset.num_sample_points
@@ -668,7 +713,7 @@ if __name__ == '__main__':
             False,
             args.image_test_aug,
             args.eeg_test_aug,
-            args.frozen_eeg_prior
+            args.frozen_eeg_prior,
         )
         val_dataloader = DataLoader(val_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
@@ -688,7 +733,7 @@ if __name__ == '__main__':
         False,
         args.image_test_aug,
         args.eeg_test_aug,
-        args.frozen_eeg_prior
+        args.frozen_eeg_prior,
     )
     test_dataloader = DataLoader(test_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
@@ -901,6 +946,7 @@ if __name__ == '__main__':
         criterion.train()
         total_loss = 0.0
         total_cl_loss = 0.0
+        total_subject_mixup_reg_loss = 0.0
         total_subject_adapt_loss = 0.0
         total_subject_adapt_subjects = 0
 
@@ -913,11 +959,22 @@ if __name__ == '__main__':
             image_idx_batch = batch[5].to(device)
 
             optimizer.zero_grad()
+            original_eeg_batch = eeg_batch
+            mixup_metadata = None
             if args.subject_mixup_mode == 'raw_eeg':
-                eeg_batch = cross_subject_stimulus_mix(
-                    eeg_batch, object_idx_batch, image_idx_batch, subject_id_batch,
-                    alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type
+                mixup_out = cross_subject_stimulus_mix(
+                    eeg_batch,
+                    object_idx_batch,
+                    image_idx_batch,
+                    subject_id_batch,
+                    alpha=args.subject_mixup_alpha,
+                    mixup_type=args.mixup_type,
+                    return_mixup_metadata=args.subject_mixup_reg_lambda > 0,
                 )
+                if args.subject_mixup_reg_lambda > 0:
+                    eeg_batch, mixup_metadata = mixup_out
+                else:
+                    eeg_batch = mixup_out
             eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
             if args.subject_mixup_mode == 'embedding':
                 eeg_backbone_batch = cross_subject_stimulus_mix(
@@ -929,6 +986,24 @@ if __name__ == '__main__':
             loss = eeg_batch.new_tensor(0.0)
 
             eeg_feature_batch = arch_out['eeg_feature']
+            if args.subject_mixup_reg_lambda > 0:
+                if args.single_emb_stop_grad:
+                    with torch.no_grad():
+                        original_eeg_feature_batch = forward_architecture(
+                            run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
+                        )['eeg_feature']
+                else:
+                    original_eeg_feature_batch = forward_architecture(
+                        run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
+                    )['eeg_feature']
+                subject_mixup_reg_loss = compute_subject_mixup_regularization(
+                    eeg_feature_batch,
+                    original_eeg_feature_batch,
+                    mixup_metadata['partner_indices'],
+                    mixup_metadata['mixed_mask'],
+                )
+                loss = loss + args.subject_mixup_reg_lambda * subject_mixup_reg_loss
+                total_subject_mixup_reg_loss += subject_mixup_reg_loss.item()
             image_feature_proj = img_projector(image_feature_batch)
             text_feature_proj = text_projector(text_feature_batch)
             eeg_feature_for_loss, image_feature_for_loss = maybe_apply_train_saw(
@@ -970,10 +1045,12 @@ if __name__ == '__main__':
         avg_loss = total_loss / len(dataloader)
         writer.add_scalar('Loss/train', avg_loss, epoch)
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_subject_mixup_reg', total_subject_mixup_reg_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_subject_adapt', total_subject_adapt_loss / len(dataloader), epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} "
+            f"MIXREG={total_subject_mixup_reg_loss / len(dataloader):.4f} "
             f"SADAPT={total_subject_adapt_loss / len(dataloader):.4f} "
             f"SADAPT_SUBJ={total_subject_adapt_subjects / len(dataloader):.2f}"
         )

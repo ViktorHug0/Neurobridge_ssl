@@ -13,17 +13,20 @@ from tqdm import tqdm
 
 from module.image_augmentation import ColorJitter, HorizontalFlip, Mosaic, GrayScale, GaussianBlur, GaussianNoise, RandomCrop, LowResolution
 
+# THINGS image layout: <this dir>/training_images/, test_images/
+_DEFAULT_IMAGE_SET_DIR = "/nasbrain/ProCOM-EEG/NeuroBridge/NeuroBridge-main/data/things_eeg/image_set"
+
 '''
 Example usage for InternVIT
 source .venv/bin/activate
-python extract_feature.py 
-  --model_type internvit 
-  --backbone OpenGVLab/InternViT-6B-448px-V1-5 
-  --quantization 8bit 
-  --feature_source intermediate 
-  --intermediate_layer 28 
-  --intermediate_pool mean 
-  --output_dir ./data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit
+python extract_feature.py \
+  --model_type internvit \
+  --backbone OpenGVLab/InternViT-6B-448px-V1-5 \
+  --quantization 8bit \
+  --feature_source intermediate \
+  --intermediate_layer 25 \
+  --intermediate_pool mean \
+  --output_dir ./data/things_eeg/image_feature/InternViT-6B_layer25_mean_8bit 
 '''
 
 
@@ -207,7 +210,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="RN50")
     parser.add_argument("--pretrained", type=str, default="openai")
     parser.add_argument("--repeat_times", type=int, default=1)
-    parser.add_argument("--image_set_dir", type=str, default="./data/things_eeg/image_set")
+    parser.add_argument("--image_set_dir", type=str, default=_DEFAULT_IMAGE_SET_DIR)
     parser.add_argument("--output_dir", type=str, default="./data/things_eeg/image_feature/RN50")
     parser.add_argument("--aug_type", type=str, default="None", choices=["GaussianBlur", "GaussianNoise", "Mosaic", "RandomCrop", "LowResolution", "ColorJitter", "GrayScale", "None"])
     parser.add_argument("--num_images_per_object", type=int, default=10)
@@ -288,13 +291,13 @@ if __name__ == "__main__":
     )
 
     if augmentation is None:
-        train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
+        train_image_features = extract_image_features(os.path.join(args.image_set_dir, "training_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
         print(f"Train image feature shape: {train_image_features.shape}")
         np.save(os.path.join(args.output_dir, "image_train.npy"), train_image_features)
     else:
         train_image_features_list = []
         for i in range(args.repeat_times):
-            train_image_features = extract_image_features(os.path.join(args.image_set_dir, "train_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
+            train_image_features = extract_image_features(os.path.join(args.image_set_dir, "training_images"), args.num_images_per_object, processor, model, args.model_type, augmentation, device, **_feat_kw)
             train_image_features_list.append(train_image_features)
         train_image_features = np.stack(train_image_features_list, axis=0)
         print(f"Train image feature shape: {train_image_features.shape}")

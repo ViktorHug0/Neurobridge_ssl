@@ -28,7 +28,7 @@ OUTPUT_DIR_BASE=${OUTPUT_DIR:-"./results/things_eeg/inter-subjects"}
 
 # Configuration sweep: feature_dim / eeg_backbone_dim (projector output dim).
 # Reproduces: results/things_eeg/inter-subjects/20260327-163130_session_seed2099
-FEATURE_DIM_VALUES=(16 32 64 128 256 512 1024)
+FEATURE_DIM_VALUES=(64)
 CONFIG_NAMES=()
 CONFIG_ARGS=()
 
