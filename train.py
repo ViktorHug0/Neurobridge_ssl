@@ -20,7 +20,15 @@ import pandas as pd
 
 from module.dataset import EEGPreImageDataset
 from module.eeg_encoder.atm.atm import ATMS
-from module.eeg_encoder.model import EEGNet, EEGProject, TSConv, EEGTransformer, TSConv30 
+from module.eeg_encoder.model import (
+    EEGNet,
+    EEGProject,
+    EEGConformer,
+    TSConv,
+    TSConv_parameterizable,
+    EEGTransformer,
+    TSConv30,
+)
 from module.loss import ContrastiveLoss
 from module.util import (
     _estimate_mu_cov,
@@ -111,10 +119,30 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
         return EEGProject(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'TSConv':
         return TSConv(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'TSConv_parameterizable':
+        head_dropout = None if args.tsconv_head_dropout < 0 else args.tsconv_head_dropout
+        return TSConv_parameterizable(
+            feature_dim=feature_dim,
+            eeg_sample_points=eeg_sample_points,
+            channels_num=channels_num,
+            temporal_filters=args.tsconv_temporal_filters,
+            temporal_kernel=args.tsconv_temporal_kernel,
+            pool_kernel=args.tsconv_pool_kernel,
+            pool_stride=args.tsconv_pool_stride,
+            spatial_filters=args.tsconv_spatial_filters,
+            projection_filters=args.tsconv_projection_filters,
+            activation=args.tsconv_activation,
+            dropout=args.tsconv_dropout,
+            head_dropout=head_dropout,
+            batch_norm=not args.tsconv_no_batch_norm,
+            conv_bias=not args.tsconv_no_conv_bias,
+        )
     if args.eeg_encoder_type == 'TSConv30':
         return TSConv30(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGTransformer':
         return EEGTransformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'EEGConformer':
+        return EEGConformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
 
 
@@ -435,6 +463,7 @@ if __name__ == '__main__':
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--subject_mixup_reg_lambda', default=0.0, type=float, help='weight for raw_eeg pairwise mixup embedding regularization')
     parser.add_argument('--single_emb_stop_grad', action='store_true', help='detach original single-subject embeddings in mixup regularization')
+    parser.add_argument('--subject_mixup_reg_on_backbone', action='store_true', help='compute mixup regularization on backbone features instead of aligned embeddings')
     parser.add_argument('--train_saw', action='store_true', help='apply subject-wise whitening to EEG embeddings before cross-modal losses during training')
     parser.add_argument('--train_saw_whiten_image', action='store_true', help='also whiten image embeddings per subject batch when --train_saw is enabled')
     parser.add_argument('--train_saw_shrink', default=0.2, type=float, help='covariance shrinkage for train-time subject whitening')
@@ -467,7 +496,32 @@ if __name__ == '__main__':
     parser.add_argument('--time_window', type=int, default=[0, 250], nargs=2, help='time window for EEG data, in sample points')
     parser.add_argument('--eeg_aug', action='store_true')
     parser.add_argument('--eeg_aug_type', type=str, choices=['noise', 'time_shift', 'channel_dropout', 'smooth'], default='noise', help='eeg augmentation type')
-    parser.add_argument('--eeg_encoder_type', type=str, choices=['ATM', "EEGNet", "EEGProject", "TSConv", "EEGTransformer", "TSConv30"], default='EEGProject')
+    parser.add_argument(
+        '--eeg_encoder_type',
+        type=str,
+        choices=[
+            'ATM',
+            "EEGNet",
+            "EEGProject",
+            "TSConv",
+            "TSConv_parameterizable",
+            "EEGTransformer",
+            "TSConv30",
+            "EEGConformer",
+        ],
+        default='EEGProject',
+    )
+    parser.add_argument('--tsconv_temporal_filters', default=40, type=int, help='temporal filter count for TSConv_parameterizable')
+    parser.add_argument('--tsconv_temporal_kernel', default=25, type=int, help='temporal kernel width for TSConv_parameterizable')
+    parser.add_argument('--tsconv_pool_kernel', default=51, type=int, help='temporal average-pooling kernel for TSConv_parameterizable')
+    parser.add_argument('--tsconv_pool_stride', default=5, type=int, help='temporal average-pooling stride for TSConv_parameterizable')
+    parser.add_argument('--tsconv_spatial_filters', default=40, type=int, help='spatial filter count for TSConv_parameterizable')
+    parser.add_argument('--tsconv_projection_filters', default=40, type=int, help='1x1 projection filter count for TSConv_parameterizable')
+    parser.add_argument('--tsconv_activation', default='elu', choices=['elu', 'gelu', 'relu', 'leaky_relu', 'silu'], help='activation for TSConv_parameterizable')
+    parser.add_argument('--tsconv_dropout', default=0.5, type=float, help='backbone dropout for TSConv_parameterizable')
+    parser.add_argument('--tsconv_head_dropout', default=-1.0, type=float, help='projection-head dropout for TSConv_parameterizable; negative reuses --tsconv_dropout')
+    parser.add_argument('--tsconv_no_batch_norm', action='store_true', help='disable BatchNorm layers in TSConv_parameterizable')
+    parser.add_argument('--tsconv_no_conv_bias', action='store_true', help='disable convolution biases in TSConv_parameterizable')
     parser.add_argument('--image_aug', action='store_true')
     parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--eeg_test_aug', action='store_true')
@@ -740,6 +794,9 @@ if __name__ == '__main__':
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir',
         'projector', 'feature_dim', 'eeg_backbone_dim', 'time_window', 'selected_channels',
+        'tsconv_temporal_filters', 'tsconv_temporal_kernel', 'tsconv_pool_kernel', 'tsconv_pool_stride',
+        'tsconv_spatial_filters', 'tsconv_projection_filters', 'tsconv_activation', 'tsconv_dropout',
+        'tsconv_head_dropout', 'tsconv_no_batch_norm', 'tsconv_no_conv_bias',
         'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
@@ -987,17 +1044,18 @@ if __name__ == '__main__':
 
             eeg_feature_batch = arch_out['eeg_feature']
             if args.subject_mixup_reg_lambda > 0:
+                reg_feature_batch = eeg_backbone_batch if args.subject_mixup_reg_on_backbone else eeg_feature_batch
                 if args.single_emb_stop_grad:
                     with torch.no_grad():
-                        original_eeg_feature_batch = forward_architecture(
-                            run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
-                        )['eeg_feature']
+                        original_eeg_feature_batch = run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
+                        if not args.subject_mixup_reg_on_backbone:
+                            original_eeg_feature_batch = forward_architecture(original_eeg_feature_batch)['eeg_feature']
                 else:
-                    original_eeg_feature_batch = forward_architecture(
-                        run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
-                    )['eeg_feature']
+                    original_eeg_feature_batch = run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
+                    if not args.subject_mixup_reg_on_backbone:
+                        original_eeg_feature_batch = forward_architecture(original_eeg_feature_batch)['eeg_feature']
                 subject_mixup_reg_loss = compute_subject_mixup_regularization(
-                    eeg_feature_batch,
+                    reg_feature_batch,
                     original_eeg_feature_batch,
                     mixup_metadata['partner_indices'],
                     mixup_metadata['mixed_mask'],
@@ -1165,8 +1223,11 @@ if __name__ == '__main__':
 
     save_training_plot(history, os.path.join(log_dir, 'training_metrics.png'))
     if probe_history is not None:
+        probe_history_path = os.path.join(log_dir, 'probe_metrics.csv')
+        pd.DataFrame(probe_history).to_csv(probe_history_path, index=False)
         probe_plot_path = os.path.join(log_dir, 'probe_metrics.png')
         save_probe_plot(probe_history, probe_plot_path)
+        log(f"Saved probe metrics CSV: {probe_history_path}")
         log(f"Saved probe metrics plot: {probe_plot_path}")
 
     result_dict = {

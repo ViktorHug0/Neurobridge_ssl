@@ -30,11 +30,8 @@ SEEDS="${SEEDS:-3300 3301 3302}"
 SUBJECT_IDS="${SUBJECT_IDS:-1 2 3 4 5 6 7 8 9 10}"
 HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-${SUBJECT_IDS}}"
 MIXUP_ALPHA="${MIXUP_ALPHA:-0.5}"
-TSCONV_FEATURE_DIM="${TSCONV_FEATURE_DIM:-64}"
 
-# InternViT-6B_layer28_mean_8bit currently has width 3200, which the direct
-# projector baseline must match.
-EEGPROJECT_FEATURE_DIM="${EEGPROJECT_FEATURE_DIM:-3200}"
+FEATURE_DIM="${FEATURE_DIM:-64}"
 
 RUN_TAG="${RUN_TAG:-alljoined_compare_$(date +'%Y%m%d-%H%M%S')}"
 RUN_ROOT="${OUTPUT_ROOT}/${RUN_TAG}"
@@ -50,11 +47,11 @@ read -r -a HELD_OUT_SUBJECT_ARR <<< "$HELD_OUT_SUBJECTS"
 
 CONFIG_NAMES=(
     "eegproject_internvit_direct"
-    "tsconv_fd${TSCONV_FEATURE_DIM}_mixup_raw_pairwise_linear_a${MIXUP_ALPHA//./p}"
+    "tsconv_fd${FEATURE_DIM}_mixup_raw_pairwise_linear_a${MIXUP_ALPHA//./p}"
 )
 CONFIG_ARGS=(
-    "--eeg_encoder_type EEGProject --projector direct --feature_dim ${EEGPROJECT_FEATURE_DIM} --subject_mixup_mode none"
-    "--eeg_encoder_type TSConv --projector linear --feature_dim ${TSCONV_FEATURE_DIM} --eeg_backbone_dim ${TSCONV_FEATURE_DIM} --subject_mixup_mode raw_eeg --mixup_type pairwise --subject_mixup_alpha ${MIXUP_ALPHA}"
+    "--eeg_encoder_type EEGProject --projector linear --feature_dim ${FEATURE_DIM} --eeg_backbone_dim ${FEATURE_DIM} --subject_mixup_mode none"
+    "--eeg_encoder_type TSConv --projector linear --feature_dim ${FEATURE_DIM} --eeg_backbone_dim ${FEATURE_DIM} --subject_mixup_mode raw_eeg --mixup_type pairwise --subject_mixup_alpha ${MIXUP_ALPHA}"
 )
 
 echo "----------------------------------------------------------"
