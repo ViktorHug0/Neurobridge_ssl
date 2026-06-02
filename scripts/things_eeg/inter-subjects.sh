@@ -118,9 +118,12 @@ if os.path.exists(inter_summary_path):
         df = pd.read_csv(inter_summary_path)
         avg_row = df[df['sub'] == 'Average'].copy()
         if not avg_row.empty:
-            avg_row.insert(0, 'config', config_name)
-            # Optionally remove 'sub' column as it's redundant
-            # avg_row = avg_row.drop(columns=['sub'])
+            # Safely set or update config column
+            avg_row['config'] = config_name
+            
+            # Put config at the front
+            cols = ['config'] + [c for c in avg_row.columns if c != 'config']
+            avg_row = avg_row[cols]
             
             header = not os.path.exists(session_summary_path)
             avg_row.to_csv(session_summary_path, mode='a', index=False, header=header)

@@ -3,20 +3,19 @@ set -e
 trap 'echo "Script Error"' ERR
 
 IMAGE_FEATURE_BASE_DIR="./data/things_eeg/image_feature"
-IMAGE_ENCODER_TYPE="RN50"
 IMAGE_FEATURE_DIR="/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit"
 TEXT_FEATURE_DIR=""
 EEG_DATA_DIR="${EEG_DATA_DIR:-/nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/}"
 DEVICE="cuda:0"
-EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-EEGConformer}" # "EEGConformer"
+EEG_ENCODER_TYPE="${EEG_ENCODER_TYPE:-EEGProject}" # "EEGConformer"
 BATCH_SIZE=1024
-LEARNING_RATE=3e-4
+LEARNING_RATE=1e-4
 NUM_EPOCHS=50
 SELECTED_CHANNELS=('P7' 'P5' 'P3' 'P1' 'Pz' 'P2' 'P4' 'P6' 'P8' 'PO7' 'PO3' 'POz' 'PO4' 'PO8' 'O1' 'Oz' 'O2')
 PROJECTOR="linear"
 FEATURE_DIM=512
-EEG_BACKBONE_DIM=512
-OUTPUT_DIR="./results/things_eeg/intra-subjects"
+EEG_BACKBONE_DIM=1024
+OUTPUT_DIR="./results/things_eeg/intra-subjects/TTA_2"
 
 for SUB_ID in {1..10}
 do

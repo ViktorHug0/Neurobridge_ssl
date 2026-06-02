@@ -4,7 +4,18 @@ import torch
 import numpy as np
 
 class ContrastiveLoss(nn.Module):
-    def __init__(self, init_temperature, alpha, beta, eeg_l2norm:bool, img_l2norm:bool, text_l2norm:bool, learnable:bool, is_softplus:bool):
+    def __init__(
+        self,
+        init_temperature,
+        alpha,
+        beta,
+        eeg_l2norm: bool,
+        img_l2norm: bool,
+        text_l2norm: bool,
+        learnable: bool,
+        is_softplus: bool,
+        logit_scale_max=None,
+    ):
         super(ContrastiveLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
@@ -13,6 +24,7 @@ class ContrastiveLoss(nn.Module):
         self.text_l2norm = text_l2norm
         
         self.is_softplus = is_softplus
+        self.logit_scale_max = logit_scale_max
         
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_mse = nn.MSELoss()
@@ -22,8 +34,12 @@ class ContrastiveLoss(nn.Module):
 
     def _get_logit_scale(self):
         if self.is_softplus:
-            return self.softplus(self.logit_scale)
-        return torch.exp(self.logit_scale)
+            scale = self.softplus(self.logit_scale)
+        else:
+            scale = torch.exp(self.logit_scale)
+        if self.logit_scale_max is not None:
+            scale = scale.clamp(max=float(self.logit_scale_max))
+        return scale
 
     def _normalize_inputs(self, eeg_feature, image_feature, text_feature=None):
         if self.eeg_l2norm:
@@ -49,7 +65,7 @@ class ContrastiveLoss(nn.Module):
         loss_per_row = -positive_log_probs.sum(dim=1) / positives.sum(dim=1).clamp_min(1)
         return loss_per_row.mean()
 
-    def multi_positive_pair_loss(self, query_feature, key_feature, positive_mask, key_is_text=False):
+    def multi_positive_pair_loss(self, query_feature, key_feature, positive_mask, key_is_text=False, query_scale=None):
         if self.eeg_l2norm:
             query_feature = F.normalize(query_feature, p=2, dim=1)
         if key_is_text:
@@ -59,11 +75,15 @@ class ContrastiveLoss(nn.Module):
             key_feature = F.normalize(key_feature, p=2, dim=1)
         logit_scale = self._get_logit_scale()
         logits = torch.matmul(query_feature, key_feature.T) * logit_scale
-        loss_qk = self._multi_positive_cross_entropy(logits, positive_mask)
+        if query_scale is not None:
+            logits_qk = logits * query_scale.unsqueeze(1)
+        else:
+            logits_qk = logits
+        loss_qk = self._multi_positive_cross_entropy(logits_qk, positive_mask)
         loss_kq = self._multi_positive_cross_entropy(logits.T, positive_mask.T)
         return (loss_qk + loss_kq) / 2
 
-    def forward(self, eeg_feature, image_feature, text_feature):
+    def forward(self, eeg_feature, image_feature, text_feature, eeg_confidence=None):
         eeg_feature, image_feature, text_feature = self._normalize_inputs(
             eeg_feature, image_feature, text_feature if self.beta != 1.0 else None
         )
@@ -71,17 +91,25 @@ class ContrastiveLoss(nn.Module):
         # Calculate similarity matrix (N x N)
         logit_scale = self._get_logit_scale()
         similarity_matrix_ie = torch.matmul(eeg_feature, image_feature.T) * logit_scale
+        if eeg_confidence is not None:
+            similarity_matrix_ie_q = similarity_matrix_ie * eeg_confidence.unsqueeze(1)
+        else:
+            similarity_matrix_ie_q = similarity_matrix_ie
         if self.beta != 1.0:
             similarity_matrix_te = torch.matmul(eeg_feature, text_feature.T) * logit_scale
+            if eeg_confidence is not None:
+                similarity_matrix_te_q = similarity_matrix_te * eeg_confidence.unsqueeze(1)
+            else:
+                similarity_matrix_te_q = similarity_matrix_te
 
         # Construct labels
         labels = torch.arange(eeg_feature.shape[0], device=eeg_feature.device)
 
         # Calculate two parts of the loss
-        loss_eeg_ie = self.criterion_cls(similarity_matrix_ie, labels)
+        loss_eeg_ie = self.criterion_cls(similarity_matrix_ie_q, labels)
         loss_img_ie = self.criterion_cls(similarity_matrix_ie.T, labels)
         if self.beta != 1.0:
-            loss_eeg_te = self.criterion_cls(similarity_matrix_te, labels)
+            loss_eeg_te = self.criterion_cls(similarity_matrix_te_q, labels)
             loss_img_te = self.criterion_cls(similarity_matrix_te.T, labels)
             
         if self.alpha != 1.0:

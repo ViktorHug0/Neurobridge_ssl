@@ -31,18 +31,89 @@ def _load_json(path):
         return json.load(f)
 
 
+def _row_softmax(similarities, tau=0.05, eps=1e-8):
+    similarities = np.asarray(similarities, dtype=np.float32)
+    if similarities.ndim != 2 or similarities.shape[0] == 0 or similarities.shape[1] == 0:
+        return similarities
+    tau = max(float(tau), eps)
+    scaled = similarities / tau
+    scaled -= scaled.max(axis=1, keepdims=True)
+    weights = np.exp(scaled).astype(np.float32, copy=False)
+    weights /= np.clip(weights.sum(axis=1, keepdims=True), eps, None)
+    return weights.astype(np.float32, copy=False)
+
+
+def _build_soft_assignment(similarities, method, tau=0.05, sinkhorn_iters=20, topk=None, eps=1e-8):
+    similarities = np.asarray(similarities, dtype=np.float32)
+    if similarities.ndim != 2 or similarities.shape[0] == 0 or similarities.shape[1] == 0:
+        return similarities
+
+    method = str(method or "sinkhorn").strip().lower()
+    if method == "sinkhorn":
+        return sinkhorn_normalize(similarities, tau=tau, num_iters=sinkhorn_iters, eps=eps)
+
+    if method == "softmax":
+        return _row_softmax(similarities, tau=tau, eps=eps)
+
+    if method == "topk":
+        k = int(topk) if topk is not None else 5
+        k = max(1, min(k, similarities.shape[1]))
+        assignment = np.zeros_like(similarities, dtype=np.float32)
+        topk_idx = np.argpartition(-similarities, kth=k - 1, axis=1)[:, :k]
+        topk_scores = np.take_along_axis(similarities, topk_idx, axis=1)
+        topk_weights = _row_softmax(topk_scores, tau=tau, eps=eps)
+        np.put_along_axis(assignment, topk_idx, topk_weights, axis=1)
+        return assignment.astype(np.float32, copy=False)
+
+    if method == "argmax":
+        assignment = np.zeros_like(similarities, dtype=np.float32)
+        best_idx = np.argmax(similarities, axis=1, keepdims=True)
+        np.put_along_axis(assignment, best_idx, 1.0, axis=1)
+        return assignment.astype(np.float32, copy=False)
+
+    raise ValueError(f"Unsupported soft Procrustes assignment method: {method}")
+
+
+def _project_alignment_subspace(query_features, image_features, subspace_dim):
+    if subspace_dim is None:
+        return query_features, image_features
+    subspace_dim = int(subspace_dim)
+    feature_dim = int(query_features.shape[1])
+    if subspace_dim <= 0 or subspace_dim >= feature_dim:
+        return query_features, image_features
+    stacked = np.concatenate([query_features, image_features], axis=0).astype(np.float32, copy=False)
+    mean = stacked.mean(axis=0, keepdims=True)
+    centered = stacked - mean
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    basis = vh[:subspace_dim].T.astype(np.float32, copy=False)
+    return ((query_features - mean) @ basis).astype(np.float32, copy=False), ((image_features - mean) @ basis).astype(np.float32, copy=False)
+
+
 def _refine_scores(query_features, image_features, eval_mode, sattc_params):
     """Iterative Procrustes refinement and optional Sinkhorn normalisation on top of base scores."""
+    query_features, image_features = _project_alignment_subspace(
+        np.asarray(query_features, dtype=np.float32),
+        np.asarray(image_features, dtype=np.float32),
+        sattc_params.get("alignment_subspace_dim"),
+    )
     use_csls = (eval_mode in {"csls", "saw_csls"})
     csls_k = sattc_params.get("csls_k", 12)
     tau = sattc_params.get("sinkhorn_tau", 0.05)
     n_iters = sattc_params.get("sinkhorn_iters", 20)
+    assignment_method = sattc_params.get("soft_procrustes_assignment", "sinkhorn")
+    assignment_topk = sattc_params.get("soft_procrustes_assignment_topk", 5)
 
     scores, targets = score_query_features(query_features, image_features, use_csls=use_csls, csls_k=csls_k)
 
     if sattc_params.get("soft_procrustes_enabled", False):
         for _ in range(max(1, int(sattc_params.get("soft_procrustes_steps", 1)))):
-            assignment = sinkhorn_normalize(scores, tau=tau, num_iters=n_iters)
+            assignment = _build_soft_assignment(
+                scores,
+                method=assignment_method,
+                tau=tau,
+                sinkhorn_iters=n_iters,
+                topk=assignment_topk,
+            )
             ortho_weights = fit_soft_assignment_procrustes(
                 query_features,
                 image_features,
@@ -106,6 +177,10 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
     merged.update(eval_cfg)
 
     merged["eval_mode"] = cli_args.eval_mode
+    if cli_args.eeg_data_dir is not None:
+        merged["eeg_data_dir"] = cli_args.eeg_data_dir
+    if cli_args.image_feature_dir is not None:
+        merged["image_feature_dir"] = cli_args.image_feature_dir
     if cli_args.sattc_saw_shrink is not None:
         merged["sattc_saw_shrink"] = cli_args.sattc_saw_shrink
     if cli_args.sattc_saw_diag:
@@ -128,6 +203,14 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_soft_procrustes_steps"] = cli_args.sattc_soft_procrustes_steps
     if cli_args.sattc_soft_procrustes_power is not None:
         merged["sattc_soft_procrustes_power"] = cli_args.sattc_soft_procrustes_power
+    if cli_args.sattc_soft_procrustes_assignment is not None:
+        merged["sattc_soft_procrustes_assignment"] = cli_args.sattc_soft_procrustes_assignment
+    if cli_args.sattc_soft_procrustes_assignment_topk is not None:
+        merged["sattc_soft_procrustes_assignment_topk"] = cli_args.sattc_soft_procrustes_assignment_topk
+    if cli_args.sattc_alignment_subspace_dim is not None:
+        merged["sattc_alignment_subspace_dim"] = cli_args.sattc_alignment_subspace_dim
+    if cli_args.feature_dim is not None:
+        merged["feature_dim"] = cli_args.feature_dim
     if cli_args.device is not None:
         merged["device"] = cli_args.device
     if cli_args.num_workers is not None:
@@ -212,6 +295,8 @@ def main():
     parser.add_argument("--output_name", required=True, type=str)
     parser.add_argument("--eval_mode", required=True, type=str, choices=["plain_cosine", "saw", "csls", "saw_csls"])
     parser.add_argument("--test_subject_id", type=int, default=None)
+    parser.add_argument("--eeg_data_dir", type=str, default=None)
+    parser.add_argument("--image_feature_dir", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
@@ -227,6 +312,15 @@ def main():
     parser.add_argument("--sattc_soft_procrustes_normalize_inputs", action="store_true")
     parser.add_argument("--sattc_soft_procrustes_steps", type=int, default=None)
     parser.add_argument("--sattc_soft_procrustes_power", type=float, default=None)
+    parser.add_argument(
+        "--sattc_soft_procrustes_assignment",
+        type=str,
+        choices=["sinkhorn", "softmax", "topk", "argmax"],
+        default=None,
+    )
+    parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
+    parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
+    parser.add_argument("--feature_dim", type=int, default=None)
     args = parser.parse_args()
 
     checkpoint_dir = os.path.abspath(args.checkpoint_dir)
@@ -274,11 +368,25 @@ def main():
     backbone_feature_dim = getattr(eval_args, "eeg_backbone_dim", 0) or image_feature_dim
 
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
-    img_projector = build_projector(eval_args.projector, image_feature_dim, eval_args.feature_dim).to(device)
+    projector_activation = getattr(eval_args, "projector_activation", "none")
+    projector_topk = getattr(eval_args, "projector_topk", 512)
+    img_projector = build_projector(
+        eval_args.projector,
+        image_feature_dim,
+        eval_args.feature_dim,
+        activation=projector_activation,
+        topk=projector_topk,
+    ).to(device)
     architecture = getattr(eval_args, "architecture", checkpoint.get("architecture", "baseline"))
     if architecture != "baseline":
         raise ValueError(f"Unsupported architecture in checkpoint: {architecture}")
-    eeg_projector = build_projector(eval_args.projector, backbone_feature_dim, eval_args.feature_dim).to(device)
+    eeg_projector = build_projector(
+        eval_args.projector,
+        backbone_feature_dim,
+        eval_args.feature_dim,
+        activation=projector_activation,
+        topk=projector_topk,
+    ).to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
     eeg_projector.load_state_dict(checkpoint["eeg_projector_state_dict"])
@@ -292,16 +400,6 @@ def main():
     eeg_projector.eval()
     img_projector.eval()
 
-    eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
-        eval_args,
-        modules,
-        model,
-        img_projector,
-        device,
-        [eval_args.test_subject_id],
-        average=test_average,
-    )
-
     sattc_params = {
         "saw_shrink": getattr(eval_args, "sattc_saw_shrink", 0.2),
         "saw_diag": _to_bool(getattr(eval_args, "sattc_saw_diag", False)),
@@ -314,7 +412,20 @@ def main():
         "soft_procrustes_normalize_inputs": _to_bool(getattr(eval_args, "sattc_soft_procrustes_normalize_inputs", False)),
         "soft_procrustes_steps": getattr(eval_args, "sattc_soft_procrustes_steps", 1),
         "soft_procrustes_power": getattr(eval_args, "sattc_soft_procrustes_power", 1.0),
+        "soft_procrustes_assignment": getattr(eval_args, "sattc_soft_procrustes_assignment", "sinkhorn"),
+        "soft_procrustes_assignment_topk": getattr(eval_args, "sattc_soft_procrustes_assignment_topk", 5),
+        "alignment_subspace_dim": getattr(eval_args, "sattc_alignment_subspace_dim", None),
     }
+
+    eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
+        eval_args,
+        modules,
+        model,
+        img_projector,
+        device,
+        [eval_args.test_subject_id],
+        average=test_average,
+    )
 
     if sattc_params["soft_procrustes_enabled"] or sattc_params["sinkhorn_enabled"]:
         eeg_feature_all = process_query_features(
@@ -323,6 +434,8 @@ def main():
             eval_mode=eval_args.eval_mode,
             sattc_params=sattc_params,
         )
+        eeg_feature_all = eeg_feature_all.astype(np.float32, copy=False)
+        image_feature_all = image_feature_all.astype(np.float32, copy=False)
         similarity_matrix, target_indices = _refine_scores(
             eeg_feature_all,
             image_feature_all,

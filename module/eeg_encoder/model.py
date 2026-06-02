@@ -107,13 +107,21 @@ class TSConv(nn.Module):
             nn.LayerNorm(feature_dim),
         )
     
-    def forward(self, x:Tensor):
+    def forward(self, x: Tensor, return_intermediate=False):
         x = x.unsqueeze(dim=1)
-        x = self.tsconv(x)
-        x = self.projection(x)
-        x = x.view(x.size(0), -1)
-        x = self.proj_eeg(x)
-        return x
+        x_temp = self.tsconv[:4](x)
+        x_spat = self.tsconv[4:](x_temp)
+        x_proj = self.projection(x_spat)
+        x_flat = x_proj.view(x_proj.size(0), -1)
+        x_out = self.proj_eeg(x_flat)
+        if return_intermediate:
+            return {
+                'temporal': x_temp.view(x_temp.size(0), -1),
+                'spatial': x_spat.view(x_spat.size(0), -1),
+                'backbone': x_flat,
+                'output': x_out
+            }
+        return x_out
 
 
 def _make_activation(name):
@@ -188,13 +196,22 @@ class TSConv_parameterizable(nn.Module):
             nn.LayerNorm(feature_dim),
         )
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, return_intermediate=False):
         x = x.unsqueeze(dim=1)
-        x = self.tsconv(x)
-        x = self.projection(x)
-        x = x.view(x.size(0), -1)
-        x = self.proj_eeg(x)
-        return x
+        # tsconv layers: 0:conv, 1:pool, 2:bn, 3:act, 4:conv, 5:bn, 6:act, 7:dropout
+        x_temp = self.tsconv[:4](x)
+        x_spat = self.tsconv[4:](x_temp)
+        x_proj = self.projection(x_spat)
+        x_flat = x_proj.view(x_proj.size(0), -1)
+        x_out = self.proj_eeg(x_flat)
+        if return_intermediate:
+            return {
+                'temporal': x_temp.view(x_temp.size(0), -1),
+                'spatial': x_spat.view(x_spat.size(0), -1),
+                'backbone': x_flat,
+                'output': x_out
+            }
+        return x_out
 
 
 class _PatchEmbedding(nn.Module):

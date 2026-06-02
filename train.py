@@ -79,11 +79,24 @@ def build_image_positive_mask(object_indices, image_indices):
 
 
 def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature, positive_mask, use_multi_positive):
+    eeg_confidence = None
+    if isinstance(eeg_feature, dict):
+        eeg_confidence = eeg_feature.get('confidence')
+        eeg_feature = eeg_feature['feature']
     if use_multi_positive:
-        loss_contrastive_ie = criterion.multi_positive_pair_loss(eeg_feature, image_feature, positive_mask)
+        loss_contrastive_ie = criterion.multi_positive_pair_loss(
+            eeg_feature,
+            image_feature,
+            positive_mask,
+            query_scale=eeg_confidence,
+        )
         if criterion.beta != 1.0:
             loss_contrastive_te = criterion.multi_positive_pair_loss(
-                eeg_feature, text_feature, positive_mask, key_is_text=True
+                eeg_feature,
+                text_feature,
+                positive_mask,
+                key_is_text=True,
+                query_scale=eeg_confidence,
             )
             loss_contrastive = criterion.beta * loss_contrastive_ie + (1 - criterion.beta) * loss_contrastive_te
         else:
@@ -95,7 +108,7 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
             return criterion.alpha * loss_contrastive + (1 - criterion.alpha) * loss_mse
         return loss_contrastive
 
-    return criterion(eeg_feature, image_feature, text_feature)
+    return criterion(eeg_feature, image_feature, text_feature, eeg_confidence=eeg_confidence)
 
 
 def compute_subject_mixup_regularization(mixed_eeg_feature, original_eeg_feature, partner_indices, mixed_mask):
@@ -146,23 +159,72 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
 
 
-def build_projector(projector_type, input_dim, output_dim):
+def build_projector(projector_type, input_dim, output_dim, activation='none', topk=0):
+    activation = (activation or 'none').lower()
+    if activation not in ('none', 'relu', 'relu_gelu', 'topk'):
+        raise ValueError(f"Unsupported projector activation: {activation}")
+    if activation == 'topk' and topk <= 0:
+        raise ValueError('--projector_topk must be > 0 when --projector_activation topk')
     if projector_type == 'direct':
         if input_dim != output_dim:
             raise ValueError(
                 f"ProjectorDirect requires input_dim == output_dim, got {input_dim} != {output_dim}."
             )
-        return ProjectorDirect()
+        return ProjectorDirect(activation=activation, topk=topk)
     if projector_type == 'linear':
-        return ProjectorLinear(input_dim, output_dim)
+        return ProjectorLinear(input_dim, output_dim, activation=activation, topk=topk)
     if projector_type == 'mlp':
-        return ProjectorMLP(input_dim, output_dim)
+        return ProjectorMLP(input_dim, output_dim, activation=activation, topk=topk)
     raise ValueError(f"Unsupported projector type: {projector_type}")
 
 
-def run_eeg_backbone(model, args, eeg_batch, subject_id_batch):
+_SPARSE_PROJECTOR_ACTIVATIONS = frozenset({'relu', 'relu_gelu', 'topk'})
+
+
+def _empty_alignment_sparsity_accumulator():
+    return {'l0_sum': 0.0, 'n_samples': 0, 'active_mask': None}
+
+
+def _update_alignment_sparsity_accumulator(acc, features):
+    """Update running L0 stats without storing all samples (O(dim) memory)."""
+    features = np.asarray(features, dtype=np.float32)
+    if features.size == 0:
+        return acc
+    if acc['active_mask'] is None:
+        acc['active_mask'] = np.zeros(features.shape[1], dtype=bool)
+    acc['l0_sum'] += float((features > 0).sum(axis=1).sum())
+    acc['n_samples'] += features.shape[0]
+    acc['active_mask'] |= (features > 0).any(axis=0)
+    return acc
+
+
+def _finalize_alignment_sparsity_accumulator(acc):
+    if acc['n_samples'] == 0 or acc['active_mask'] is None:
+        return {'l0_mean': 0.0, 'l0_frac': 0.0, 'active_feat_frac': 0.0}
+    dim = acc['active_mask'].shape[0]
+    l0_mean = acc['l0_sum'] / acc['n_samples']
+    active_dims = int(acc['active_mask'].sum())
+    return {
+        'l0_mean': l0_mean,
+        'l0_frac': l0_mean / dim,
+        'active_feat_frac': active_dims / dim,
+    }
+
+
+def compute_alignment_sparsity_stats(features):
+    """L0 stats on post-ReLU, pre-L2-norm alignment vectors."""
+    acc = _empty_alignment_sparsity_accumulator()
+    _update_alignment_sparsity_accumulator(acc, features)
+    return _finalize_alignment_sparsity_accumulator(acc)
+
+
+def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
+    elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable', 'TSConv30']:
+        if return_intermediate:
+            return model(eeg_batch, return_intermediate=True)
+        return model(eeg_batch)
     return model(eeg_batch)
 
 
@@ -414,6 +476,23 @@ class _GroupedSubset(Subset):
         return out
 
 
+class EEGConfidenceHead(nn.Module):
+    def __init__(self, input_dim, hidden_dim=0):
+        super().__init__()
+        if hidden_dim and hidden_dim > 0:
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, 1),
+            )
+        else:
+            self.net = nn.Linear(input_dim, 1)
+        self.softplus = nn.Softplus()
+
+    def forward(self, x):
+        return self.softplus(self.net(x)).squeeze(-1)
+
+
 def set_requires_grad(module, enabled):
     if module is None:
         return
@@ -455,6 +534,24 @@ if __name__ == '__main__':
     parser.add_argument('--img_l2norm', action='store_true')
     parser.add_argument('--text_l2norm', action='store_true')
     parser.add_argument('--eeg_l2norm', action='store_true')
+    parser.add_argument(
+        '--eeg_confidence_mode',
+        type=str,
+        choices=['none', 'detached_prenorm', 'learned'],
+        default='none',
+        help='optional EEG-side confidence scaling while keeping alignment geometry L2-normalized',
+    )
+    parser.add_argument(
+        '--eeg_confidence_hidden_dim',
+        default=0,
+        type=int,
+        help='hidden width for learned EEG confidence head (0 = linear head)',
+    )
+    parser.add_argument(
+        '--save_eeg_norm_metadata',
+        action='store_true',
+        help='export per-sample pre-normalization EEG alignment norms (training split, best checkpoint)',
+    )
     parser.add_argument('--multi_positive_loss', action='store_true', help='enable multi-positive EEG-image contrastive loss')
     parser.add_argument('--grouped_batch_sampler', action='store_true', help='sample multiple subjects per exact image in each batch')
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
@@ -480,6 +577,8 @@ if __name__ == '__main__':
     parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
     parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
     parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
+    parser.add_argument('--subject_probe_interval', type=int, default=1, help='train/eval subject probes every N epochs')
+    parser.add_argument('--subject_probe_layers', nargs='+', default=['backbone', 'align'], help='layers to probe: temporal, spatial, backbone, align')
     parser.add_argument('--subject_adapt_lambda', default=0.0, type=float, help='weight for unlabeled subject-adaptation loss fit on split A and supervised on split B')
     parser.add_argument('--subject_adapt_split_a_ratio', default=0.5, type=float, help='per-subject within-batch ratio reserved for unlabeled split A')
     parser.add_argument('--subject_adapt_min_samples_per_subject', default=8, type=int, help='minimum number of samples for a subject to contribute to subject adaptation')
@@ -527,6 +626,25 @@ if __name__ == '__main__':
     parser.add_argument('--eeg_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
     parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'mlp'], default='direct')
+    parser.add_argument(
+        '--projector_activation',
+        type=str,
+        choices=['none', 'relu', 'relu_gelu', 'topk'],
+        default='none',
+        help='terminal activation on alignment projectors (relu/relu_gelu/topk = Sparse CLIP-style sparse embeddings)',
+    )
+    parser.add_argument(
+        '--projector_topk',
+        type=int,
+        default=512,
+        help='keep top-k dims per sample when --projector_activation topk (paper small-scale ablation uses 512)',
+    )
+    parser.add_argument(
+        '--logit_scale_max',
+        type=float,
+        default=None,
+        help='optional cap on learnable contrastive temperature (Sparse CLIP sparsity knob)',
+    )
     parser.add_argument('--feature_dim', type=int, default=512, help='shared alignment-space dimension when projector is not direct')
     parser.add_argument('--eeg_backbone_dim', type=int, default=0, help='EEG encoder output dimension (0 means use image feature dimension)')
     parser.add_argument('--image_feature_dir', default='/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit', type=str, help='where your image feature are')
@@ -536,6 +654,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
     args = parser.parse_args()
+    if args.projector_activation == 'topk' and args.projector_topk <= 0:
+        raise ValueError('--projector_topk must be > 0 when --projector_activation topk')
     if args.subject_mixup_reg_lambda < 0:
         raise ValueError("--subject_mixup_reg_lambda must be non-negative.")
     if args.subject_mixup_reg_lambda > 0 and (args.subject_mixup_mode != 'raw_eeg' or args.mixup_type != 'pairwise'):
@@ -793,7 +913,8 @@ if __name__ == '__main__':
 
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir',
-        'projector', 'feature_dim', 'eeg_backbone_dim', 'time_window', 'selected_channels',
+        'projector', 'projector_activation', 'projector_topk', 'feature_dim', 'eeg_backbone_dim', 'time_window', 'selected_channels',
+        'eeg_confidence_mode', 'eeg_confidence_hidden_dim',
         'tsconv_temporal_filters', 'tsconv_temporal_kernel', 'tsconv_pool_kernel', 'tsconv_pool_stride',
         'tsconv_spatial_filters', 'tsconv_projection_filters', 'tsconv_activation', 'tsconv_dropout',
         'tsconv_head_dropout', 'tsconv_no_batch_norm', 'tsconv_no_conv_bias',
@@ -812,9 +933,20 @@ if __name__ == '__main__':
     log(f'EEG Encoder trainable parameters: {num_params / 1e6:.2f}M')
     log(str(model))
 
-    eeg_projector = build_projector(args.projector, backbone_feature_dim, args.feature_dim).to(device)
-    img_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
-    text_projector = build_projector(args.projector, image_feature_dim, args.feature_dim).to(device)
+    projector_activation = args.projector_activation
+    projector_topk = args.projector_topk
+    eeg_projector = build_projector(
+        args.projector, backbone_feature_dim, args.feature_dim,
+        activation=projector_activation, topk=projector_topk,
+    ).to(device)
+    img_projector = build_projector(
+        args.projector, image_feature_dim, args.feature_dim,
+        activation=projector_activation, topk=projector_topk,
+    ).to(device)
+    text_projector = build_projector(
+        args.projector, image_feature_dim, args.feature_dim,
+        activation=projector_activation, topk=projector_topk,
+    ).to(device)
     projector_params = (
         sum(p.numel() for p in eeg_projector.parameters() if p.requires_grad)
         + sum(p.numel() for p in img_projector.parameters() if p.requires_grad)
@@ -828,10 +960,23 @@ if __name__ == '__main__':
     subj_probe_heads = None
     subj_probe_optimizers = None
     if args.subject_probe_holdout:
-        subj_probe_heads = nn.ModuleDict({
-            'eeg_backbone': nn.Linear(backbone_feature_dim, num_probe_classes).to(device),
-            'eeg_align': nn.Linear(align_dim, num_probe_classes).to(device),
-        })
+        subj_probe_heads = nn.ModuleDict()
+        # Determine probe input dimensions
+        with torch.no_grad():
+            dummy_eeg = torch.zeros(1, channels_num, eeg_sample_points).to(device)
+            dummy_sid = torch.tensor([args.train_subject_ids[0]]).to(device)
+            bb_out = run_eeg_backbone(model, args, dummy_eeg, dummy_sid, return_intermediate=True)
+            
+            for layer in args.subject_probe_layers:
+                if layer == 'align':
+                    in_dim = align_dim
+                elif layer in bb_out:
+                    in_dim = bb_out[layer].shape[-1]
+                else:
+                    log(f"Warning: layer '{layer}' not found in backbone output. Skipping probe.")
+                    continue
+                subj_probe_heads[f'eeg_{layer}'] = nn.Linear(in_dim, num_probe_classes).to(device)
+        
         subj_probe_optimizers = {name: optim.Adam(head.parameters(), lr=1e-3) for name, head in subj_probe_heads.items()}
 
     criterion = ContrastiveLoss(
@@ -843,8 +988,16 @@ if __name__ == '__main__':
         args.text_l2norm,
         args.t_learnable,
         args.softplus,
+        logit_scale_max=args.logit_scale_max,
     ).to(device)
     log(str(criterion))
+    eeg_confidence_head = None
+    if args.eeg_confidence_mode == 'learned':
+        eeg_confidence_head = EEGConfidenceHead(
+            align_dim,
+            hidden_dim=args.eeg_confidence_hidden_dim,
+        ).to(device)
+        log(f'EEG confidence head parameters: {sum(p.numel() for p in eeg_confidence_head.parameters() if p.requires_grad) / 1e6:.2f}M')
 
     sattc_params = {
         'saw_shrink': args.sattc_saw_shrink,
@@ -863,6 +1016,8 @@ if __name__ == '__main__':
         'img_projector': img_projector,
         'text_projector': text_projector,
     }
+    if eeg_confidence_head is not None:
+        module_registry['eeg_confidence_head'] = eeg_confidence_head
     optimizer = optim.AdamW(
         collect_trainable_parameters(list(module_registry.values()))
         + ([p for p in criterion.parameters() if p.requires_grad] if args.t_learnable else []),
@@ -872,7 +1027,15 @@ if __name__ == '__main__':
     )
 
     def forward_architecture(eeg_backbone_batch):
-        return {'eeg_feature': eeg_projector(eeg_backbone_batch)}
+        eeg_feature = eeg_projector(eeg_backbone_batch)
+        out = {'eeg_feature': eeg_feature}
+        if args.eeg_confidence_mode == 'detached_prenorm':
+            out['eeg_confidence'] = eeg_feature.norm(dim=1).detach()
+        elif args.eeg_confidence_mode == 'learned':
+            out['eeg_confidence'] = eeg_confidence_head(eeg_feature.detach())
+        else:
+            out['eeg_confidence'] = None
+        return out
 
     def build_checkpoint(epoch_idx, loss_value, optimizer_obj):
         checkpoint = {
@@ -886,6 +1049,8 @@ if __name__ == '__main__':
             'optimizer_state_dict': optimizer_obj.state_dict(),
             'loss': loss_value,
         }
+        if eeg_confidence_head is not None:
+            checkpoint['eeg_confidence_head_state_dict'] = eeg_confidence_head.state_dict()
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
         return checkpoint
@@ -911,9 +1076,54 @@ if __name__ == '__main__':
             )
         return eeg_feature_batch, image_feature_proj
 
+    def export_eeg_norm_metadata(split_dataset, split_name, output_path_base):
+        rows = []
+        export_loader = DataLoader(
+            split_dataset,
+            batch_size=200,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
+        model.eval()
+        eeg_projector.eval()
+        with torch.no_grad():
+            for batch in export_loader:
+                eeg_batch = batch[0].to(device)
+                subject_id_batch = batch[3].to(device)
+                object_idx_batch = batch[4]
+                image_idx_batch = batch[5]
+                repetition_idx_batch = batch[6]
+
+                eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
+                eeg_feature_batch = eeg_projector(eeg_backbone_batch)
+                eeg_norm_batch = eeg_feature_batch.norm(dim=1).cpu().numpy()
+
+                for i in range(len(eeg_norm_batch)):
+                    rows.append({
+                        'split': split_name,
+                        'subject_id': int(subject_id_batch[i].item()),
+                        'object_idx': int(object_idx_batch[i]),
+                        'image_idx': int(image_idx_batch[i]),
+                        'repetition_idx': int(repetition_idx_batch[i]),
+                        'eeg_prenorm': float(eeg_norm_batch[i]),
+                    })
+
+        df = pd.DataFrame(rows)
+        parquet_path = f"{output_path_base}.parquet"
+        csv_path = f"{output_path_base}.csv"
+        df.to_csv(csv_path, index=False)
+        try:
+            df.to_parquet(parquet_path, index=False)
+            log(f"Saved EEG norm metadata: {csv_path} and {parquet_path}")
+            return parquet_path
+        except Exception as exc:
+            log(f"Saved EEG norm metadata CSV: {csv_path} (parquet skipped: {exc})")
+            return csv_path
+
     def evaluate_split(split_loader, split_name):
         if split_loader is None:
-            return float('nan'), float('nan'), float('nan')
+            return float('nan'), float('nan'), float('nan'), {}
 
         total_loss_local = 0.0
         eeg_feature_list = []
@@ -934,6 +1144,7 @@ if __name__ == '__main__':
                 eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
                 arch_out = forward_architecture(eeg_backbone_batch)
                 eeg_feature_batch = arch_out['eeg_feature']
+                eeg_confidence_batch = arch_out['eeg_confidence']
                 image_feature_proj = img_projector(image_feature_batch)
                 text_feature_proj = text_projector(text_feature_batch)
                 eeg_feature_for_loss, image_feature_for_loss = maybe_apply_train_saw(
@@ -945,7 +1156,7 @@ if __name__ == '__main__':
                 positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
                 loss = compute_cross_modal_loss(
                     criterion,
-                    eeg_feature_for_loss,
+                    {'feature': eeg_feature_for_loss, 'confidence': eeg_confidence_batch},
                     image_feature_for_loss,
                     text_feature_proj,
                     positive_mask,
@@ -973,10 +1184,65 @@ if __name__ == '__main__':
         )
         top5_acc_local = top5_count / total * 100
         top1_acc_local = top1_count / total * 100
+        sparsity = {}
+        if args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS:
+            eeg_sp = compute_alignment_sparsity_stats(eeg_feature_all)
+            img_sp = compute_alignment_sparsity_stats(image_feature_all)
+            sparsity = {
+                'eeg_l0_mean': eeg_sp['l0_mean'],
+                'eeg_l0_frac': eeg_sp['l0_frac'],
+                'eeg_active_feat_frac': eeg_sp['active_feat_frac'],
+                'img_l0_mean': img_sp['l0_mean'],
+                'img_l0_frac': img_sp['l0_frac'],
+                'img_active_feat_frac': img_sp['active_feat_frac'],
+            }
+            log(
+                f"{split_name} sparsity: eeg_l0_frac={eeg_sp['l0_frac']:.4f} "
+                f"eeg_active_feat_frac={eeg_sp['active_feat_frac']:.4f} "
+                f"img_l0_frac={img_sp['l0_frac']:.4f}"
+            )
         log(
             f"{split_name}: mode={args.eval_mode} top5 acc {top5_acc_local:.2f}%\ttop1 acc {top1_acc_local:.2f}%\tLoss: {avg_loss_local:.4f}"
         )
-        return avg_loss_local, top1_acc_local, top5_acc_local
+        return avg_loss_local, top1_acc_local, top5_acc_local, sparsity
+
+    def collect_split_sparsity(split_loader, split_name):
+        """Post-ReLU alignment sparsity only (no loss / retrieval; safe for full train set)."""
+        if split_loader is None or args.projector_activation not in _SPARSE_PROJECTOR_ACTIVATIONS:
+            return {}
+
+        eeg_acc = _empty_alignment_sparsity_accumulator()
+        img_acc = _empty_alignment_sparsity_accumulator()
+        with torch.no_grad():
+            for batch in split_loader:
+                eeg_batch = batch[0].to(device)
+                image_feature_batch = batch[1].to(device)
+                subject_id_batch = batch[3].to(device)
+
+                eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
+                arch_out = forward_architecture(eeg_backbone_batch)
+                _update_alignment_sparsity_accumulator(eeg_acc, arch_out['eeg_feature'].cpu().numpy())
+                _update_alignment_sparsity_accumulator(
+                    img_acc, img_projector(image_feature_batch).cpu().numpy()
+                )
+
+        eeg_sp = _finalize_alignment_sparsity_accumulator(eeg_acc)
+        img_sp = _finalize_alignment_sparsity_accumulator(img_acc)
+        sparsity = {
+            'eeg_l0_mean': eeg_sp['l0_mean'],
+            'eeg_l0_frac': eeg_sp['l0_frac'],
+            'eeg_active_feat_frac': eeg_sp['active_feat_frac'],
+            'img_l0_mean': img_sp['l0_mean'],
+            'img_l0_frac': img_sp['l0_frac'],
+            'img_active_feat_frac': img_sp['active_feat_frac'],
+        }
+        log(
+            f"{split_name} sparsity: eeg_l0_frac={eeg_sp['l0_frac']:.4f} "
+            f"eeg_active_feat_frac={eeg_sp['active_feat_frac']:.4f} "
+            f"img_l0_frac={img_sp['l0_frac']:.4f} "
+            f"img_active_feat_frac={img_sp['active_feat_frac']:.4f}"
+        )
+        return sparsity
 
     def encode_probe_labels(subject_ids: torch.Tensor) -> torch.Tensor:
         ids = [int(x) for x in subject_ids.detach().cpu().tolist()]
@@ -994,6 +1260,8 @@ if __name__ == '__main__':
     )
     top1_acc = 0.0
     top5_acc = 0.0
+    best_test_sparsity = {}
+    last_epoch_train_sparsity = {}
 
     for epoch in range(1, total_epochs + 1):
         model.train()
@@ -1043,6 +1311,7 @@ if __name__ == '__main__':
             loss = eeg_batch.new_tensor(0.0)
 
             eeg_feature_batch = arch_out['eeg_feature']
+            eeg_confidence_batch = arch_out['eeg_confidence']
             if args.subject_mixup_reg_lambda > 0:
                 reg_feature_batch = eeg_backbone_batch if args.subject_mixup_reg_on_backbone else eeg_feature_batch
                 if args.single_emb_stop_grad:
@@ -1072,7 +1341,7 @@ if __name__ == '__main__':
             positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
             cl_loss = compute_cross_modal_loss(
                 criterion,
-                eeg_feature_for_loss,
+                {'feature': eeg_feature_for_loss, 'confidence': eeg_confidence_batch},
                 image_feature_for_loss,
                 text_feature_proj,
                 positive_mask,
@@ -1121,14 +1390,38 @@ if __name__ == '__main__':
         img_projector.eval()
         text_projector.eval()
 
-        avg_test_loss, top1_acc, top5_acc = evaluate_split(test_dataloader, "test")
+        avg_test_loss, top1_acc, top5_acc, test_sparsity = evaluate_split(test_dataloader, "test")
         writer.add_scalar('Loss/test', avg_test_loss, epoch)
         writer.add_scalar('Acc/top1_test', top1_acc, epoch)
         writer.add_scalar('Acc/top5_test', top5_acc, epoch)
+        if test_sparsity:
+            writer.add_scalar('Sparsity/eeg_l0_frac_test', test_sparsity['eeg_l0_frac'], epoch)
+            writer.add_scalar('Sparsity/img_l0_frac_test', test_sparsity['img_l0_frac'], epoch)
+
+        if epoch == total_epochs and args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS:
+            train_sparsity_loader = DataLoader(
+                train_dataset,
+                batch_size=200,
+                shuffle=False,
+                num_workers=args.num_workers,
+                pin_memory=pin_memory,
+            )
+            last_epoch_train_sparsity = collect_split_sparsity(train_sparsity_loader, 'train')
+            if last_epoch_train_sparsity:
+                writer.add_scalar(
+                    'Sparsity/eeg_active_feat_frac_train_last',
+                    last_epoch_train_sparsity['eeg_active_feat_frac'],
+                    epoch,
+                )
+                writer.add_scalar(
+                    'Sparsity/img_active_feat_frac_train_last',
+                    last_epoch_train_sparsity['img_active_feat_frac'],
+                    epoch,
+                )
 
         val_loss, val_top1, val_top5 = float('nan'), float('nan'), float('nan')
         if val_dataloader is not None:
-            val_loss, val_top1, val_top5 = evaluate_split(val_dataloader, "val")
+            val_loss, val_top1, val_top5, _ = evaluate_split(val_dataloader, "val")
             writer.add_scalar('Loss/val', val_loss, epoch)
             writer.add_scalar('Acc/top1_val', val_top1, epoch)
             writer.add_scalar('Acc/top5_val', val_top5, epoch)
@@ -1137,6 +1430,7 @@ if __name__ == '__main__':
         clip_probe_acc_pct = float('nan')
         if (
             args.subject_probe_holdout
+            and epoch % args.subject_probe_interval == 0
             and subj_probe_heads is not None
             and subj_probe_train_dataloader is not None
             and subj_probe_val_dataloader is not None
@@ -1151,18 +1445,25 @@ if __name__ == '__main__':
                 eeg_p = probe_batch[0].to(device)
                 sid_p = probe_batch[3].to(device)
                 with torch.no_grad():
-                    bb = run_eeg_backbone(model, args, eeg_p, sid_p)
-                    al = eeg_projector(bb)
+                    bb_res = run_eeg_backbone(model, args, eeg_p, sid_p, return_intermediate=True)
+                    if not isinstance(bb_res, dict):
+                        bb_res = {'backbone': bb_res}
+                    # Some encoders expose a raw conv flatten as `backbone` and the
+                    # projector input as `output`. Use the latter when available.
+                    bb_res['align'] = eeg_projector(bb_res.get('output', bb_res['backbone']))
+                
                 y = encode_probe_labels(sid_p)
                 for name, head in subj_probe_heads.items():
                     subj_probe_optimizers[name].zero_grad()
-                    feats = bb if name == 'eeg_backbone' else al
+                    layer_key = name.replace('eeg_', '')
+                    feats = bb_res[layer_key]
                     pl = head(feats.detach())
                     pls = F.cross_entropy(pl, y)
                     pls.backward()
                     subj_probe_optimizers[name].step()
                     probe_train_loss_sum[name] += float(pls.item())
                 probe_train_batches += 1
+            
             for h in subj_probe_heads.values():
                 h.eval()
             probe_val_acc_sum = {k: 0.0 for k in subj_probe_heads}
@@ -1171,11 +1472,15 @@ if __name__ == '__main__':
                 for probe_batch in subj_probe_val_dataloader:
                     eeg_p = probe_batch[0].to(device)
                     sid_p = probe_batch[3].to(device)
-                    bb = run_eeg_backbone(model, args, eeg_p, sid_p)
-                    al = eeg_projector(bb)
+                    bb_res = run_eeg_backbone(model, args, eeg_p, sid_p, return_intermediate=True)
+                    if not isinstance(bb_res, dict):
+                        bb_res = {'backbone': bb_res}
+                    bb_res['align'] = eeg_projector(bb_res.get('output', bb_res['backbone']))
+                    
                     y = encode_probe_labels(sid_p)
                     for name, head in subj_probe_heads.items():
-                        feats = bb if name == 'eeg_backbone' else al
+                        layer_key = name.replace('eeg_', '')
+                        feats = bb_res[layer_key]
                         pred = torch.argmax(head(feats), dim=1)
                         probe_val_acc_sum[name] += float((pred == y).float().mean().item())
                     probe_val_batches += 1
@@ -1191,10 +1496,15 @@ if __name__ == '__main__':
                 bb_probe_acc_pct = (probe_val_acc_sum['eeg_backbone'] / probe_val_batches) * 100.0
                 clip_probe_acc_pct = (probe_val_acc_sum['eeg_align'] / probe_val_batches) * 100.0
 
-        if probe_history is not None:
+        if probe_history is not None and epoch % args.subject_probe_interval == 0:
             probe_history['epoch'].append(epoch)
-            probe_history['eeg_backbone_val_acc'].append(bb_probe_acc_pct)
-            probe_history['eeg_align_val_acc'].append(clip_probe_acc_pct)
+            # Log all probe accuracies to history
+            for name in subj_probe_heads:
+                acc = (probe_val_acc_sum[name] / probe_val_batches) * 100.0
+                key = f'{name}_val_acc'
+                if key not in probe_history:
+                    probe_history[key] = []
+                probe_history[key].append(acc)
 
         history['epoch'].append(epoch)
         history['train_loss'].append(avg_loss)
@@ -1218,6 +1528,7 @@ if __name__ == '__main__':
             best_top5_acc = top5_acc
             best_top1_acc = top1_acc
             best_test_epoch = epoch
+            best_test_sparsity = dict(test_sparsity)
             if args.save_weights:
                 torch.save(build_checkpoint(epoch, selected_loss, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
 
@@ -1230,15 +1541,53 @@ if __name__ == '__main__':
         log(f"Saved probe metrics CSV: {probe_history_path}")
         log(f"Saved probe metrics plot: {probe_plot_path}")
 
+    if args.save_eeg_norm_metadata and args.save_weights:
+        best_ckpt_path = os.path.join(writer.log_dir, 'checkpoint_test_best.pth')
+        if os.path.exists(best_ckpt_path):
+            best_ckpt = torch.load(best_ckpt_path, map_location=device)
+            model.load_state_dict(best_ckpt['model_state_dict'])
+            eeg_projector.load_state_dict(best_ckpt['eeg_projector_state_dict'])
+            img_projector.load_state_dict(best_ckpt['img_projector_state_dict'])
+            text_projector.load_state_dict(best_ckpt['text_projector_state_dict'])
+            if eeg_confidence_head is not None and 'eeg_confidence_head_state_dict' in best_ckpt:
+                eeg_confidence_head.load_state_dict(best_ckpt['eeg_confidence_head_state_dict'])
+            export_eeg_norm_metadata(
+                train_dataset,
+                'train',
+                os.path.join(writer.log_dir, 'eeg_norm_metadata'),
+            )
+        else:
+            log("Skipping EEG norm metadata export: checkpoint_test_best.pth not found.")
+
     result_dict = {
         'architecture': 'baseline',
         'eval_mode': args.eval_mode,
-        'top1 acc': f'{top1_acc:.2f}',
-        'top5 acc': f'{top5_acc:.2f}',
-        'best top1 acc': f'{best_top1_acc:.2f}',
-        'best top5 acc': f'{best_top5_acc:.2f}',
-        'best test loss': f'{best_test_loss:.4f}',
+        'eeg_confidence_mode': args.eeg_confidence_mode,
+        'top1 acc': f'{top1_acc:.3f}',
+        'top5 acc': f'{top5_acc:.3f}',
+        'best top1 acc': f'{best_top1_acc:.3f}',
+        'best top5 acc': f'{best_top5_acc:.3f}',
+        'best test loss': f'{best_test_loss:.3f}',
         'best epoch': best_test_epoch,
     }
+    if args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS and best_test_sparsity:
+        result_dict.update({
+            'eeg_l0_mean': f"{best_test_sparsity['eeg_l0_mean']:.3f}",
+            'eeg_l0_frac': f"{best_test_sparsity['eeg_l0_frac']:.3f}",
+            'eeg_active_feat_frac': f"{best_test_sparsity['eeg_active_feat_frac']:.3f}",
+            'img_l0_mean': f"{best_test_sparsity['img_l0_mean']:.3f}",
+            'img_l0_frac': f"{best_test_sparsity['img_l0_frac']:.3f}",
+            'img_active_feat_frac': f"{best_test_sparsity['img_active_feat_frac']:.3f}",
+        })
+    if args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS and last_epoch_train_sparsity:
+        result_dict.update({
+            'eeg_active_feat_frac_train_last': f"{last_epoch_train_sparsity['eeg_active_feat_frac']:.3f}",
+            'img_active_feat_frac_train_last': f"{last_epoch_train_sparsity['img_active_feat_frac']:.3f}",
+            'eeg_l0_frac_train_last': f"{last_epoch_train_sparsity['eeg_l0_frac']:.3f}",
+            'img_l0_frac_train_last': f"{last_epoch_train_sparsity['img_l0_frac']:.3f}",
+        })
+    if args.t_learnable:
+        with torch.no_grad():
+            result_dict['learned_logit_scale'] = f"{criterion._get_logit_scale().item():.3f}"
     pd.DataFrame(result_dict, index=[0]).to_csv(os.path.join(log_dir, 'result.csv'), index=False)
     log(f'best test loss: {best_test_loss:.4f} top5 acc: {best_top5_acc:.2f} top1 acc: {best_top1_acc:.2f} at epoch {best_test_epoch}')

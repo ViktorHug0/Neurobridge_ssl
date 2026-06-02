@@ -1,3 +1,4 @@
+import glob
 import os
 import json
 import random
@@ -26,6 +27,11 @@ def _resolve_eeg_file(subject_dir: str, train: bool) -> str:
         p = os.path.join(subject_dir, name)
         if os.path.isfile(p):
             return p
+
+    if not train:
+        matches = sorted(glob.glob(os.path.join(subject_dir, "test*.npy")))
+        if matches:
+            return matches[0]
 
     raise FileNotFoundError(
         f"Could not find {'train' if train else 'test'} EEG file in '{subject_dir}'. "

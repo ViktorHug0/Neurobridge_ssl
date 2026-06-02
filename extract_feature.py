@@ -42,11 +42,61 @@ def extract_clip(image:str, processor, model, device):
 def extract_open_clip(image, processor, model, augmentation, device):
     if augmentation is not None:
         image = augmentation(image)
-    image = processor(image).unsqueeze(0).to(device)  # shape: (1, 3, H, W)
+    
+    # Use fp16 on CUDA to match the model's precision
+    dtype = torch.float16 if device.type == 'cuda' else torch.float32
+    image = processor(image).unsqueeze(0).to(device=device, dtype=dtype)
+
     with torch.no_grad():
         image_features = model.encode_image(image)
     feature = image_features.detach().cpu().numpy()  # shape: (1, D)
     return feature
+
+
+def extract_open_clip_intermediate(image, processor, model, augmentation, device, layer_idx: int, pool_type: str):
+    if augmentation is not None:
+        image = augmentation(image)
+    
+    # Use fp16 on CUDA to match the model's precision
+    dtype = torch.float16 if device.type == 'cuda' else torch.float32
+    image = processor(image).unsqueeze(0).to(device=device, dtype=dtype)
+
+    visual = model.visual
+    if hasattr(visual, "transformer") and hasattr(visual.transformer, "resblocks"):
+        blocks = visual.transformer.resblocks
+    elif hasattr(visual, "trunk") and hasattr(visual.trunk, "blocks"):
+        blocks = visual.trunk.blocks
+    else:
+        raise ValueError("Selected open_clip backbone does not expose intermediate vision blocks.")
+
+    if layer_idx < 0 or layer_idx >= len(blocks):
+        raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {len(blocks)-1}]")
+
+    layer_output = {}
+
+    def hook_fn(module, _input, output):
+        layer_output["hidden"] = output[0] if isinstance(output, tuple) else output
+
+    hook = blocks[layer_idx].register_forward_hook(hook_fn)
+    try:
+        with torch.no_grad():
+            # Use visual directly instead of encode_image to avoid device mismatch with text tower
+            _ = model.visual(image)
+    finally:
+        hook.remove()
+
+    if "hidden" not in layer_output:
+        raise RuntimeError("Forward hook did not capture intermediate output.")
+
+    hidden = layer_output["hidden"]
+    if pool_type == "cls":
+        pooled = hidden[:, 0, :]
+    elif pool_type == "mean":
+        pooled = hidden[:, 1:, :].mean(dim=1) if hidden.shape[1] > 1 else hidden.mean(dim=1)
+    else:
+        raise ValueError(f"Unknown pool_type: {pool_type}")
+
+    return pooled.detach().cpu().numpy()
 
 
 def extract_internvit_intermediate(
@@ -114,6 +164,44 @@ def extract_dinov2(image:str, processor, model, device):
     return feature
 
 
+def extract_dinov2_intermediate(
+    image,
+    processor,
+    model,
+    augmentation,
+    device,
+    layer_idx: int,
+    pool_type: str,
+):
+    if augmentation is not None:
+        image = augmentation(image)
+
+    inputs = processor(images=image, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        outputs = model(**inputs, output_hidden_states=True)
+
+    hidden_states = outputs.hidden_states
+    if hidden_states is None:
+        raise RuntimeError("DINOv2 model did not return hidden states.")
+
+    num_layers = len(hidden_states) - 1
+    if layer_idx < 0 or layer_idx >= num_layers:
+        raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {num_layers-1}]")
+
+    # hidden_states[0] is the patch embedding output; block outputs start at index 1.
+    hidden = hidden_states[layer_idx + 1]
+
+    if pool_type == "cls":
+        pooled = hidden[:, 0, :]
+    elif pool_type == "mean":
+        pooled = hidden[:, 1:, :].mean(dim=1) if hidden.shape[1] > 1 else hidden.mean(dim=1)
+    else:
+        raise ValueError(f"Unknown pool_type: {pool_type}")
+
+    return pooled.detach().cpu().numpy()
+
+
 def extract_image_features(
     image_dir,
     num_images_per_object,
@@ -142,9 +230,31 @@ def extract_image_features(
         if model_type == 'clip':
             feature = extract_clip(image, processor, model, device)
         elif model_type == 'open_clip':
-            feature = extract_open_clip(image, processor, model, augmentation, device)
+            if feature_source == "intermediate":
+                feature = extract_open_clip_intermediate(
+                    image,
+                    processor,
+                    model,
+                    augmentation,
+                    device,
+                    layer_idx=intermediate_layer,
+                    pool_type=intermediate_pool,
+                )
+            else:
+                feature = extract_open_clip(image, processor, model, augmentation, device)
         elif model_type == 'dinov2':
-            feature = extract_dinov2(image, processor, model, device)
+            if feature_source == "intermediate":
+                feature = extract_dinov2_intermediate(
+                    image,
+                    processor,
+                    model,
+                    augmentation,
+                    device,
+                    layer_idx=intermediate_layer,
+                    pool_type=intermediate_pool,
+                )
+            else:
+                feature = extract_dinov2(image, processor, model, device)
         elif model_type == 'internvit':
             if feature_source == "intermediate":
                 feature = extract_internvit_intermediate(
@@ -215,7 +325,15 @@ if __name__ == "__main__":
     parser.add_argument("--aug_type", type=str, default="None", choices=["GaussianBlur", "GaussianNoise", "Mosaic", "RandomCrop", "LowResolution", "ColorJitter", "GrayScale", "None"])
     parser.add_argument("--num_images_per_object", type=int, default=10)
     parser.add_argument("--feature_source", type=str, choices=["final", "intermediate"], default="final")
-    parser.add_argument("--intermediate_layer", type=int, default=11, help="0-indexed block index for InternViT intermediate extraction")
+    parser.add_argument(
+        "--intermediate_layer",
+        type=int,
+        default=11,
+        help=(
+            "0-indexed ViT transformer block output (after patch embed). "
+            "E.g. open_clip ViT-B/16 has 12 blocks, valid indices are 0–11."
+        ),
+    )
     parser.add_argument("--intermediate_pool", type=str, choices=["cls", "mean"], default="cls")
     parser.add_argument("--quantization", type=str, choices=["none", "8bit", "4bit"], default="none", help="Quantization for InternViT models")
     args = parser.parse_args()
@@ -231,18 +349,34 @@ if __name__ == "__main__":
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
 
-    if args.feature_source == "intermediate" and args.model_type != "internvit":
-        raise ValueError("--feature_source intermediate is only supported for --model_type internvit")
+    if args.feature_source == "intermediate" and args.model_type not in {"dinov2", "internvit", "open_clip"}:
+        raise ValueError("--feature_source intermediate is only supported for --model_type dinov2, internvit, or open_clip")
 
     if args.model_type == "clip":
         model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
         processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
     elif args.model_type == "open_clip":
-        model, _, processor = open_clip.create_model_and_transforms(args.backbone, pretrained=args.pretrained, precision='fp32', device=device)
+        # Load on CPU first to allow pruning text tower before GPU move
+        model, _, processor = open_clip.create_model_and_transforms(
+            args.backbone, 
+            pretrained=args.pretrained, 
+            precision='fp16', 
+            device='cpu'
+        )
+        if device.type == 'cuda':
+            # Move ONLY the vision tower to GPU (saves ~2-3GB for bigG)
+            model.visual = model.visual.to(device)
+            # Clear CPU memory and CUDA fragmentation
+            import gc
+            torch.cuda.empty_cache()
+            gc.collect()
+        else:
+            model = model.to(device)
     elif args.model_type == "dinov2":
-        # small base large giant
-        processor = AutoImageProcessor.from_pretrained("facebook/dinov2-giant")
-        model = AutoModel.from_pretrained("facebook/dinov2-giant").to(device)
+        # small, base, large, giant
+        dinov2_backbone = args.backbone if args.backbone != "RN50" else "facebook/dinov2-giant"
+        processor = AutoImageProcessor.from_pretrained(dinov2_backbone)
+        model = AutoModel.from_pretrained(dinov2_backbone).to(device)
     elif args.model_type == "internvit":
         load_kwargs = {
             "trust_remote_code": True,
