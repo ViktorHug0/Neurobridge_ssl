@@ -13,7 +13,7 @@ import torch
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import DataLoader
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
