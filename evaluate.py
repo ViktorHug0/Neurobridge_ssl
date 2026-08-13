@@ -211,6 +211,10 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_alignment_subspace_dim"] = cli_args.sattc_alignment_subspace_dim
     if cli_args.feature_dim is not None:
         merged["feature_dim"] = cli_args.feature_dim
+    # Some newer training entrypoints accept comma-separated dimensions and
+    # therefore serialize a single dimension as a JSON string. Standalone
+    # evaluation always reconstructs exactly one inference projector.
+    merged["feature_dim"] = int(str(merged["feature_dim"]).split(",")[0])
     if cli_args.device is not None:
         merged["device"] = cli_args.device
     if cli_args.num_workers is not None:
@@ -320,6 +324,7 @@ def main():
     )
     parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
+    parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded features + labels here (for caption_eval.py)")
     parser.add_argument("--feature_dim", type=int, default=None)
     args = parser.parse_args()
 
@@ -426,6 +431,11 @@ def main():
         [eval_args.test_subject_id],
         average=test_average,
     )
+
+    if args.dump_npz:
+        os.makedirs(os.path.dirname(os.path.abspath(args.dump_npz)), exist_ok=True)
+        np.savez(args.dump_npz, eeg=eeg_feature_all, image=image_feature_all,
+                 subject=subject_all, object=object_all, image_idx=image_all)
 
     if sattc_params["soft_procrustes_enabled"] or sattc_params["sinkhorn_enabled"]:
         eeg_feature_all = process_query_features(

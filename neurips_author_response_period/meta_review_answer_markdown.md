@@ -1,0 +1,19 @@
+We thank the Area Chair for their accurate summary and suggestions. We believe we have responded to every inquiry raised by the reviewers, and we are grateful that many of them led to additional experiments that make the paper much more complete and convincing.
+
+**Realistic test scenarios.** These concerns were arguably the most decisive, so we ran a new experiment imposing streaming arrival, non-one-to-one matching and partial candidate sets, all at once. Queries arrive one at a time in random order, with unknown stimulus and possible duplicates, across four query lengths and five candidate gallery sizes. Adaptation overtakes the unadapted baseline within 1 to 11 minutes of recording and brings significant improvements in all twenty settings, demonstrating that the method does not depend on the closed-set structure assumption. Additionally, we show that a progressive schedule damping the learned rotation in the early stages reduces the time needed for the calibration to become useful in most of the tested settings.
+
+**Evidence on geometric misalignment.** We acknowledge that the original claim was not sufficiently supported. Our evidence establishes only that geometric alignment is an effective correction, not that misalignment is the primary cause of the gap. We will remove the causal framing from the Related Work paragraph, together with the claims about neurophysiological variability on which that explanation rested.
+
+**Hyperparameter selection.** All TTA hyperparameters are selected by leave-one-subject-out cross-validation, so that no configuration sees the subject it is reported on. The revision will state the protocol more clearly in the main text.
+
+**Lower relative gains on AllJoined and THINGS-MEG.** We suggest that the variability tracks the quality of the base encoder capacity, and should not be taken as a proof that SAGE fails to generalize to other datasets or modalities. We show empirically that weakening the encoder input on THINGS-EEG-2 by rebuilding the test queries from fewer repetitions reproduces the effect within a single dataset.
+
+**The aggregation operator.** Its definition was buried and unclear in the original manuscript. We have clarified it with the reviewers, and will move the instantiation next to the definition. In our discussion with Reviewer vxam, we also provide experiments measuring the sensitivity of the method to various design choices, and comparing it against control augmentations, to empirically verify that the gain comes specifically from cross-subject mixing of identical stimuli, as we state in the paper.
+
+**Failure-mode analysis.** As requested by Reviewer 6S7i, we further conducted a failure-mode analysis covering test sample size, candidate-set size and base encoder quality.
+
+**Generalization to fMRI.** At the request of Reviewer vxam, we also extended the evaluation of our test-time adaptation framework to the fMRI modality. Applying SAGE-TTA post hoc to the released MindEye2 checkpoints on the NSD dataset, we report a relative improvement of +17.5% for image retrieval and +61.4% for brain retrieval in the 300-way task, and +24.0% / +91.2% for the 1000-way task, demonstrating that the proposed test-time adaptation mechanism transfers to the fMRI modality.
+
+**Zero-shot generalization versus transductive calibration.** We agree that the two are blurred in places, and we will separate them more clearly throughout the revision: the 35.9 figure is a general cross-subject result requiring no test-set access, while every result reported from the SAGE-TTA framework, including the 77% figure reported in the abstract, applies only to the transductive closed-set setting.
+
+Finally, we commit to releasing the training and evaluation code, the configuration files for every reported run, and the per-subject pretrained checkpoints, to facilitate the reproduction of our experiments.

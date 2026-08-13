@@ -2,8 +2,14 @@
 __pycache__
 
 results
+scripts
+papers
+slides
+.claude
+graphs
 data/*
 !data/.gitkeep
+output
 
 *.pth
 *.pdf

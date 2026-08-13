@@ -113,18 +113,37 @@ def topk(matrix, k, target_indices=None):
     return count_k, count_1
 
 
-def sinkhorn_normalize(similarities, tau=0.05, num_iters=20, eps=1e-8):
-    """Convert a similarity matrix into a doubly-stochastic soft assignment via Sinkhorn-Knopp."""
+def sinkhorn_normalize(similarities, tau=0.05, num_iters=20, eps=1e-8, col_mass=1.0):
+    """Convert a similarity matrix into a soft assignment via Sinkhorn-Knopp.
+
+    Rows are normalized to unit mass (each query is fully assigned); columns are
+    normalized to ``col_mass``.
+
+    Note that ``col_mass`` is a global rescale and nothing more: the row step
+    divides it straight back out, so the plan for ``col_mass=c`` is exactly
+    ``c`` times the plan for ``col_mass=1``. It therefore does NOT change the
+    orthogonal map (Procrustes uses the plan only through an SVD, and ``U@Vt``
+    is scale-invariant) nor any per-row argmax. It is exposed so that the
+    scale-invariance can be exercised explicitly rather than assumed.
+
+    What the iteration does bake in is the *shape* of the column constraint:
+    every candidate is pushed toward equal mass. That is correct for balanced
+    protocols (bijective, or R queries per candidate) and wrong when many
+    candidates should receive no mass at all, e.g. an open gallery with
+    distractors -- which needs a non-uniform target (partial OT / shortlisting),
+    not a different scalar.
+    """
     similarities = np.asarray(similarities, dtype=np.float32)
     if similarities.ndim != 2 or similarities.shape[0] == 0 or similarities.shape[1] == 0:
         return similarities
     tau = max(float(tau), eps)
+    col_mass = float(col_mass)
     scaled = similarities / tau
     scaled -= scaled.max(axis=1, keepdims=True)  # numerical stability
     matrix = np.exp(scaled).astype(np.float32, copy=False)
     for _ in range(max(1, int(num_iters))):
         matrix /= np.clip(matrix.sum(axis=1, keepdims=True), eps, None)
-        matrix /= np.clip(matrix.sum(axis=0, keepdims=True), eps, None)
+        matrix *= col_mass / np.clip(matrix.sum(axis=0, keepdims=True), eps, None)
     return matrix.astype(np.float32, copy=False)
 
 

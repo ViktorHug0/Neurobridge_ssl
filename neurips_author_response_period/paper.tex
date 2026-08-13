@@ -1,0 +1,856 @@
+\documentclass{article}
+
+\PassOptionsToPackage{numbers,compress}{natbib}
+\usepackage{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{arydshln}
+%\usepackage{dashrule}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\input{NeurIPS_2026/macros}
+\bibliographystyle{plainnat}
+%---------------------------------------------------------------------
+\title{Mind the Accuracy Gap: EEG-to-Image Decoding on New Subjects via Transductive Geometric Alignment}
+
+\author{%
+  Anonymous Authors\\
+  Submitted to NeurIPS 2026\\
+}
+
+\begin{document}
+
+\maketitle
+
+%=====================================================================
+\begin{abstract}
+
+Neural decoding of visual experience from electroencephalography (EEG) has achieved strong performance in intra-subject settings, but current methods fail to generalize across individuals. On standard benchmarks, accuracy typically drops from 80\% to around 20\%, reflecting overfitting to subject-specific signal that does not transfer efficiently across users. We propose \textbf{SAGE} (\textbf{S}ubject-\textbf{A}gnostic \textbf{G}eometrically-aligned \textbf{E}mbeddings), a two-stage framework with two operating modes. First, \emph{SAGE-zero-shot} introduces a cross-subject mixing strategy that promotes subject invariance during training, improving zero-shot accuracy from 21.8\% to 35.9\%. Second, \emph{SAGE-TTA} formulates Test-Time Adaptation to a new subject as a transductive calibration problem acting jointly on the full unlabeled query set and the fixed candidate image set. This label-free alignment step further increases accuracy up to 77\%, more than three times the cross-subject baseline, closing much of the gap with intra-subject performance in this transductive closed-set regime, and bringing neural decoding to a point where deployment in constrained settings with a known candidate pool becomes conceivable, with broad implications for brain-computer interfaces and assistive technologies.
+\end{abstract}
+
+%=====================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Decoding visual perception from brain activity is a central goal of neuroscience~\cite{kamitani2005decoding,carlson2013representational,grootswagers2017decoding}, with applications ranging from the study of visual representations~\cite{cichy2014resolving,contini2017decoding} to assistive brain-computer interfaces~\cite{lawhern2018eegnet,gao2021interface}. EEG is especially attractive for this problem because it is non-invasive, has high-temporal resolution, and is relatively inexpensive. In the now-standard \emph{EEG-to-image retrieval} setting~\cite{spampinato2017deep,gifford2022things,grootswagers2022things}, both EEG signals and images are represented in a joint embedding space, and retrieval is performed by selecting, for a given EEG signal, the closest image from a candidate set. Since related progress in \emph{fMRI}-to-image reconstruction further suggests that neural decoding can benefit strongly from well-structured latent spaces and powerful visual priors~\cite{takagi2023highres,ozcelik2023natural,scotti2023mindeye,scotti2024mindeye2}, recent work has largely focused on contrastive alignment between EEG embeddings and features from large pre-trained vision models~\cite{song2024nice,li2024atm,wu2025ubp,zhang2025neurobridge,du2025shallow}. With progressively stronger EEG encoders and image targets, these methods now exceed 80\% top-1 accuracy in the standard \emph{intra-subject} 200-way retrieval setting~\cite{du2025shallow}. In the \emph{cross-subject} setting, however, where the encoder must generalize to a held-out subject, performance drops back to around 20\% under the leave-one-subject-out (LOSO) protocol~\cite{du2025shallow,zhang2025neurobridge}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\textwidth]{NeurIPS_2026/figures/new_pipeline.png}
+  \caption{Overview of the complete SAGE pipeline.
+  a) The training phase incorporates stimulus-grouped batches and SubjectMix regularization to learn subject-disentangled representations.
+  b) The transductive test-time adaptation pipeline corrects a subject-specific geometric offset through an iterative Sinkhorn-Procrustes refinement process.
+  c) SAGE surpasses prior state-of-the-art methods under subject-disentangled training alone, and its performance approximately doubles with the addition of the transductive geometric alignment, which requires the full unlabeled query set and a known candidate set.}
+  \label{fig:pipeline}
+\end{figure}
+
+This gap is rooted in the characteristic inter-subject variability of EEG. Scalp recordings are subject-specific mixtures of underlying neural sources: skull geometry, cortical folding, and electrode placement induce a different spatial mixing matrix for each individual~\cite{onton2006imaging}. Inter-subject differences in covariance structure and spatial filtering further amplify this mismatch~\cite{blankertz2008optimizing,barachant2010riemannian,samek2013transferring,haufe2014interpretation}. In a contrastive alignment pipeline, the learned embedding geometry reflects both stimulus content and subject identity, so the held-out subject is mispositioned relative to the image space. This mismatch also manifests locally as hubness~\cite{radovanovic2010hubs,dinu2015hubness}, where a few image candidates become nearest neighbors for too many queries, degrading retrieval on unseen subjects~\cite{huang2026sattc}.
+
+We identify two complementary handles on this problem.
+The first is \emph{subject-disentangled representation learning}: structuring training so that the alignment space is less entangled with subject identity, reducing the residual geometric mismatch affecting unseen subjects at test time.
+The second is \emph{transductive geometry correction}: leveraging the unlabeled data structure to estimate and correct the held-out subject's geometric offset without any additional labeled data. Accordingly, we distinguish two operating modes throughout the paper. \emph{SAGE-zero-shot} denotes the inductive cross-subject encoder evaluated without any test-time adaptation. \emph{SAGE-TTA} denotes a transductive closed-set calibration procedure that acts on the full unlabeled test-time retrieval problem, consisting of the held-out subject's query set and the corresponding candidate image set taken jointly.
+
+Our contributions are summarized as follows:
+\begin{enumerate}
+  \item \textbf{Subject-disentangled training.}
+    We introduce \emph{SubjectMix}, a cross-subject mixing regularization that blends same-stimulus EEG recordings across subjects and aligns the mixture to the shared image target, to suppress subject-entangled directions without interpolating labels, unlike standard Mixup~\cite{zhang2018mixup}.
+    We pair a TSConv EEG encoder~\cite{song2024nice} with intermediate-layer features of InternViT-6B~\cite{chen2024internvl}, and train with a multi-positive InfoNCE objective on stimulus-grouped batches~\cite{khosla2020supcon}.
+    Together, these choices raise zero-shot cross-subject top-1 accuracy to 35.9\%, a gain of ${\approx}14$ percentage points over the prior SOTA~\cite{du2025shallow}.
+
+  \item \textbf{Transductive geometric alignment.}
+     We reframe cross-subject retrieval as a point-cloud registration problem~\cite{besl1992method,grave2019wasserstein}: given the unlabeled EEG queries and the corresponding candidate images, we estimate and correct a subject-specific rotational offset via Zero-phase Component Analysis (ZCA) whitening~\cite{bell1995infomax}, followed by an iterative pipeline that alternates between confidence regularization and alignment steps to align the image and the EEG space through successive orthogonal corrections. In this transductive protocol, SAGE-TTA brings top-1 accuracy to 77\% without using any labeled test data.
+
+\end{enumerate}
+
+Taken together, SAGE significantly advances the state of the art at two distinct operating points.
+As a zero-shot encoder, it improves cross-subject top-1 accuracy by a significant margin over the prior best, establishing a new training-time state of the art on EEG visual decoding benchmarks\cite{gifford2022things,xu2025alljoined,hebart2025thingsmeg}.
+As a transductive calibration system, which iteratively refines the base model's predictions over the test set and requires no labels, it reaches 77\% top-1 accuracy, demonstrating that cross-subject deficiencies in current EEG-to-image retrieval frameworks are in part corrigible by geometric transformations learnable from unlabeled data. We evaluate SAGE on three distinct datasets—THINGS-EEG-2~\cite{gifford2022things}, AllJoined-1.6M~\cite{xu2025alljoined}, and THINGS-MEG~\cite{hebart2025thingsmeg}—demonstrating that our methodology generalizes across different acquisition contexts and recording modalities.
+
+%=====================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{EEG-to-image decoding.}
+Visual neural decoding has progressed from early supervised, subject-specific classifiers on labeled
+EEG-image pairs~\cite{spampinato2017deep} and tripartite multimodal alignment frameworks~\cite{du2023bravl} to a zero-shot retrieval paradigm enabled by large-scale serial visual presentation benchmarks~\cite{gifford2022things,grootswagers2022things}.
+NICE~\cite{song2024nice} established the contrastive alignment framework, using an InfoNCE~\cite{oord2019cpc} objective to align TSConv EEG embeddings with frozen CLIP~\cite{radford2021clip} image features.
+Subsequent work tackled the \emph{perceptual fidelity gap} between rich visual stimuli and noisy brain responses: UBP~\cite{wu2025ubp} dynamically blurs image targets proportional to stimulus uncertainty, while NeuroBridge~\cite{zhang2025neurobridge} introduced principled image augmentation for better bidirectional alignment.
+ENIGMA~\cite{kneeland2025enigma} further demonstrated efficient multi-subject adaptation in a few-shot setting through
+subject-specific latent layers coupled with a compact bottleneck.
+Shallow Alignment~\cite{du2025shallow} showed that extracting intermediate-layer features from large pretrained vision models~\cite{chen2024internvl} yields a better granularity matching between EEG and image, achieving the current SOTA of 82.6\% intra-subject and 21.8\% cross-subject top-1 accuracy.
+Our work builds directly on these insights as we adopt Shallow Alignment's image representation strategy
+and NICE's TSConv encoder, but adds a novel cross-subject mixing augmentation that specifically targets the cross-subject gap, improving accuracy by 14 percentage points.
+
+
+\paragraph{Cross-subject generalization.}
+Inter-subject EEG variability, rooted in anatomical differences, non-stationarities, and individual
+neural coding strategies~\cite{jayaram2016transfer,lotte2018review,samek2013transferring,onton2006imaging}, has
+long been identified as the central bottleneck for generalizable BCI systems.
+In the EEG-to-image retrieval setting, this produces a stark capacity gap: intra-subject top-1 accuracy exceeds 80\%, while cross-subject accuracy remains around 20\%~\cite{du2025shallow,zhang2025neurobridge}.
+Training-time approaches such as adversarial inference~\cite{ozdenizci2020adversarial}, multi-source
+distribution matching~\cite{chen2021msmda,she2023multisource}, and domain
+adaptation~\cite{zhao2021plugandplay}, have been shown to improve robustness for paradigm-specific encoders but have not yet been shown to work for modern contrastive pipelines, and do not provide a label-free test-time correction to adapt to new subjects.
+Large EEG datasets and pretrained encoders have also motivated \emph{EEG foundation models} aimed at transferable representations ~\cite{elouahidi2025reve, cui2023neurogpt}, but these primarily address within-modality prediction and subject transfer in EEG, not alignment between neural signals and a visual embedding space.
+
+\paragraph{Geometric misalignment, hubness, and transductive alignment.}
+Hubness~\cite{radovanovic2010hubs}, the tendency of a small subset of target vectors to dominate
+nearest-neighbor lists in high-dimensional spaces, is exacerbated when source vectors are mapped
+across a domain boundary through an imperfect learned mapping~\cite{dinu2015hubness}.
+Cross-domain Similarity Local Scaling (CSLS)~\cite{conneau2018muse} addresses this issue by penalizing frequently-retrieved points, and has been suggested as a solution to the subject generalization problem by SATTC~\cite{huang2026sattc}. This framework offers a test-time-adaptation (TTA) protocol combining subject-adaptive whitening and adaptive local scaling, demonstrating a  9.3\% improvement on previous SOTA approaches~\cite{li2024atm}. We treat hubness as one \emph{local} symptom among others, and target instead the geometric mismatch between subject-specific EEG manifolds, without claiming it to be the root cause of cross-subject degradation.
+The unsupervised word-translation literature, faced with the issue of aligning embeddings across languages, addressed this root cause by estimating corrections in the form of iterative geometric transformations.
+Conneau et al.~\cite{conneau2018muse} combine adversarial initialisation with orthogonal Procrustes refinement~\cite{schonemann1966procrustes}. Grave et al.~\cite{grave2019wasserstein} cast the problem as Wasserstein
+Procrustes~\cite{peyre2019computational} using Sinkhorn correspondence estimation~\cite{cuturi2013sinkhorn}.
+We draw inspiration from this line of work and, to our knowledge, pioneer its transplantation into a fundamentally different domain: EEG-to-image retrieval. This cross-modal setting introduces a challenge that has no direct counterpart in word translation, as EEG embeddings are displaced from their visual counterparts in the shared representation space by a subject-specific component that is, at least in part, geometrically structured.
+In the proposed TTA framework, we begin with additional ZCA whitening and CSLS to stabilize the geometry before registration, and we iteratively estimate rotations to align the embedding spaces across modalities, repeatedly using Sinkhorn to estimate soft correspondences, then solving for the optimal rotation.
+
+%=====================================================================
+
+
+\section{Subject-Disentangled Training}
+% Here we will merge encoder + features + InfoNCE + bottleneck + SubjectMix BUT FORCUS ON JUBJECT MIX  
+\label{sec:training}
+\paragraph{Problem Formulation}
+%\label{sec:problem}
+We consider a multi-subject EEG-to-image decoding setting. Let $\xv_{s,i} \in \R^{C\times T}$   denote the EEG signal recorded from subject $s \in \mathcal{S}$ in response to image $i \in \mathcal{I}$,  where $C$ is the number of EEG channels and $T$ the number of time steps.  
+Let $\vv_i \in \R^{d}$ denote the corresponding image embedding.   
+We observe a dataset $\Dc = \{(\xv_{s,i}, \vv_i): s\in \Sc, i \in \Ic\}$ where multiple subjects provide distinct EEG responses to the same visual stimulus.
+
+To avoid relying on explicit subject identification, we model EEG signals as inherently noisy observations arising from both stimulus-dependent and subject-specific factors. Specifically, we assume:
+\begin{equation} \label{eq:genmodel}
+  \xv_{s,i} = g(\zv_i, \uv_s) + \epsilonv_{s,i}, % yet introduce noise here ... keep simple model 
+\end{equation}
+ where $g(\cdot, \cdot)$ is a non-linear mixing function representing the physical and physiological processes that map latent brain states to scalp potentials, $\zv_i \in \Zc$ is a latent variable associated with the stimulus and shared across subjects, $\uv_s \in \Uc$ captures subject-specific variability, and $\epsilonv_{s,i}$ represents intrinsic noise in EEG measurements, including physiological variability and sensor noise.
+
+Our objective is to learn an encoder $E_\theta : \R^{C \times T} \to \R^d$ that aligns EEG responses with their corresponding image embeddings while removing subject-specific variability. 
+\begin{comment}{\color{red}Under this model, we aim to recover a representation that depends only on the stimulus factor $\zv_i$. 
+In particular, we seek an encoder such that there exists a function $h : \Zc \to \R^d$ satisfying
+\begin{equation}
+  E_\theta(\xv_{s,i}) = h(\zv_i),
+\end{equation}
+for all subjects $s$ and stimuli $i$.}
+\end{comment}
+This induces a natural invariance structure: for a fixed stimulus $i$, the set $\{ \xv_{s,i} : s \in \Sc \}$ corresponds to different realizations of the same latent factor. 
+In practice, this amounts to enforcing consistency across subject-conditioned observations associated with the same image, while maintaining discriminability across different stimuli.
+
+In the following, we introduce a training strategy that explicitly promotes this invariance.
+
+
+
+ 
+ 
+
+%We now describe how we learn EEG representations that align with image embeddings while suppressing subject-specific variability.
+
+\paragraph{SubjectMix: enforcing invariance.}
+To enforce the invariance structure introduced above, we propose \emph{SubjectMix}, a cross-subject mixing regularization. 
+
+For each stimulus $i$, let us define the set of original EEG samples
+\begin{equation}
+\Xc_i = \{ \xv_{s,i} : s \in \Sc \}.
+\end{equation}
+We construct mixed samples by combining pairs of subjects, and define the corresponding index set
+\begin{equation}
+\widetilde{\Sc} = \{ (s,s') : s \neq s',\; s,s' \in \Sc \},
+\end{equation}
+with associated samples
+\begin{equation}
+\widetilde{\Xc}_i = \{ \xv_{s,s',i} = \Ac(\xv_{s,i}, \xv_{s',i}) : (s,s') \in \widetilde{\Sc} \},
+\end{equation}
+where $\Ac: \R^{C \times T} \times \R^{C \times T} \rightarrow \R^{C \times T}$ is an aggregation operator designed to preserve the stimulus-dependent factor while attenuating subject-specific variability. The
+mixed samples $\widetilde{\Xc}_i$ are used as additional
+positives in the multi-positive contrastive loss $\mathcal{L}_{\mathrm{ctr}}$ (defined below, Eq.\ref{eq:loss_fin}). Together, this one-sided
+mixing and the image-anchored contrastive objective form an implicit
+invariance regularizer that attenuates subject-specific variability
+while preserving stimulus-related geometry (see
+Appendix~\ref{sec:ana_subjectmix} for a finite-sample analysis).
+
+\paragraph{Representation learning.}
+We model the encoder as a composition of temporal and spatial operators followed by a projection head: 
+\begin{equation}\label{eq:enc_decom}
+E_\theta = P_{\theta_p} \circ S_{\theta_s} \circ T_{\theta_t},
+\end{equation}
+where $T_{\theta_t}$ captures temporal dynamics along the time axis, $S_{\theta_s}$ aggregates information across EEG channels, and $P_{\theta_p}$ projects the resulting features into a shared embedding space.
+
+Given an input $\xv_{s,i} \in \R^{C \times T}$, with $s\in \Sc \cup \widetilde{\Sc}$ and $i \in \Ic$, the embedding is
+\begin{equation}
+\ev_{s,i} = E_\theta(\xv_{s,i}) \in \R^d.
+\end{equation}
+
+The operator $S_{\theta_s}$ acts across all $C$ channels, allowing the model to integrate distributed cortical activity, in contrast to approaches restricted to a subset of electrodes~\cite{du2025shallow}.
+The projection head $P_{\theta_p}$ consists of a linear layer.
+ 
+\paragraph{Multi-positive Contrastive Loss with Stimulus-Grouped Batches.}
+%{\color{red}Let $\ev_{s,i} = E_\theta(\xv_{s,i}) \in \R^d$ denote the (unnormalized) EEG embedding of subject $s$ viewing stimulus $i$ , and let $\hat{\vv}_i \in \R^d$ denote the $\ell_2$-normalized image embedding  EST CE QUE CEST NECESSAIRE ? CITE PAPER}. 
+Previous work~\cite{song2024nice,li2024atm,wu2025ubp,zhang2025neurobridge,du2025shallow} rely on InfoNCE~\cite{oord2019cpc} loss, in which same-stimulus EEG embeddings from different subjects can act as false negatives relative to the stimulus embedding if they happen to be in the same batch.  To prevent this, we use a multi-positive contrastive objective based on stimulus-grouped batches~\cite{khosla2020supcon}. Each batch contains $M$ distinct stimuli, each associated with $K$ EEG responses from different subjects, yielding $M \times K$ EEG samples. 
+%For a given EEG embedding $\ev_{s,i}$,  all embeddings $\vv_{i}$ corresponding to the same stimulus form the positive set, while embeddings of other stimuli act as negatives.
+For a given EEG embedding $\ev_{s,i}$, the corresponding image embedding $\vv_{i}$ is treated as the positive target, while image embeddings $\{\vv_{j}\}_{j \neq i}$ from other stimuli act as negatives.
+
+The EEG-to-image loss is defined as:
+\begin{equation}\label{eq:loss1}
+\mathcal{L}_{\mathrm{E \to V}} =
+-\frac{1}{M} \sum_{i=1}^{M} \frac{1}{K}\sum_{s=1}^{K}
+\log 
+\frac{\exp(\ev_{s,i} \cdot \vv_{i} / \tau)}
+{\sum_{j=1}^{M} \exp(\ev_{s,i} \cdot \vv_{j} / \tau)}.
+\end{equation}
+
+Symmetrically, the image-to-EEG loss considers all EEG embeddings associated with the same stimulus as positives:
+\begin{equation}\label{eq:loss2}
+\mathcal{L}_{\mathrm{V \to E}} =
+-\frac{1}{M} \sum_{i=1}^{M}
+\frac{1}{K} \sum_{s=1}^{K}
+\log 
+\frac{\exp(\vv_{i} \cdot \ev_{s,i} / \tau)}
+{\sum_{(s',j)} \exp(\vv_{i} \cdot \ev_{s',j} / \tau)}.
+\end{equation}
+
+The final contrastive loss is
+\begin{equation}\label{eq:loss_fin}
+\mathcal{L}_{\mathrm{ctr}} = \frac{1}{2} \left( \mathcal{L}_{\mathrm{E \to V}} + \mathcal{L}_{\mathrm{V \to E}} \right).
+\end{equation}
+
+\section{Transductive Geometric Alignment}
+\label{sec:testing}
+% merge ZCA + CSLS + Sinkhorn + Procrustes + iterative loop and  genralization of rotaation 
+
+While the training objective encourages invariance, it does not uniquely fix the representation, which remains defined up to subject-dependent transformations. To learn and correct for this residual distortion, we adopt a transductive approach: given a set of $N$ EEG queries from an unseen subject and $N$ candidate image embeddings, we want to estimate a global alignment transformation without requiring labels.  To do so, we treat the two modalities as point clouds and iteratively estimate correspondences and apply the appropriate corrective transformation. This cycle is repeated until convergence, or until we reach a pre-defined number of iterations.
+
+\paragraph{Alignment pipeline.}
+At test time, we consider a single unseen subject and omit the subject index for simplicity. 
+Let
+
+$$\Em = [\ev_1^\top,\ldots,\ev_N^\top]^\top \in \mathbb{R}^{N\times d},
+\qquad
+\Vm = [\vv_1^\top,\ldots,\vv_N^\top]^\top \in \mathbb{R}^{N\times d}$$
+
+denote the EEG and image embedding matrices, respectively. 
+The correspondence between EEG and image embeddings is unknown. 
+We therefore align the two sets through the following steps.
+
+
+\textbf{(i) Whitening.}
+We first normalize the EEG embeddings using the empirical mean and covariance of the test EEG set:
+\begin{equation}
+\muv = \frac{1}{N}\sum_{i=1}^{N} \ev_i,
+\qquad
+\Sigmam = \frac{1}{N}\sum_{i=1}^{N}(\ev_i-\muv)(\ev_i-\muv)^\top .
+\end{equation}
+To improve numerical stability, we use a shrinkage covariance estimate inspired by classical covariance regularization methods~\cite{ledoit2004honey}
+\begin{equation}
+\widetilde{\Sigmam}
+=
+(1-\rho)\Sigmam
++
+\rho \frac{\operatorname{tr}(\Sigmam)}{d}\I_d .
+\end{equation}
+The whitened and normalized EEG embeddings are
+\begin{equation}
+\widetilde{\ev}_i
+=
+\frac{
+\widetilde{\Sigmam}^{-1/2}(\ev_i-\muv)
+}{
+\left\|\widetilde{\Sigmam}^{-1/2}(\ev_i-\muv)\right\|
+}.
+\end{equation}
+We denote by $\widetilde{\Em}\in \mathbb{R}^{N\times d}$ the matrix whose rows are $\widetilde{\ev}_i$.
+
+\textbf{(ii) Similarity correction.}
+We compute a corrected similarity matrix $\Sm \in \mathbb{R}^{N\times N}$ using CSLS:
+\begin{equation}
+s_{i,j}
+=
+\mathrm{CSLS}(\widetilde{\ev}_i,\vv_j)
+=
+2\cos(\widetilde{\ev}_i,\vv_j)
+-
+r_E(\widetilde{\ev}_i)
+-
+r_V(\vv_j),
+\end{equation}
+where $r_E$ and $r_V$ denote the average similarity to the nearest neighbors in the opposite embedding set.
+
+\textbf{(iii) Soft assignment.}
+We convert the similarity matrix into a soft correspondence matrix using Sinkhorn normalization~\cite{sinkhorn1964,cuturi2013sinkhorn}:
+\begin{equation}
+\Pm = \mathrm{Sinkhorn}\left(\exp(\Sm/\tau_{\mathrm{sk}})\right),
+\end{equation}
+where $p_{i,j}$ represents the soft assignment between EEG embedding $\widetilde{\ev}_i$ and image embedding $\vv_j$.
+
+\textbf{(iv) Geometric alignment.}
+From the soft assignment matrix $\Pm$, we estimate an orthogonal transformation $\Rm \in \mathbb{R}^{d\times d}$ by solving the following orthogonal Procrustes problem~\cite{schonemann1966procrustes} : 
+\begin{equation}
+\Rm^*
+=
+\arg\min_{\Rm^\top \Rm = \I}
+\sum_{i=1}^{N}\sum_{j=1}^{N}
+p_{i,j}\left\|\widetilde{\ev}_i\Rm - \vv_j\right\|^2 .
+\end{equation}
+The optimal solution is given in closed form by $\Rm^* = \Um \Wm^\top,$ where $\Um \Dm \Wm^\top$ is the singular value decomposition of $\widetilde{\Em}^\top \Pm \Vm$.
+ 
+
+%=====================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Dataset and Experimental Setup}
+\label{sec:dataset}
+
+THINGS-EEG-2~\cite{gifford2022things} contains EEG recordings from 10 healthy participants who viewed images from 1,654 training-set object concepts and 200 testing-set concepts drawn from the THINGS database~\cite{hebart2019things}. Images are shown for 100 ms followed by a 100 ms blank screen. Each concept is represented by one test image; recordings consist of multiple repeated trials per image, from which we compute a per-image averaged EEG response, reducing variability while retaining the subject-specific signal structure. THINGS-MEG~\cite{hebart2025thingsmeg} includes 4 participants and 271 channels. Stimuli are shown for 500 ms followed by a 1000 ± 200 ms blank screen. The training set has 1,854 concepts (12 images each, single repetition), and the test set has 200 concepts (one image, 12 repetitions), removed from training for zero-shot evaluation. Finally, Alljoined-1.6M~\cite{xu2025alljoined} comprises the EEG responses to visual stimuli in the same experimental paradigm as THINGS-EEG-2 across 20 different subjects, and collected with a 32-channel consumer-grade headset at 256Hz. Our data preprocessing pipeline follows the methodology described in previous work~\cite{song2024nice,li2024atm,wu2025ubp}, and comprehensive details are provided in Appendix~\ref{app:dataset-details}. While the main section of the paper focuses on results on THINGS-EEG-2, additional results on the other datasets are provided in Appendix~\ref{alljoined-meg-results}.
+
+
+
+\paragraph{Evaluation.} The evaluation task is \emph{200-way closed-set retrieval}: given the averaged EEG response of a held-out subject to one of the 200 test images, rank all 200 candidate images and report top-1 and top-5 accuracy (chance = 0.5\% and 2.5\% respectively). We adopt the \emph{leave-one-subject-out} (LOSO) protocol: train on 9 subjects, evaluate on the 10th; repeat for all 10 folds and report mean $\pm$ standard deviation. Following the established convention in this line of work~\cite{zhang2025neurobridge,du2025shallow,huang2026sattc}, our primary results select the best checkpoint based on the minimum test-set contrastive loss of the held-out subject. We acknowledge that this protocol, while standard in the community, is technically over-optimistic because the test subject is used for model selection. To encourage future work to adopt cleaner evaluation practices, we also report results under a strict \emph{leave-one-subject-out validation} (LOSO-val) protocol, in which one additional training subject is held out as a validation fold and the test subject is never accessed during training. The validation subject is selected as the one following test subject, in a circular shift manner. Both sets of numbers are provided in Section~\ref{sec:main-results}.
+
+\subsection{Implementation Details}
+\label{sec:implementation}
+
+Our method is implemented using PyTorch, trained on one NVIDIA GeForce RTX 3080 GPU. We employ a batch size of 1,024 and train the model for 50 epochs. The learning rate is set to 3e-4. The temperature parameter $\tau$ is set to 0.07. For the TTA hyperparameters, we use a shrinkage coefficient $\rho = 0.94$, CSLS neighborhood $k=3$, Sinkhorn temperature $\tau_{\mathrm{sk}}=0.1$ with 12 normalization steps, and 16 soft-Procrustes refinement steps. Additional dataset, encoder, and sweep details are provided in Appendix~\ref{app:exp-details}. Regarding the \emph{SubjectMix} augmentation, we chose to instantiate it as a convex combination of pairs of  EEGs corresponding to the same stimulus from different subjects :
+
+\vspace{-4pt}
+\begin{equation}\label{eq:subjmix}
+  \widetilde{\xv}_{s,s',i} = \lambda\,\xv_{s,i} + (1 - \lambda)\,\xv_{s',i}, 
+  \quad \lambda \sim \mathrm{Beta}(\alpha_{\mathrm{mix}}, \alpha_{\mathrm{mix}}),
+\end{equation}
+
+\subsection{Main Results}
+\label{sec:main-results}
+
+Table~\ref{tab:main} compares our method to existing approaches on the 200-way cross-subject retrieval task under the LOSO protocol on THINGS-EEG-2.
+All prior results are taken from the respective publications.
+Following established convention~\cite{zhang2025neurobridge,du2025shallow,huang2026sattc}, the primary results use best checkpoint selection by test-set loss, and we additionally report LOSO-val results in Table~\ref{tab:loso-val}.
+
+\begin{table}[H]
+\caption{Overall accuracy (\%) of 200-way zero-shot retrieval on THINGS-EEG-2: top-1 and top-5.}
+\label{tab:main}
+\centering
+\small
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}llcccccccccccc@{}}
+\toprule
+ & & \multicolumn{10}{c}{Subject} & \\
+\cmidrule(lr){3-12}
+Method & Metric & S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8 & S9 & S10 & Avg.\\
+\midrule
+\addlinespace[2pt]
+NICE~\cite{song2024nice} & Top-1 & 7.6 & 5.9 & 6.0 & 6.3 & 4.4 & 5.6 & 5.6 & 6.3 & 5.7 & 8.4 & 6.2 \\
+ & Top-5 & 22.8 & 20.5 & 22.3 & 20.7 & 18.3 & 22.2 & 19.7 & 22.0 & 17.6 & 28.3 & 21.4 \\
+ \midrule
+ATM-S~\cite{li2024atm} & Top-1 & 10.5 & 7.1 & 11.9 & 14.7 & 7.0 & 11.1 & 16.1 & 15.0 & 4.9 & 20.5 & 11.9 \\
+ & Top-5 & 26.8 & 24.8 & 33.8 & 39.4 & 23.9 & 35.8 & 43.5 & 40.3 & 22.7 & 46.5 & 33.8 \\
+ \midrule
+Neural-MCRL~\cite{li2024mcrl} & Top-1 & 13.0 & 12.0 & 14.5 & 12.5 & 11.5 & 13.5 & 14.0 & 18.5 & 13.5 & 17.0 & 14.0 \\
+ & Top-5 & 31.5 & 30.5 & 35.5 & 35.5 & 29.0 & 35.5 & 36.0 & 38.5 & 32.5 & 39.0 & 34.3 \\
+ \midrule
+UBP~\cite{wu2025ubp} & Top-1 & 11.5 & 15.5 & 9.8 & 13.0 & 8.8 & 11.7 & 10.2 & 12.2 & 15.5 & 16.0 & 12.4 \\
+ & Top-5 & 29.7 & 40.0 & 27.0 & 32.3 & 33.8 & 31.0 & 23.8 & 32.2 & 40.5 & 43.5 & 33.4 \\
+ \midrule
+NeuroBridge~\cite{zhang2025neurobridge} & Top-1 & 23.2 & 21.2 & 13.2 & 17.0 & 14.5 & 25.0 & 15.3 & 20.1 & 13.7 & 27.2 & 19.0 \\
+ & Top-5 & 52.4 & 49.3 & 36.5 & 45.3 & 37.7 & 55.0 & 45.1 & 44.9 & 36.5 & 56.3 & 45.9 \\
+ \midrule
+Shallow Align.~\cite{du2025shallow} & Top-1 & 23.5 & 30.6 & 10.0 & 19.5 & 18.1 & 22.7 & 18.6 & 17.3 & 23.0 & 34.4 & 21.8 \\
+ & Top-5 & 53.2 & 60.4 & 28.1 & 48.3 & 45.2 & 49.8 & 46.0 & 46.1 & 54.8 & 62.0 & 49.4 \\
+ \midrule
+SAGE-zero-shot & Top-1 & 46.5 & 41.8 & 26.5 & 31.3 & 33.8 & 34.3 & 33.7 & 23.5 & 37.2 & 50.3 & \textbf{35.9} \\
+ & Top-5 & 79.3 & 78.0 & 62.5 & 65.3 & 64.3 & 67.3 & 66.8 & 59.2 & 67.8 & 81.7 & \textbf{69.2} \\
+ \addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-TTA & Top-1 & 80.3 & 73.7 & 66.2 & 50.3 & 67.2 & 79.5 & 66.5 & 40.7 & 74.5 & 82.3 & \textbf{68.1} \\
+ & Top-5 & 95.8 & 93.3 & 87.5 & 80.2 & 90.2 & 94.2 & 85.5 & 63.7 & 93.7 & 93.5 & \textbf{87.8} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{-15pt}
+
+\begin{table}[H]
+\caption{Overall accuracy (\%) of 200-way zero-shot retrieval on THINGS-EEG-2 for SAGE, under strict LOSO-val evaluation.}
+\label{tab:loso-val}
+\centering
+\small
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}llcccccccccccc@{}}
+\toprule
+ & & \multicolumn{10}{c}{Subject} & \\
+\cmidrule(lr){3-12}
+Method & Metric & S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8 & S9 & S10 & Avg.\\
+\midrule
+SAGE-zero-shot & Top-1 & 39.8 & 38.7 & 20.7 & 30.2 & 27.0 & 33.3 & 28.3 & 27.0 & 32.3 & 38.0 & 31.5 \\
+     & Top-5 & 75.0 & 73.3 & 50.7 & 63.3 & 58.5 & 65.5 & 61.3 & 55.0 & 66.0 & 77.3 & 64.6 \\
+\addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-TTA & Top-1 & 78.7 & 68.8 & 46.5 & 58.8 & 57.2 & 82.0 & 53.3 & 46.2 & 66.5 & 77.5 & 63.6 \\
+           & Top-5 & 93.8 & 90.0 & 76.0 & 85.8 & 82.0 & 95.8 & 79.7 & 68.0 & 91.2 & 94.0 & 85.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Ablation Study}
+\label{sec:tta-ablation}
+Table ~\ref{tab:sattc_ablation} shows the contribution of each TTA component. Table ~\ref{tab:sinkhorn_alternative} displays the impact of replacing Sinkhorn by three alternative confidence assignment methods. Both tables are averaged across all subjects and 3 seeds, and prove that all of SAGE's components contribute to it's performance. 
+
+\begingroup
+\setlength{\intextsep}{2pt}
+\setlength{\tabcolsep}{3.5pt}
+\captionsetup{skip=2pt}
+\begin{table}[H]
+    \centering
+    % Left Table - [t] ensures they align by the top line
+    \begin{minipage}[t]{0.495\textwidth}
+        \centering
+        \caption{Ablation study of each SAGE component.}
+        \label{tab:sattc_ablation}
+        \begin{tabular}{@{}cccccc@{}}
+        \toprule
+        SubjectMix & Whitening & CSLS & Sinkhorn & Top-1 & Top-5 \\ \midrule
+        \checkmark & \checkmark & \checkmark & \checkmark & \textbf{68.1} & \textbf{87.8} \\
+        \checkmark & -- & \checkmark & \checkmark & 59.9 & 83.3 \\
+        \checkmark & \checkmark & -- & \checkmark & 56.4 & 79.6 \\
+        \checkmark & \checkmark & \checkmark & -- & 40.9 & 73.3 \\
+        \checkmark & -- & -- & -- & 35.9 & 69.2 \\
+        \midrule
+        -- & \checkmark & \checkmark & \checkmark & 65.1 & 86.5 \\
+        -- & -- & \checkmark & \checkmark & 45.5 & 72.7 \\
+        -- & \checkmark & -- & \checkmark & 46.3 & 72.9 \\
+        -- & \checkmark & \checkmark & -- & 39.3 & 71.7 \\
+        -- & -- & -- & -- & 30.3 & 62.4 \\ \bottomrule
+        \end{tabular}
+    \end{minipage}
+    \hfill % This automatically calculates the maximum possible space
+    % Right Table
+    \begin{minipage}[t]{0.38\textwidth}
+        \centering
+        \caption{Alternatives to Sinkhorn for correspondence estimation.}
+        \label{tab:sinkhorn_alternative}
+        \begin{tabular}{@{}lcc@{}}
+        \toprule
+        Method & Top-1 & Top-5 \\ \midrule
+        Sinkhorn & \textbf{68.1} & \textbf{87.8} \\ \midrule
+        Softmax  & 57.1 & 81.9 \\
+        Top-$5$ &  54.7 & 80.1 \\
+        Argmax & 41.6 & 76.0 \\
+        \bottomrule
+        \end{tabular}
+        
+    \end{minipage}
+
+\end{table}
+\endgroup
+
+\subsection{Generalization to different EEG and image encoders}
+\label{sec:encoder-generalization}
+
+To assess the robustness of our framework, we evaluate \emph{SubjectMix} and \emph{SAGE-TTA} across a diverse grid of EEG and image encoder architectures. Figure~\ref{fig:main-encoder-grid-gains} illustrates the consistent top-1 accuracy gains provided by each stage of the pipeline, while Table~\ref{tab:encoder_tta_results} summarizes the peak performance achieved for each EEG backbone after transductive alignment. We observe a notable reversal in architecture ranking: while TSConv is the strongest inductive (zero-shot) encoder, the ATM architecture achieves the highest performance after SAGE-TTA calibration, reaching 77.2\% top-1 accuracy. Detailed accuracy grids are provided in Appendix~\ref{app:encoder-grids}.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_2_subjectmix_diff.png}
+        \caption{Top-1 gain from \emph{SubjectMix} alone.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_3_tta_diff.png}
+        \caption{Additional top-1 gain from SAGE-TTA.}
+    \end{subfigure}
+    \caption{Top-1 gain from \emph{SubjectMix} and transductive alignment across various encoders.}
+    \label{fig:main-encoder-grid-gains}
+\vspace{-10pt}
+
+\end{figure}
+\begin{table}[H]
+    \vspace{-10pt}
+    \centering
+    \caption{Best SAGE-TTA results across different EEG encoders.}
+    \label{tab:encoder_tta_results}
+    \begin{tabular}{@{}lcc@{}}
+    \toprule
+    Encoder & Top-1 & Top-5 \\ \midrule
+    ATM & \textbf{77.2} & \textbf{92.0} \\
+    TSConv & 68.5 & 87.8 \\
+    EEGConformer & 65.0 & 86.8 \\
+    EEGProject & 62.0 & 83.5 \\
+    EEGNet & 56.6 & 81.2 \\
+    \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Sample size effect on transductive calibration}
+\label{sec:sample-size}
+
+To evaluate the sample efficiency of our test-time adaptation pipeline, we analyze performance across two distinct regimes: (i) a full-set regime ($N$ vs. 200), where $N$ queries are retrieved against the full candidate set, and (ii) a partial-set regime ($N$ vs. $N$), in which $N$ queries are retrieved against the corresponding reduced candidate set. While baseline retrieval quickly converges, SAGE exhibits a robust scaling law, systematically converting unlabeled evidence into better cross-modal alignment.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.47\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{NeurIPS_2026/figures/progressive_top1_all.png}
+        \caption{Full-Set (N vs. 200)}
+        \label{fig:progressive_top1_all}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.47\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{NeurIPS_2026/figures/progressive_top1_matching.png}
+        \caption{Reduced-Set (N vs. N)}
+        \label{fig:progressive_top1_matching}
+    \end{subfigure}
+    \caption{Top-1 retrieval accuracy as a function of the number of test samples available for adaptation. Shaded areas represent the standard deviation across three random query selection seeds. }
+    \label{fig:progressive_tta_results}
+\end{figure}
+
+\vspace{-5pt}
+
+\section{Discussion and Conclusion}
+\label{sec:discussion}
+
+\paragraph{Evaluation benchmarks and community standards.}
+We have followed the model selection protocol used throughout this literature~\cite{zhang2025neurobridge,du2025shallow} to ensure fair comparison with prior work.
+However, this selection protocol, while appropriate for the structure of the THINGS-EEG-2 dataset, which does not natively offers a validation set, is a form of information leakage: the held-out subject is implicitly used for model selection. We encourage future work in this area to adopt LOSO-val or an equivalent clean evaluation as a primary reported metric. More broadly, the field would strongly benefit from the development of additional visual decoding benchmarks. Most previous studies have evaluated their methods exclusively on THINGS-EEG-2, which raises concerns about dataset-specific conclusions. In this work, we evaluated our approach across three datasets to improve robustness. Nevertheless, broader community efforts toward standardized multi-dataset benchmarks will be essential for establishing reliable comparisons and accelerating progress in visual neural decoding.
+
+\paragraph{Limitations and future work.}
+The full SAGE-TTA pipeline requires access to all test EEG-image pairs simultaneously and benefits from a one-to-one matching structure.
+While realistic closed-loop BCI settings~\cite{lawhern2018eegnet} may require sequential adaptation, transductive calibration remains applicable in constrained regimes where the candidate pool is known, such as closed-menu or shortlist-based assistive interfaces, and reranking settings in which an inductive base decoder first narrows the candidate pool. More generally, many BCI systems operate within a task-dependent context: if the user is working in a spreadsheet, the relevant vocabulary may be actions such as copy, paste, or sort, whereas in an image-editing application it may instead be brush, erase or zoom. In such cases, one can maintain a context-dependent bank of plausible actions and perform set-level calibration within that restricted pool. This suggests a realistic application for what could be described as \emph{task-aware adaptive decoding}. More broadly, we also view the transductive results as informative beyond their immediate potential for deployment. The fact that a simple orthogonal alignment estimated from the unlabeled similarity structure can produce large gains suggests that a substantial part of current cross-subject failure is geometric rather than semantic: the model contains useful discriminative information even for an unseen subject, but that information is misaligned due to lack of structural information about the task at hand. This observation motivates future work on lighter-weight subject adaptation, geometrically motivated few-shot calibration, and inductive approaches that attempt to recover a corrective structure without requiring access to the full test set.
+
+\paragraph{Conclusion.}
+We presented SAGE, a pipeline for cross-subject EEG-to-image retrieval. Its inductive stage raises zero-shot cross-subject accuracy, and its transductive stage closes much of the remaining intra/cross-subject gap on THINGS-EEG-2 when the candidate set is known. SAGE consists of an inductive cross-subject encoder and a transductive set-level calibration procedure. Taken together, these results demonstrate that cross-subject misalignment includes a systematic geometric component that can be mitigated through subject-disentangled training and unlabeled set-level alignment, offering a framework for dynamic and generalizable decoding in brain-computer interfaces.
+
+\newpage
+
+\bibliography{references}
+
+\newpage
+
+
+\appendix
+
+%=====================================================================
+
+\section{Theoretical analysis}
+\input{NeurIPS_2026/justifiction_subjectmix}
+
+\section{Experimental Details}
+\label{app:exp-details}
+
+\subsection{Dataset and Preprocessing}
+\label{app:dataset-details}
+
+\textbf{THINGS-EEG-2}~\cite{gifford2022things} contains EEG recordings from 10 subjects performing a rapid serial visual presentation task over a large visual concept vocabulary. Each subject contributes 1{,}654 training concepts and 200 held-out test concepts. In the training split, each concept is associated with multiple image presentations, yielding 16{,}540 averaged training samples per subject after standard preprocessing. In the test split, each of the 200 unseen concepts is represented by a single candidate image, and repeated EEG trials are averaged to produce one query embedding per concept and per subject. Raw EEG is recorded at 1{,}000\,Hz over 63 channels. Following established practice~\cite{song2024nice,li2024atm,wu2025ubp}, we epoch each trial over the 0--1{,}000\,ms post-stimulus interval, filter between 0,1 and 100Hz, apply baseline correction using the 200\,ms pre-stimulus window, downsample to 250\,Hz, and use multivariate noise normalization before averaging repetitions. The resulting tensor has shape $63 \times 250$ and is stored in float32 format for training and evaluation.
+
+ \textbf{THINGS-MEG} ~\cite{hebart2025thingsmeg} comprises four participants and 271 channels. The experimental paradigm uses a 500 ms stimulus presentation followed by a blank interval of 1000 ± 200 ms. The training set includes 1,854 concepts, each represented by 12 images with a single repetition, while the test set consists of 200 concepts, each with one image repeated 12 times. To construct a zero-shot setting, the 200 test concepts are removed from the training set, following the same procedure. MEG recordings are segmented into epochs spanning 0–1000 ms after stimulus onset. Preprocessing involves band-pass filtering between 0.1 and 100 Hz, followed by downsampling to 200 Hz and baseline correction. To improve signal-to-noise ratio, repetitions corresponding to the same image are averaged. Finally, the data are stored in float16 format to reduce storage demands and accelerate I/O operations.
+
+\textbf{Alljoined-1.6M} ~\cite{xu2025alljoined} collects the EEG responses to visual stimuli in the same experimental paradigm as THINGS-EEG-2 across 20 different subjects, and collected with a  32-channel consumer-grade headset at 256Hz. We follow the same preprocessing steps described above for THINGS-EEG-2, including filtering, baseline correction, downsampling and multivariate noise normalization.
+
+\subsection{EEG Encoder Architectures}
+\label{app:encoder-details}
+
+The complementary analyses in Appendix~\ref{app:result-details} extend the main setting to a broad family of EEG encoders. All models take an EEG tensor $X \in \mathbb{R}^{B \times C \times T}$ as input, with $C=63$ channels and $T=250$ time samples after preprocessing, and map it to the shared EEG--image embedding space. We evaluate architectures ranging from direct projection baselines to compact CNNs and hybrid convolution-transformer models.
+
+\paragraph{EEGProject.}
+EEGProject is a lightweight architecture that treats EEG-to-embedding as a direct projection problem. The input is flattened from $X \in \mathbb{R}^{B \times C \times T}$ to $B \times (C \cdot T)$. The flattened vector is then passed through a projection head consisting of a linear layer to the target feature dimension, followed by a residual bottleneck block with GELU, a second linear layer, dropout with $p=0.3$, and a final LayerNorm. It contains no explicit temporal convolution, spatial filtering, or attention mechanism.
+
+\paragraph{EEGNet.}
+EEGNet~\cite{lawhern2018eegnet} is a compact convolutional encoder specialized for EEG. After adding a singleton channel dimension, it applies a temporal convolution $\mathrm{Conv2d}(1, 8, (1, 64))$, followed by batch normalization and a spatial convolution $\mathrm{Conv2d}(8, 16, (C, 1))$ across all electrodes. The resulting activations are batch-normalized, passed through ELU, average pooled with kernel and stride $(1, 2)$, and regularized with dropout $p=0.5$. A final temporal aggregation stage uses $\mathrm{Conv2d}(16, 16, (1, 16))$, batch normalization, ELU, and dropout2d with $p=0.5$. 
+
+\paragraph{ATM.}
+ATM~\cite{li2024atm} is a hybrid architecture that combines an iTransformer-style backbone with a convolutional patch-embedding module. In our implementation, the transformer stage uses sequence length $250$, model dimension $250$, dropout $0.25$, four attention heads, one encoder layer, and feed-forward width $256$. The transformed representation is then passed to a ShallowNet-like convolutional encoder composed of $\mathrm{Conv2d}(1, 40, (1, 25))$, $\mathrm{Conv2d}(40, 40, (C, 1))$, batch normalization, ELU, average pooling with kernel $(1, 51)$ and stride $(1, 5)$, and dropout $p=0.5$, followed by a $1 \times 1$ projection convolution and flattening. 
+
+\paragraph{EEGConformer.}
+EEGConformer~\cite{song2023eegconformer} combines a convolutional patch extractor with transformer-based sequence modeling. Its patch-embedding front-end uses the same ShallowNet-style stem as above: temporal convolution $\mathrm{Conv2d}(1, 40, (1, 25))$, spatial convolution $\mathrm{Conv2d}(40, 40, (C, 1))$, batch normalization, ELU, average pooling with kernel $(1, 51)$ and stride $(1, 5)$, dropout $p=0.5$, and a $1 \times 1$ projection that rearranges the output into a sequence of 40-dimensional patch tokens. Sinusoidal positional encodings are added to these tokens before a transformer encoder with two layers, ten attention heads, embedding size 40, dropout $0.5$, and feed-forward expansion factor 4. 
+
+\paragraph{TSConv.}
+TSConv~\cite{song2024nice} is the convolutional encoder used in our main SAGE configuration. We slightly adapt the parameters of the original architecture. We begin by applying a temporal convolution $\mathrm{Conv2d}(1, 40, (1, 30))$, temporal average pooling with kernel $(1, 51)$ and stride $(1, 5)$, batch normalization and ELU, and then a spatial convolution $\mathrm{Conv2d}(40, 40, (C, 1))$ across channels followed by batch normalization, ELU, and dropout $p=0.5$. A $1 \times 1$ projection convolution keeps 40 channels before flattening. 
+
+\subsection{Training and Evaluation Protocol}
+\label{app:training-details}
+
+Unless otherwise stated, models are trained with batch size 1{,}024 for 50 epochs using AdamW with learning rate $3\times10^{-4}$, weight decay $10^{-4}$, and contrastive temperature $\tau = 0.07$. The main results use the leave-one-subject-out protocol described in Section~\ref{sec:dataset}. Following the methodology of ~\cite{du2025shallow}, we use intermediate-layer features for all pretrained vision backbones rather than their final pooled outputs. Following recent EEG-to-image alignment practice~\cite{kneeland2025enigma,zhang2025neurobridge}, we $\ell_2$-normalize the image embeddings but keep the EEG embeddings unnormalized during training, allowing the EEG embedding norm to retain confidence information. For the complementary grid analyses, the same cross-subject evaluation protocol is maintained while varying the EEG and image encoders. The reported ablations in the main paper are averaged over three random seeds. The training process for our primary SAGE-zero-shot configuration (TSConv encoder and InternViT-6B features) takes approximately 3 hours to complete for all 10 subjects on a single NVIDIA GeForce RTX 3080 GPU, following the parameters specified in Appendix~\ref{app:training-details}. Across the broader family of EEG encoders evaluated in our architecture sweeps, completion times range from 2 to 7 hours on the same hardware. The SAGE-TTA transductive alignment stage can be executed on a standard CPU across all subjects in a few seconds.
+
+\subsection{Use of existing assets}
+\label{app:existing-assets}
+
+We used Python under the Python Software Foundation License. Our implementation relies on standard scientific-computing and deep-learning
+libraries, including PyTorch under the BSD-3-Clause License, NumPy under the BSD-3-Clause License, Scikit-learn under the BSD-3-Clause License, and SciPy under the BSD-3-Clause License. 
+
+We used the following pretrained models and model architectures:
+\begin{itemize}
+  \item InternViT-6B (part of InternVL)~\cite{chen2024internvl}, released under the MIT License;
+  \item DINOv2-Giant~\cite{oquab2024dinov2}, released under the Apache License 2.0;
+  \item EVA02-E-14 (from EVA-02)~\cite{fang2023eva02}, released under the MIT License;
+  \item ViT-bigG-14 (via OpenCLIP)~\cite{cherti2023openclip}, released under the MIT License;
+  \item ViT-H-14 (via OpenCLIP), released under the MIT License;
+  \item ViT-B-16 (via OpenCLIP), released under the MIT License;
+  \item EEGProject, released under the MIT License;
+  \item TSConv (from the NICE framework)~\cite{song2024nice}, released under the MIT License;
+  \item EEGNet~\cite{lawhern2018eegnet}, released under the MIT License;
+  \item ATM (Active Thinking Model)~\cite{li2024atm}, released under the MIT License;
+  \item EEGConformer~\cite{song2023eegconformer}, released under the MIT License.
+\end{itemize}
+
+We used the following public datasets:
+\begin{itemize}
+  \item THINGS-EEG-2, released under the Creative Commons Attribution 4.0 International (CC BY 4.0) License;
+  \item THINGS-MEG, released under the Creative Commons Attribution 4.0 International (CC BY 4.0) License;
+  \item THINGS database (images), released under the Creative Commons Attribution 4.0 International (CC BY 4.0) License.
+\end{itemize}
+
+\subsection{TTA Hyperparameters and Sensitivity Sweep Ranges}
+\label{app:hyperparameter-details}
+
+The main SAGE-TTA configuration uses shrinkage whitening with $\rho=0.94$, CSLS with neighborhood size $k=3$, Sinkhorn temperature $\tau_{\mathrm{sk}}=0.1$ and 12 normalization iterations, followed by 16 soft-Procrustes refinement steps with power 1.2. The one-dimensional sensitivity analysis in Appendix~\ref{app:sensitivity} varies each of these quantities independently around the anchor configuration while keeping the others fixed. The explored ranges are:
+\begin{itemize}[leftmargin=1.5em]
+    \item shrinkage coefficient $\rho \in \{0.80, 0.82, \dots, 1.00\}$;
+    \item CSLS neighborhood $k \in \{1, 3, 5, 10, 15, 20\}$;
+    \item Sinkhorn temperature $\tau_{\mathrm{sk}} \in \{0.04, 0.06, \dots, 0.16\}$;
+    \item Sinkhorn iterations $\in \{2, 4, \dots, 20\}$;
+    \item soft-Procrustes steps $\in \{2, 4, \dots, 22\}$;
+    \item soft-Procrustes power $\in \{0.7, 0.8, \dots, 1.5\}$.
+\end{itemize}
+
+%=====================================================================
+\section{Results Details}
+\label{app:result-details}
+
+\subsection{Results on additional datasets}
+\label{alljoined-meg-results}
+
+\paragraph{AllJoined-1.6M} Table~\ref{tab:subjectmix-alljoined-results} provides a detailed per-subject comparison of the impact of SubjectMix on retrieval accuracy on the \textbf{Alljoined-1.6M}\cite{xu2025alljoined} dataset, with the following TTA parameters : $\mathrm{saw}=0.98$, $k=3$, $\tau=0.08$, $\mathrm{steps}=1$, $\mathrm{power}=1.5$, $\mathrm{iters}=5$
+
+\begin{table}[H]
+\caption{Overall accuracy (\%) of 200-way zero-shot retrieval on the AllJoined-1.6M dataset, averaged over 3 seeds.}
+\label{tab:subjectmix-alljoined-results}
+\centering
+\small
+\setlength{\tabcolsep}{2.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llccccccccccccccccccccc@{}}
+\toprule
+ & & \multicolumn{20}{c}{Subject} & \\
+\cmidrule(lr){3-22}
+Method & Metric & S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8 & S9 & S10 & S11 & S12 & S13 & S14 & S15 & S16 & S17 & S18 & S19 & S20 & Avg.\\
+\midrule
+Baseline & Top-1 & 10.3 & 12.5 & 10.3 & 10.0 & 10.7 & 8.7 & 3.0 & 8.0 & 1.7 & 8.8 & 8.0 & 10.8 & 9.8 & 7.2 & 10.2 & 5.0 & 4.0 & 9.8 & 3.0 & 9.0 & 8.0 \\
+         & Top-5 & 31.5 & 33.0 & 30.3 & 32.0 & 29.0 & 27.8 & 15.5 & 29.7 & 8.8 & 27.8 & 31.5 & 30.5 & 30.7 & 26.3 & 27.3 & 22.7 & 14.3 & 34.8 & 12.0 & 29.8 & 26.3 \\
+\addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-zero-shot & Top-1 & 11.3 & 14.0 & 13.7 & 12.0 & 8.7 & 7.8 & 4.5 & \textbf{8.3} & \textbf{2.5} & 10.2 & 8.5 & 11.7 & 10.5 & 10.3 & 13.5 & 4.7 & \textbf{4.8} & 12.0 & 3.0 & 9.0 & 9.1 \\
+               & Top-5 & 33.3 & 36.5 & 37.7 & 35.3 & 31.0 & 25.8 & 18.2 & \textbf{30.3} & 8.3 & 35.0 & 30.2 & 33.8 & 34.3 & 29.3 & 32.0 & \textbf{23.5} & 12.8 & 38.0 & 11.7 & 31.2 & 28.4 \\
+\addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-TTA & Top-1 & \textbf{15.5} & \textbf{24.0} & \textbf{20.8} & \textbf{16.8} & \textbf{17.5} & \textbf{11.8} & \textbf{5.0} & 2.7 & 1.7 & \textbf{12.3} & \textbf{10.3} & \textbf{18.7} & \textbf{15.8} & \textbf{14.0} & \textbf{16.3} & \textbf{5.7} & 4.2 & \textbf{16.8} & \textbf{4.3} & \textbf{15.3} & \textbf{12.5} \\
+                   & Top-5 & \textbf{44.2} & \textbf{52.3} & \textbf{47.7} & \textbf{41.0} & \textbf{42.7} & \textbf{33.7} & \textbf{19.2} & 9.7 & 8.7 & \textbf{37.0} & \textbf{34.3} & \textbf{46.2} & \textbf{43.8} & \textbf{38.7} & \textbf{35.2} & 21.5 & \textbf{15.2} & \textbf{46.3} & \textbf{12.7} & \textbf{40.5} & \textbf{33.5} \\
+\bottomrule
+\end{tabular}%
+}
+\vspace{4pt}
+
+\end{table}
+
+To the best of our knowledge, no cross-subject retrieval results have yet been reported on Alljoined-1.6M. As a reference point, ENIGMA~\cite{kneeland2025enigma} reports intra-subject retrieval accuracies of 6.0\% top-1 and 18.85\% top-5 on this benchmark. SAGE-zero-shot surpasses these figures despite operating in the substantially more challenging cross-subject setting.
+
+\paragraph{THINGS-MEG} Table~\ref{tab:sage-thingsmeg-results} provides a detailed per-subject comparison of the impact of SubjectMix on retrieval accuracy on the \textbf{THINGS-MEG}\cite{hebart2025thingsmeg} dataset, with the following TTA parameters : $\text{saw}=0.95$, $k=3$, $\tau=0.03$, $\text{steps}=1$, $\text{power}=1.0$, $\text{iters}=1$.
+
+\begin{table}[H]
+\caption{Overall accuracy (\%) of 200-way zero-shot retrieval on the THINGS-MEG dataset, averaged over 3 seeds.}
+\label{tab:sage-thingsmeg-results}
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+
+\begin{tabular}{@{}llcccccc@{}}
+\toprule
+ & & \multicolumn{4}{c}{Subject} & \\
+\cmidrule(lr){3-6}
+Method & Metric & S1 & S2 & S3 & S4 & Avg.\\
+\midrule
+Baseline & Top-1 & \textbf{5.7} & 6.2 & 6.3 & 2.2 & 5.1 \\
+         & Top-5 & 18.3 & 19.8 & 18.2 & 10.3 & 16.6 \\
+\addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-zero-shot & Top-1 & 4.5 & 7.7 & 4.8 & 2.0 & 4.7 \\
+      & Top-5 & 17.5 & 21.5 & 17.5 & 8.2 & 16.2 \\
+\addlinespace[2pt]
+\hdashline
+\addlinespace[2pt]
+SAGE-TTA & Top-1 & 4.2 & \textbf{10.7} & \textbf{7.8} & \textbf{2.3} & \textbf{6.2} \\
+            & Top-5 & \textbf{19.5} & \textbf{30.0} & \textbf{21.2} & \textbf{12.2} & \textbf{20.7} \\
+\bottomrule
+\end{tabular}%
+\end{table}
+
+The absence of gains from SAGE-zero-shot on THINGS-MEG is likely attributable to the small scale of the inter-subject training regime. In particular, only four subjects are available, which substantially restricts the diversity of cross-subject variation that SubjectMix can exploit during training. This constraint reduces the method's ability to learn subject-invariant structure compared with larger-scale settings. Moreover, the underlying zero-shot baseline remains relatively weak on THINGS-MEG, suggesting that the learned representations are already noisy and therefore provide a limited foundation for mixup-based regularization to improve alignment. For the same reason, SAGE-TTA yields only modest improvements: although test-time alignment can partially refine the correspondence between neural and image embeddings, it cannot fully compensate for limited subject diversity and a comparatively low-quality initial representation.
+
+\subsection{Subject identity probes}
+\label{app:probes}
+
+To verify our hypothesis that \emph{SubjectMix} improves accuracy by disentangling stimulus-relevant and subject-specific information, we train a linear probe to predict subject identity from EEG embeddings in the cross-modal alignment space.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth]{figures/probe_accuracy_alignment_space.png}
+  \caption{Top-1 Accuracy of a linear probe trained to predict subject identity from EEG embeddings in the EEG--image alignment space.}
+  \label{fig:teaser}
+\end{figure}
+
+Interestingly, \emph{SubjectMix} appears better at preventing the entanglement of subject-specific information at the beginning of the training, as reflected by the bigger gap in probe accuracy. Further experiments with direct adversarial removal of subject information via a gradient-reversal head~\cite{ganin2016domain} did not not show any significant improvement in accuracy, and were detrimental at sufficiently high adversarial pressure. This negative result suggests that subject disentanglement is more effectively achieved through inductive biases like SubjectMix rather than through explicit adversarial pressure.
+
+\subsection{Encoder Grids}
+\label{app:encoder-grids}
+
+Figures~\ref{fig:encoder-grid-baseline}--\ref{fig:encoder-grid-final} provide a complementary view of the main training and calibration effects across the full EEG/image encoder grid. Rather than focusing on a single default backbone pair, these plots show that the qualitative gains from SubjectMix and from transductive calibration are broadly distributed across architectures.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_1_nosubjectmix.png}
+        \caption{Top-1 accuracy.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top5_acc_1_nosubjectmix.png}
+        \caption{Top-5 accuracy.}
+    \end{subfigure}
+    \caption{Cross-subject retrieval accuracy across the EEG/image encoder grid without SubjectMix.}
+    \label{fig:encoder-grid-baseline}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_2_subjectmix_diff.png}
+        \caption{Top-1 gain.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top5_acc_2_subjectmix_diff.png}
+        \caption{Top-5 gain.}
+    \end{subfigure}
+    \caption{Accuracy gain from adding SubjectMix across encoder pairs. The effect is broadly positive, highlighting the robustness of the method.}
+    \label{fig:encoder-grid-subjectmix}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_3_tta_diff.png}
+        \caption{Top-1 gain.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top5_acc_3_tta_diff.png}
+        \caption{Top-5 gain.}
+    \end{subfigure}
+    \caption{Additional accuracy gain from SAGE-TTA relative to the SubjectMix-trained encoder. The improvements are again broadly distributed.}
+    \label{fig:encoder-grid-tta}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[H]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top1_acc_4_subjectmix_tta_final.png}
+        \caption{Top-1 accuracy.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[H]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/encoder_grid/best_top5_acc_4_subjectmix_tta_final.png}
+        \caption{Top-5 accuracy.}
+    \end{subfigure}
+    \caption{Final cross-subject retrieval accuracy across the encoder grid after combining SubjectMix with SAGE-TTA.}
+    \label{fig:encoder-grid-final}
+\end{figure}
+
+\subsection{Sensitivity to TTA Hyperparameters}
+\label{app:sensitivity}
+
+Figures~\ref{fig:sensitivity-whitening}--\ref{fig:sensitivity-softprocrustes} show one-dimensional sensitivity sweeps around the selected SAGE-TTA operating point. The most sensitive parameters are Sinkhorn temperature and the shrinking coefficient.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_saw_shrink.png}
+        \caption{Shrinkage coefficient $\rho$.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_csls_k.png}
+        \caption{CSLS neighborhood size $k$.}
+    \end{subfigure}
+    \caption{Sensitivity of SAGE-TTA to the whitening and local-scaling parameters.}
+    \label{fig:sensitivity-whitening}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_sinkhorn_tau.png}
+        \caption{Sinkhorn temperature $\tau_{\mathrm{sk}}$.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_sinkhorn_iters.png}
+        \caption{Number of Sinkhorn iterations.}
+    \end{subfigure}
+    \caption{Sensitivity of SAGE-TTA to the correspondence-estimation stage. }
+    \label{fig:sensitivity-sinkhorn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_soft_steps.png}
+        \caption{Number of soft-Procrustes refinement steps.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/sensitivity/sensitivity_soft_power.png}
+        \caption{Soft-Procrustes power.}
+    \end{subfigure}
+    \caption{Sensitivity of SAGE-TTA to the orthogonal alignment stage.}
+    \label{fig:sensitivity-softprocrustes}
+\end{figure}
+
+
+
+
+
+
+
+\newpage
+\input{checklist.tex}
+
+\end{document}

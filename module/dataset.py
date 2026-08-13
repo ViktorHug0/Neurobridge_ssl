@@ -12,6 +12,8 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import gc
 
+from module.util import _inv_sqrt_cov
+
 
 def _resolve_eeg_file(subject_dir: str, train: bool) -> str:
     """
@@ -55,6 +57,28 @@ def _load_eeg_container(path: str):
         if isinstance(item, dict):
             return item
     return obj
+
+
+def _load_image_target_blocks(target_dirs: list[str], split_file: str):
+    """Load one primary image target plus optional normalized auxiliary blocks."""
+    if not target_dirs:
+        raise ValueError("At least one image feature directory is required")
+    dims = [
+        np.load(os.path.join(directory, split_file), mmap_mode="r").shape[-1]
+        for directory in target_dirs
+    ]
+    if len(target_dirs) == 1:
+        return np.load(os.path.join(target_dirs[0], split_file)), dims
+
+    blocks = []
+    for target_index, directory in enumerate(target_dirs):
+        block = np.load(os.path.join(directory, split_file)).astype(np.float32)
+        if target_index > 0:
+            block /= np.clip(
+                np.linalg.norm(block, axis=-1, keepdims=True), 1e-8, None
+            )
+        blocks.append(block)
+    return np.concatenate(blocks, axis=-1), dims
 
 
 def _eeg_cache_key(
@@ -202,7 +226,14 @@ class EEGPreImageDataset(Dataset):
         image_test_aug=False,
         eeg_test_aug=False,
         frozen_eeg_prior=False,
-        abstraction_image_feature_dirs: list[str] | None = None,
+        cross_subject_average=False,
+        xavg_beta_a=1.0,
+        xavg_beta_b=1.0,
+        xavg_kmin=4,
+        xavg_kmax=36,
+        subject_mixup_within=False,
+        within_mix_alpha=0.5,
+        subject_ea_align=False,
     ):
         super().__init__()
         self.subject_ids = subject_ids
@@ -217,7 +248,17 @@ class EEGPreImageDataset(Dataset):
         self.image_test_aug = image_test_aug
         self.eeg_test_aug = eeg_test_aug
         self.frozen_eeg_prior = frozen_eeg_prior
-        self.sample_abstraction_levels = bool(abstraction_image_feature_dirs)
+        self.cross_subject_average = cross_subject_average
+        self.xavg_beta_a = xavg_beta_a
+        self.xavg_beta_b = xavg_beta_b
+        self.xavg_kmin = xavg_kmin
+        self.xavg_kmax = xavg_kmax
+        self.subject_mixup_within = subject_mixup_within
+        self.within_mix_alpha = within_mix_alpha
+        if cross_subject_average and average:
+            raise ValueError("cross_subject_average needs un-averaged reps; disable data_average.")
+        if subject_mixup_within and average:
+            raise ValueError("subject_mixup_within needs un-averaged reps; disable data_average.")
         self.info = {}
         info_json_path = os.path.join(eeg_data_dir, "info.json")
         if os.path.isfile(info_json_path):
@@ -309,6 +350,17 @@ class EEGPreImageDataset(Dataset):
                             else:
                                 eeg_data[object_idx, image_idx] = self.eeg_transform(eeg_data[object_idx, image_idx])
 
+            if subject_ea_align:
+                # Euclidean Alignment: whiten each subject by its own channel-covariance R^-1/2 so
+                # subjects share a common covariance before averaging ("a smarter cross-subject mean").
+                Xf = eeg_data.reshape(-1, eeg_data.shape[-2], eeg_data.shape[-1]).astype(np.float32)
+                R = np.einsum('nct,ndt->cd', Xf, Xf) / (Xf.shape[0] * Xf.shape[-1])
+                W = _inv_sqrt_cov(R)
+                eeg_data = np.einsum('cd,...dt->...ct', W, eeg_data.astype(np.float32)).astype(eeg_data.dtype, copy=False)
+            if not self.average:
+                # Un-averaged reps for 9 subjects ~= 35GB fp32, OOMs a 31GB box; fp16 halves it to
+                # ~18GB (fork-workers share it copy-on-write). Mixing/averaging upcasts to fp32 per item.
+                eeg_data = eeg_data.astype(np.float16)
             self.eeg_data_list.append(eeg_data)
         
         self.num_subjects = len(self.eeg_data_list)
@@ -330,29 +382,31 @@ class EEGPreImageDataset(Dataset):
                 aug_image_feature = np.load(aug_image_feature_path)
                 self.aug_image_features.append(aug_image_feature)
         
-        if train:
-            self.image_feature_path = os.path.join(self.image_feature_dir, "image_train.npy")
-        else:
-            self.image_feature_path = os.path.join(self.image_feature_dir, "image_test.npy")
+        split_file = "image_train.npy" if train else "image_test.npy"
+        # A comma-separated image_feature_dir means several image targets at once. Preserve
+        # the primary block byte-for-byte so its training path remains matched to a normal
+        # single-target run. Training-only auxiliary blocks are L2-normalized before they are
+        # concatenated; target_dims tells the model where to split them again.
+        target_dirs = [d for d in str(self.image_feature_dir).split(',') if d]
+        self.image_feature_path = os.path.join(target_dirs[0], split_file)
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             if train:
                 self.text_feature_path = os.path.join(self.text_feature_dir, "train.npy")
             else:
                 self.text_feature_path = os.path.join(self.text_feature_dir, "test.npy")
-        
-        self.image_features = np.load(self.image_feature_path)
+
+        self.image_features, self.target_dims = _load_image_target_blocks(
+            target_dirs, split_file
+        )
         self.feature_dim = self.image_features.shape[-1]
-        self.abstraction_image_features = []
-        for abstraction_image_feature_dir in abstraction_image_feature_dirs or []:
-            abstraction_image_feature_path = os.path.join(
-                abstraction_image_feature_dir,
-                "image_train.npy" if train else "image_test.npy",
-            )
-            self.abstraction_image_features.append(np.load(abstraction_image_feature_path))
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             self.text_features = np.load(self.text_feature_path)
     
     def __len__(self):
+        if self.cross_subject_average:
+            return self.num_objects * self.num_images_per_object
+        if self.subject_mixup_within:
+            return self.num_objects * self.num_images_per_object * self.num_subjects
         if self.average and self.random:
             length = self.num_objects * self.num_images_per_object
         elif self.average and not self.random:
@@ -366,7 +420,55 @@ class EEGPreImageDataset(Dataset):
     def __getitem__(self, index):
         # When averaging, use default 0
         repetition_idx = 0
-        
+
+        # Cross-subject average: one synthetic trial per image = mean of a random-size
+        # (Beta-drawn) random subset of the raw reps pooled across all training subjects.
+        if self.cross_subject_average:
+            object_idx = index // self.num_images_per_object
+            image_idx = index % self.num_images_per_object
+            pool = np.concatenate(
+                [self.eeg_data_list[s][object_idx][image_idx] for s in range(self.num_subjects)],
+                axis=0,
+            ).astype(np.float32, copy=False)  # (num_subjects * num_reps, ch, time); upcast fp16->fp32 to average
+            eeg_data, _ = _random_average_trial(
+                pool, self.xavg_kmin, self.xavg_kmax, self.xavg_beta_a, self.xavg_beta_b
+            )
+            if not self.frozen_eeg_prior and self.eeg_transform is not None and self.train:
+                eeg_data = self.eeg_transform(eeg_data)
+            image_feature = self.image_features[object_idx][image_idx]
+            if self.text_feature_dir is not None and self.text_feature_dir != '':
+                text_feature = self.text_features[object_idx][image_idx]
+            else:
+                text_feature = np.zeros((self.feature_dim,))
+            return (
+                torch.tensor(eeg_data, dtype=torch.float32),
+                torch.tensor(image_feature, dtype=torch.float32),
+                torch.tensor(text_feature, dtype=torch.float32),
+                -1, object_idx, image_idx, 0,  # subject_id=-1: synthetic trial has no owner
+            )
+
+        # Within-subject Mixup: Beta convex combination of 2 of THIS subject's own reps for the same
+        # stimulus (isolates whether the gain needs cross-subject pairing). One item per (subject,image).
+        if self.subject_mixup_within:
+            subject_idx = index // (self.num_objects * self.num_images_per_object)
+            object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
+            image_idx = index % self.num_images_per_object
+            reps = self.eeg_data_list[subject_idx][object_idx][image_idx].astype(np.float32)  # (R, C, T)
+            i, j = random.sample(range(reps.shape[0]), 2)
+            lam = random.betavariate(self.within_mix_alpha, self.within_mix_alpha)
+            eeg_data = lam * reps[i] + (1.0 - lam) * reps[j]
+            image_feature = self.image_features[object_idx][image_idx]
+            if self.text_feature_dir is not None and self.text_feature_dir != '':
+                text_feature = self.text_features[object_idx][image_idx]
+            else:
+                text_feature = np.zeros((self.feature_dim,))
+            return (
+                torch.tensor(eeg_data, dtype=torch.float32),
+                torch.tensor(image_feature, dtype=torch.float32),
+                torch.tensor(text_feature, dtype=torch.float32),
+                self.subject_ids[subject_idx], object_idx, image_idx, 0,
+            )
+
         # Average & Random: Loop through objects and images, random subject
         if self.average and self.random:
             subject_idx = random.randint(0, len(self.subject_ids) - 1)
@@ -402,13 +504,7 @@ class EEGPreImageDataset(Dataset):
             if self.eeg_transform is not None and (self.train or self.eeg_test_aug):
                 eeg_data = self.eeg_transform(eeg_data)
         
-        if self.sample_abstraction_levels and (self.train or self.image_test_aug):
-            abstraction_idx = random.randint(0, len(self.abstraction_image_features))
-            if abstraction_idx == 0:
-                image_feature = self.image_features[object_idx][image_idx]
-            else:
-                image_feature = self.abstraction_image_features[abstraction_idx - 1][object_idx][image_idx]
-        elif self.image_aug:
+        if self.image_aug:
             if self.train or self.image_test_aug:
                 aug_idx = random.randint(0, len(self.aug_image_features) - 1)
                 rep_idx = random.randint(0, self.aug_image_features[0].shape[0] - 1)
@@ -436,6 +532,11 @@ class EEGPreImageDataset(Dataset):
     def decode_index(self, index: int):
         repetition_idx = 0
 
+        if self.subject_mixup_within:
+            subject_idx = index // (self.num_objects * self.num_images_per_object)
+            object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
+            image_idx = index % self.num_images_per_object
+            return self.subject_ids[subject_idx], object_idx, image_idx, 0
         if self.average and self.random:
             subject_idx = None
             object_idx = index // self.num_images_per_object
@@ -471,5 +572,34 @@ class EEGPreImageDataset(Dataset):
         return self._image_group_indices
 
 
+def _random_average_trial(pool, kmin, kmax, beta_a, beta_b):
+    """Mean of a random-size (Beta-drawn) random subset of pool rows. pool: (P, ...).
+    Returns (averaged_trial, k). Uses python `random` so DataLoader workers reseed it."""
+    P = pool.shape[0]
+    kmin = max(1, min(kmin, P))
+    kmax = max(kmin, min(kmax, P))
+    u = random.betavariate(beta_a, beta_b)
+    k = max(kmin, min(int(round(kmin + u * (kmax - kmin))), kmax))
+    return pool[random.sample(range(P), k)].mean(axis=0), k
+
+
 if __name__ == '__main__':
-    pass
+    import numpy as _np, statistics as _st
+    _pool = _np.arange(36 * 3).reshape(36, 3).astype(float)
+    for a, b in [(1, 1), (1, 3), (3, 1)]:
+        ks = [_random_average_trial(_pool, 4, 36, a, b)[1] for _ in range(2000)]
+        assert all(4 <= k <= 36 for k in ks), (a, b, min(ks), max(ks))
+        assert _random_average_trial(_pool, 4, 36, a, b)[0].shape == (3,)
+    lo = _st.mean(_random_average_trial(_pool, 4, 36, 1, 3)[1] for _ in range(5000))
+    hi = _st.mean(_random_average_trial(_pool, 4, 36, 3, 1)[1] for _ in range(5000))
+    assert lo < hi, (lo, hi)  # a<b skews to fewer recordings, a>b to more
+    print(f'cross_subject_average self-check OK (mean k: low-skew={lo:.1f} < high-skew={hi:.1f})')
+
+    # Euclidean Alignment: whitening R^-1/2 must make the per-subject channel covariance ~= I.
+    rng = _np.random.default_rng(0)
+    A = rng.standard_normal((8, 8)); Xf = _np.einsum('cd,ndt->nct', A, rng.standard_normal((500, 8, 40))).astype(_np.float32)
+    R = _np.einsum('nct,ndt->cd', Xf, Xf) / (Xf.shape[0] * Xf.shape[-1])
+    W = _inv_sqrt_cov(R); Xa = _np.einsum('cd,ndt->nct', W, Xf)
+    Ra = _np.einsum('nct,ndt->cd', Xa, Xa) / (Xa.shape[0] * Xa.shape[-1])
+    assert _np.allclose(Ra, _np.eye(8), atol=0.05), _np.abs(Ra - _np.eye(8)).max()
+    print('EA self-check OK (aligned covariance ~= I)')

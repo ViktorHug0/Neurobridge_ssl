@@ -4,7 +4,8 @@ from torch.utils.data import BatchSampler
 
 
 class GroupedImageBatchSampler(BatchSampler):
-    def __init__(self, dataset, batch_size, samples_per_image=4, drop_last=True, seed=0):
+    def __init__(self, dataset, batch_size, samples_per_image=4, drop_last=True, seed=0,
+                 images_per_concept=1):
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
         if samples_per_image <= 0:
@@ -15,6 +16,10 @@ class GroupedImageBatchSampler(BatchSampler):
         self.drop_last = drop_last
         self.seed = seed
         self.epoch = 0
+        # >1 draws several images of the SAME concept into one batch, so a concept-level positive
+        # mask has other images of that concept to pull together (cross-subject mixup still finds
+        # its full same-(object,image) subgroup inside each of them).
+        self.images_per_concept = max(1, int(images_per_concept))
 
         image_groups = dataset.get_image_group_indices()
         if not image_groups:
@@ -22,6 +27,9 @@ class GroupedImageBatchSampler(BatchSampler):
 
         self.group_keys = list(image_groups.keys())
         self.image_groups = {key: list(indices) for key, indices in image_groups.items()}
+        self.concept_keys = {}
+        for key in self.group_keys:
+            self.concept_keys.setdefault(key[0], []).append(key)
 
         smallest_group = min(len(indices) for indices in self.image_groups.values())
         max_group = max(len(indices) for indices in self.image_groups.values())
@@ -47,8 +55,17 @@ class GroupedImageBatchSampler(BatchSampler):
         groups_in_batch = 0
 
         for _ in range(self.num_passes):
-            shuffled_keys = list(self.group_keys)
-            rng.shuffle(shuffled_keys)
+            if self.images_per_concept > 1:
+                concepts = list(self.concept_keys)
+                rng.shuffle(concepts)
+                shuffled_keys = []
+                for concept in concepts:
+                    keys = list(self.concept_keys[concept])
+                    rng.shuffle(keys)
+                    shuffled_keys.extend(keys[:self.images_per_concept])
+            else:
+                shuffled_keys = list(self.group_keys)
+                rng.shuffle(shuffled_keys)
 
             for key in shuffled_keys:
                 group_indices = list(self.image_groups[key])
