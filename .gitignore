@@ -19,13 +19,13 @@ output
 *.toc
 
 # Beamer review renders and other generated presentation build products.
-ensemble_experiments/presentation/build/
-ensemble_experiments/presentation/*.aux
-ensemble_experiments/presentation/*.log
-ensemble_experiments/presentation/*.nav
-ensemble_experiments/presentation/*.out
-ensemble_experiments/presentation/*.snm
-ensemble_experiments/presentation/*.toc
+*/presentation/build/
+*/presentation/*.aux
+*/presentation/*.log
+*/presentation/*.nav
+*/presentation/*.out
+*/presentation/*.snm
+*/presentation/*.toc
 
 reference
 exp

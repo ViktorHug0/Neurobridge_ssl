@@ -4,8 +4,9 @@
 # Steps: (1) extract final ViT-H/14 features once, (2) train encoder->raw ViT-H, (3) reconstruct+score.
 # Needs the GPU to itself (SDXL is ~9GB). Run when the card is free.
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # this script now lives in reconstruction_experiments/; paths below are repo-root relative
 source .venv/bin/activate
+export PYTHONPATH="$PWD"   # reconstruct_eval.py imports train, evaluate and module.* from the repo root
 S="${1:-1}"
 
 FEAT=data/things_eeg/image_feature/ViT-H-14_final
@@ -38,4 +39,4 @@ python train.py \
 #    --rescale_norm 0: keep the raw predicted magnitude (mse_on_raw learns the true CLIP scale).
 CKPT=$(ls -dt "$OUT"/*"$NAME" | head -1)
 echo "reconstructing from $CKPT"
-python reconstruct_eval.py --checkpoint_dir "$CKPT" --output_dir "output/recon/$NAME" --rescale_norm 0
+python reconstruction_experiments/reconstruct_eval.py --checkpoint_dir "$CKPT" --output_dir "output/recon/$NAME" --rescale_norm 0
