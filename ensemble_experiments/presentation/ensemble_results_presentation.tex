@@ -31,7 +31,7 @@
   \centering\color{nbred}\bfseries\Large TODO\normalsize\quad #1
   \end{beamercolorbox}}
 
-\title{Monthly meeting\\26/08/2026}
+\title{Monthly meeting\\27/08/2026}
 \author{Philippe Forest}
 \institute{IMT Atlantique}
 \date{}
@@ -79,13 +79,6 @@
 
 \section{Where the gains come from}
 
-{\setbeamertemplate{footline}{}
-\begin{frame}{Ensemble scaling}
-  \centering
-  \includegraphics[width=0.90\textwidth,height=0.79\textheight,keepaspectratio]{ensemble_scaling.png}
-\end{frame}
-}
-
 \begin{frame}{Seed diversity}
   \centering
   \includegraphics[width=0.87\textwidth,height=0.69\textheight,keepaspectratio]{seed_ensembles.png}
@@ -127,7 +120,6 @@
     \draw[arr] (target) -- (score);
   \end{tikzpicture}
 
-  \takeaway{Layer 28 is the single-model baseline; only the frozen visual target depth changes.}
 \end{frame}
 
 \begin{frame}{Image-depth diversity}
@@ -144,14 +136,6 @@
   \takeaway{Changing both encoder and visual depth reaches $43.55\pct$, versus $40.65\pct$ at layer 28.}
 \end{frame}
 
-\begin{frame}{Diversity progression}
-  \centering
-  \includegraphics[width=0.92\textwidth,height=0.68\textheight,keepaspectratio]{diversity_progression.png}
-
-  \vspace{0.2em}
-  \small \textbf{Score correlation:} Pearson correlation between two models' row-z-normalized
-  200-way score vectors, pooled over every trial and LOSO fold.
-\end{frame}
 
 \begin{frame}{The compact four-member committee}
   \small We pooled every compatible trained model in the repository and greedily added
@@ -178,16 +162,12 @@
   \end{columns}
 \end{frame}
 
-\section{What predicts complementarity?}
-
-\begin{frame}{Pairwise complementarity}
+{\setbeamertemplate{footline}{}
+\begin{frame}{Ensemble scaling}
   \centering
-  \includegraphics[width=0.94\textwidth,height=0.72\textheight,keepaspectratio]{pairwise_complementarity.png}
-
-  \small For every single pair of model checkpoint available from our previous experiments
-  (990 pairs), we show the ensembling gain over the mean and the max of the pair,
-  as a function of the accuracy.
+  \includegraphics[width=0.90\textwidth,height=0.79\textheight,keepaspectratio]{ensemble_scaling.png}
 \end{frame}
+}
 
 \begin{frame}{Cross-subject retrieval state of the art}
   \small Existing results on the same 200-way cross-subject retrieval task show a steady
@@ -199,44 +179,104 @@
   \textbf{Ensembling reaches $48.20\pct$ top-1 and $77.60\pct$ top-5, well above the current SOTA.}
 \end{frame}
 
-\begin{frame}{A working mechanism}
-  \small
-  \begin{columns}[T,onlytextwidth]
-    \column{0.55\textwidth}
-      EEG has low signal-to-noise ratio. With finite training data, each architecture
-      learns shared task evidence and also fits a different projection of trial noise:
-      \[
-        z_m(q,c)=g(q,c)+\varepsilon_m(q,c).
-      \]
-      \begin{itemize}
-        \item $g$: stimulus evidence reproducible across architectures
-        \item $\varepsilon_m$: architecture-specific fit to EEG noise and nuisance structure
-        \item distinct inductive biases yield lower-covariance residual errors
-      \end{itemize}
+\begin{frame}{Decorrelation drives gains}
+  \centering
+  \includegraphics[width=0.92\textwidth,height=0.68\textheight,keepaspectratio]{diversity_progression.png}
 
-    \column{0.41\textwidth}
-      \centering
-      \begin{tikzpicture}[
-          box/.style={draw,rounded corners,minimum width=2.15cm,
-                      minimum height=0.7cm,align=center},
-          arr/.style={-{Latex[length=2.3mm]},thick}]
-        \node[box,draw=nbblue,fill=nbblue!8] (shared) at (0,1.1) {shared evidence $g$};
-        \node[box,draw=nborange,fill=nborange!8] (a) at (-1.4,0) {$g+\varepsilon_A$};
-        \node[box,draw=nbgreen,fill=nbgreen!8] (b) at (1.4,0) {$g+\varepsilon_B$};
-        \node[box,draw=nbblue,fill=nbblue!8] (avg) at (0,-1.1) {average scores};
-        \draw[arr,draw=nborange] (shared) -- (a);
-        \draw[arr,draw=nbgreen] (shared) -- (b);
-        \draw[arr,draw=nborange] (a) -- (avg);
-        \draw[arr,draw=nbgreen] (b) -- (avg);
-      \end{tikzpicture}
+  \vspace{0.2em}
+  \small \textbf{Score correlation:} Pearson correlation between two models' row-z-normalized
+  200-way score vectors, pooled over every trial and LOSO fold.
+\end{frame}
+
+\section{What predicts complementarity?}
+
+\begin{frame}{Pairwise complementarity}
+  \centering
+  \includegraphics[width=0.94\textwidth,height=0.72\textheight,keepaspectratio]{pairwise_complementarity.png}
+
+  \small For every single pair of model checkpoint available from our previous experiments
+  (990 pairs), we show the ensembling gain over the mean and the max of the pair,
+  as a function of the accuracy.
+\end{frame}
+
+
+\begin{frame}{A score-level error model}
+  \small We model the \textbf{post-row-z retrieval score} of member $i$ as
+  \[
+    z_i(t,c)=\mu(t,c)+\eta(t,c)+\xi_i(t,c).
+  \]
+
+  \vspace{0.25em}
+  \begin{center}
+  \begin{tabular}{@{}cp{0.78\textwidth}@{}}
+    \toprule
+    Term & Interpretation \\
+    \midrule
+    $\mu$ & recoverable stimulus evidence: what accurate models should share \\
+    $\eta$ & correlated error from the same EEG trial, artifacts, and LOSO shift \\
+    $\xi_i$ & model-specific residual induced by architecture, seed, and optimization \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.35em}
+  \textcolor{nbgray}{This is a working decomposition, not an identifiable generative model:
+  the boundary between $\eta$ and $\xi_i$ depends on the model population.}
+
+  \takeaway{Members should agree on $\mu$; averaging can attenuate $\xi_i$, but not shared error $\eta$.}
+\end{frame}
+
+\begin{frame}{What score averaging removes}
+  \small Uniform averaging preserves the common terms and averages the residuals:
+  \[
+    \bar z=\mu+\eta+\bar\xi,
+    \qquad \bar\xi=\frac{1}{K}\sum_{i=1}^{K}\xi_i.
+  \]
+  If $\operatorname{Var}(\xi_i)=\sigma_\xi^2$ and residual pairs share nonnegative correlation $\rho_e$,
+  \[
+    \operatorname{Var}(\bar\xi)
+    =\sigma_\xi^2\!\left[\frac{1}{K}+\left(1-\frac{1}{K}\right)\rho_e\right]
+    =\sigma_\xi^2\!\left[\rho_e+\frac{1-\rho_e}{K}\right].
+  \]
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.48\textwidth}
+      \begin{itemize}
+        \item lower residual covariance $\Rightarrow$ more removable error
+        \item $K\!\to\!\infty$: floor $\rho_e\sigma_\xi^2$
+      \end{itemize}
+    \column{0.48\textwidth}
+      \begin{itemize}
+        \item largest benefit is expected from early members
+        \item one deterministic model has no across-function average; stochastic model averaging can approximate one
+      \end{itemize}
   \end{columns}
 
-  \vspace{-0.25em}
+  \textcolor{nbgray}{Measured score correlation is not $\rho_e$: shared components $\mu+\eta$ also raise it.}
+\end{frame}
+
+\begin{frame}{Why retrieval amplifies variance reduction}
+  \small Top-1 is a threshold event against the strongest of 199 distractors:
   \[
-    \operatorname{Var}(\bar\varepsilon)
-    =\frac{1}{k^2}\sum_{i,j}\operatorname{Cov}(\varepsilon_i,\varepsilon_j).
+    \operatorname{Acc}
+    =\Pr\!\left[\bar z(t,c^*)>\max_{c\neq c^*}\bar z(t,c)\right].
   \]
-  \centering\textbf{Averaging cancels architecture-specific noise only when residual errors have low covariance.}
+
+  \vspace{0.25em}
+  \begin{center}
+  \begin{tabular}{@{}p{0.43\textwidth}p{0.47\textwidth}@{}}
+    \toprule
+    Mechanism & Observed signature \\
+    \midrule
+    many trials near the top-rank boundary & modest score stabilization flips many argmax decisions \\
+    heterogeneous biases lower residual covariance & ATM + TSConv gives the first large gain \\
+    $1/K$ term decays quickly & gains are front-loaded at $k=2$ \\
+    shared error and covariance remain & committees saturate after a few members \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \takeaway{This explains the observed pattern, but is not a universal guarantee: weak or similarly biased members can hurt.}
 \end{frame}
 
 \section{From prediction to intervention}
@@ -441,7 +481,7 @@
   \end{enumerate}
 \end{frame}
 
-\begin{frame}{References}
+\begin{frame}{References: EEG decoding}
   \small
   \begin{thebibliography}{9}
     \bibitem{gifford2022}
@@ -464,6 +504,30 @@
       \newblock EEG Conformer: Convolutional Transformer for EEG decoding and visualization.
       \newblock \emph{IEEE TNSRE}, 31:710--719, 2023.
   \end{thebibliography}
+\end{frame}
+
+\begin{frame}{References: ensemble theory}
+  \small
+  \begin{thebibliography}{9}
+    \bibitem{krogh1994}
+      A. Krogh and J. Vedelsby.
+      \newblock Neural network ensembles, cross validation and active learning.
+      \newblock \emph{NeurIPS 7}, 1994.
+
+    \bibitem{ueda1996}
+      N. Ueda and R. Nakano.
+      \newblock Generalization error of ensemble estimators.
+      \newblock \emph{ICNN}, 1996.
+
+    \bibitem{fort2019}
+      S. Fort, H. Hu, and B. Lakshminarayanan.
+      \newblock Deep ensembles: A loss landscape perspective.
+      \newblock \emph{arXiv:1912.02757}, 2019.
+  \end{thebibliography}
+
+  \vspace{0.8em}
+  \textcolor{nbgray}{Classical variance--covariance analysis motivates the score model;
+  modern deep-ensemble evidence emphasizes diversity in function space.}
 \end{frame}
 
 \begin{frame}[plain]
