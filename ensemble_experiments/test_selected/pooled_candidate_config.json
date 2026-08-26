@@ -1,0 +1,44 @@
+{
+  "protocol_version": 3,
+  "protocol_name": "single_pooled_all10_candidate_scorer",
+  "members": [
+    "atm_iv",
+    "iv33",
+    "atm_vith_group_e75",
+    "bigg27_group_e75",
+    "iv_vith_dino_aux025_group_e75"
+  ],
+  "score_transform": {
+    "name": "row_z_signed_power",
+    "power": 1.25,
+    "epsilon": 1e-06
+  },
+  "training": {
+    "hidden_dim": 32,
+    "epochs": 400,
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "weight_decay": 0.001,
+    "residual_scale": 0.5,
+    "cross_entropy_weight": 0.25,
+    "hard_negative_weight": 1.0,
+    "hard_negative_margin": 0.1,
+    "hard_negative_temperature": 0.1,
+    "fusion_temperature": 1.0,
+    "seed": 3300
+  },
+  "variants": ["linear", "mlp"],
+  "subjects": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "data_contract": {
+    "dump_root": "results/things_eeg/synthetic_subjects/ensemble_screen/dumps",
+    "dump_pattern": "{member}-sub{subject:02d}.npz"
+  },
+  "inference_constraints": {
+    "uses_subject_id_feature": false,
+    "uses_subject_specific_parameters": false,
+    "uses_other_queries_at_inference": false,
+    "member_pool_changes_by_subject": false,
+    "scoring_rule_changes_by_subject": false,
+    "fitted_model_changes_by_subject": false
+  }
+}

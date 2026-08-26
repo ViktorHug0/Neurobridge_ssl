@@ -1,0 +1,7 @@
+{
+  "iv_pair_val_s3300": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3300_valbest",
+  "iv_pair_val_s3301": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3301_valbest",
+  "iv_pair_val_s3302": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3302_valbest",
+  "iv_g100_stage_a": "results/things_eeg/honest_ensemble/iv_g100_val/seed3300",
+  "rn50l3_g100_stage_a": "results/things_eeg/honest_ensemble/rn50l3_g100_val/seed3300"
+}

@@ -233,6 +233,8 @@ class EEGPreImageDataset(Dataset):
         xavg_kmax=36,
         subject_mixup_within=False,
         within_mix_alpha=0.5,
+        bootstrap_repetition_average=False,
+        bootstrap_repetition_count=4,
         subject_ea_align=False,
     ):
         super().__init__()
@@ -255,10 +257,16 @@ class EEGPreImageDataset(Dataset):
         self.xavg_kmax = xavg_kmax
         self.subject_mixup_within = subject_mixup_within
         self.within_mix_alpha = within_mix_alpha
+        self.bootstrap_repetition_average = bootstrap_repetition_average
+        self.bootstrap_repetition_count = bootstrap_repetition_count
         if cross_subject_average and average:
             raise ValueError("cross_subject_average needs un-averaged reps; disable data_average.")
         if subject_mixup_within and average:
             raise ValueError("subject_mixup_within needs un-averaged reps; disable data_average.")
+        if bootstrap_repetition_average and average:
+            raise ValueError("bootstrap_repetition_average needs un-averaged reps; disable data_average.")
+        if bootstrap_repetition_count < 1:
+            raise ValueError("bootstrap_repetition_count must be positive.")
         self.info = {}
         info_json_path = os.path.join(eeg_data_dir, "info.json")
         if os.path.isfile(info_json_path):
@@ -407,6 +415,8 @@ class EEGPreImageDataset(Dataset):
             return self.num_objects * self.num_images_per_object
         if self.subject_mixup_within:
             return self.num_objects * self.num_images_per_object * self.num_subjects
+        if self.bootstrap_repetition_average:
+            return self.num_objects * self.num_images_per_object * self.num_subjects
         if self.average and self.random:
             length = self.num_objects * self.num_images_per_object
         elif self.average and not self.random:
@@ -457,6 +467,36 @@ class EEGPreImageDataset(Dataset):
             i, j = random.sample(range(reps.shape[0]), 2)
             lam = random.betavariate(self.within_mix_alpha, self.within_mix_alpha)
             eeg_data = lam * reps[i] + (1.0 - lam) * reps[j]
+            image_feature = self.image_features[object_idx][image_idx]
+            if self.text_feature_dir is not None and self.text_feature_dir != '':
+                text_feature = self.text_features[object_idx][image_idx]
+            else:
+                text_feature = np.zeros((self.feature_dim,))
+            return (
+                torch.tensor(eeg_data, dtype=torch.float32),
+                torch.tensor(image_feature, dtype=torch.float32),
+                torch.tensor(text_feature, dtype=torch.float32),
+                self.subject_ids[subject_idx], object_idx, image_idx, 0,
+            )
+
+        # Hierarchical nonparametric augmentation: retain one row per
+        # (subject, stimulus), but bootstrap that subject's repeated measurements
+        # before any cross-subject mixing in the training loop. Sampling with
+        # replacement preserves the subject mean in expectation while exposing
+        # finite-repetition uncertainty that a fixed four-repetition mean hides.
+        if self.bootstrap_repetition_average:
+            subject_idx = index // (self.num_objects * self.num_images_per_object)
+            object_idx = (
+                index % (self.num_objects * self.num_images_per_object)
+            ) // self.num_images_per_object
+            image_idx = index % self.num_images_per_object
+            reps = self.eeg_data_list[subject_idx][object_idx][image_idx].astype(
+                np.float32
+            )
+            draw = np.random.randint(
+                0, reps.shape[0], size=self.bootstrap_repetition_count
+            )
+            eeg_data = reps[draw].mean(axis=0, dtype=np.float32)
             image_feature = self.image_features[object_idx][image_idx]
             if self.text_feature_dir is not None and self.text_feature_dir != '':
                 text_feature = self.text_features[object_idx][image_idx]
@@ -535,6 +575,13 @@ class EEGPreImageDataset(Dataset):
         if self.subject_mixup_within:
             subject_idx = index // (self.num_objects * self.num_images_per_object)
             object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
+            image_idx = index % self.num_images_per_object
+            return self.subject_ids[subject_idx], object_idx, image_idx, 0
+        if self.bootstrap_repetition_average:
+            subject_idx = index // (self.num_objects * self.num_images_per_object)
+            object_idx = (
+                index % (self.num_objects * self.num_images_per_object)
+            ) // self.num_images_per_object
             image_idx = index % self.num_images_per_object
             return self.subject_ids[subject_idx], object_idx, image_idx, 0
         if self.average and self.random:

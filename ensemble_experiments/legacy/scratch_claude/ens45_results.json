@@ -1,0 +1,257 @@
+{
+ "solo": {
+  "atm17": 30.699999183416367,
+  "atm23": 32.7499994635582,
+  "atm33": 34.19999912381172,
+  "atm_bigg": 32.44999960064888,
+  "atm_dino": 25.449999421834946,
+  "atm_eva": 32.1499989926815,
+  "atm_iv": 35.19999921321869,
+  "atm_rn50": 18.399999737739563,
+  "atm_vitb": 27.49999925494194,
+  "atm_vith": 29.79999929666519,
+  "conf_bigg": 24.949999451637268,
+  "conf_dino": 23.099999576807022,
+  "conf_eva": 24.799999743700027,
+  "conf_iv": 26.599999219179153,
+  "conf_vitb": 21.599999517202377,
+  "conf_vith": 26.349999755620956,
+  "eegnet_bigg": 23.399999290704727,
+  "eegnet_dino": 21.099999845027924,
+  "eegnet_eva": 23.39999958872795,
+  "eegnet_iv": 26.19999960064888,
+  "eegnet_rn50": 13.549999594688416,
+  "eegnet_vitb": 20.749999582767487,
+  "eegnet_vith": 21.499999463558197,
+  "eegproj_bigg": 25.249999538064003,
+  "eegproj_dino": 22.899999618530273,
+  "eegproj_eva": 25.049999356269836,
+  "eegproj_iv": 27.399999350309372,
+  "eegproj_rn50": 12.549999728798866,
+  "eegproj_vitb": 21.79999940097332,
+  "eegproj_vith": 24.349999278783798,
+  "ge100": 37.04999893903732,
+  "group": 36.699999272823334,
+  "iv23": 33.9499993622303,
+  "iv33": 35.849999487400055,
+  "p3301": 34.849999099969864,
+  "p3302": 34.59999889135361,
+  "pair": 34.79999899864197,
+  "router": 36.19999945163727,
+  "rvgroup": 36.04999929666519,
+  "tm3": 35.29999911785126,
+  "tsconv17": 32.849999368190765,
+  "tsconv_bigg": 32.74999916553497,
+  "tsconv_dino": 30.999999344348907,
+  "tsconv_eva": 33.9499993622303,
+  "tsconv_iv": 36.099999248981476,
+  "tsconv_rn50": 20.949999541044235,
+  "tsconv_vitb": 29.699998944997787,
+  "tsconv_vith": 32.64999970793724
+ },
+ "report": {
+  "4": {
+   "nested": 43.95,
+   "nested_perfold": [
+    54.5,
+    54.5,
+    37.0,
+    34.5,
+    45.0,
+    32.0,
+    41.5,
+    36.0,
+    48.0,
+    56.5
+   ],
+   "picks": [
+    [
+     "atm_iv",
+     "iv33",
+     "tm3",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tm3",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "group",
+     "iv33",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tsconv_dino",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "group",
+     "iv33",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "atm_vith",
+     "iv33",
+     "p3302"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tsconv_eva",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tm3",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tm3",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "iv33",
+     "tsconv_dino",
+     "tsconv_vith"
+    ]
+   ],
+   "selected": [
+    "atm_iv",
+    "iv33",
+    "tm3",
+    "tsconv_vith"
+   ],
+   "selected_mean": 45.85000228881836,
+   "selected_perfold": [
+    54.5,
+    54.5,
+    39.0,
+    38.0,
+    48.0,
+    36.499996185302734,
+    43.5,
+    36.0,
+    48.0,
+    60.499996185302734
+   ]
+  },
+  "5": {
+   "nested": 43.94999961853027,
+   "nested_perfold": [
+    55.5,
+    52.0,
+    35.0,
+    37.5,
+    45.0,
+    36.0,
+    41.5,
+    34.5,
+    43.5,
+    58.999996185302734
+   ],
+   "picks": [
+    [
+     "atm_iv",
+     "ge100",
+     "iv33",
+     "tsconv_bigg",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "ge100",
+     "iv33",
+     "rvgroup",
+     "tsconv_vith"
+    ],
+    [
+     "atm33",
+     "atm_vith",
+     "ge100",
+     "iv23",
+     "tsconv_bigg"
+    ],
+    [
+     "atm_iv",
+     "ge100",
+     "iv23",
+     "iv33",
+     "tsconv_vith"
+    ],
+    [
+     "atm_iv",
+     "ge100",
+     "iv33",
+     "tsconv_bigg",
+     "tsconv_vith"
+    ],
+    [
+     "atm33",
+     "atm_vith",
+     "ge100",
+     "iv23",
+     "tsconv_bigg"
+    ],
+    [
+     "atm33",
+     "atm_vith",
+     "ge100",
+     "iv23",
+     "tsconv_bigg"
+    ],
+    [
+     "atm_iv",
+     "conf_vith",
+     "ge100",
+     "iv33",
+     "tsconv_bigg"
+    ],
+    [
+     "atm_iv",
+     "conf_vith",
+     "ge100",
+     "iv33",
+     "tsconv_bigg"
+    ],
+    [
+     "atm_iv",
+     "ge100",
+     "iv33",
+     "tsconv_bigg",
+     "tsconv_vith"
+    ]
+   ],
+   "selected": [
+    "atm_iv",
+    "ge100",
+    "iv23",
+    "iv33",
+    "tsconv_vith"
+   ],
+   "selected_mean": 46.150001525878906,
+   "selected_perfold": [
+    56.5,
+    55.5,
+    37.5,
+    37.5,
+    45.5,
+    41.0,
+    44.5,
+    37.0,
+    45.5,
+    61.0
+   ]
+  }
+ }
+}

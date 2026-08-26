@@ -62,12 +62,21 @@ def extract_open_clip_intermediate(image, processor, model, augmentation, device
     image = processor(image).unsqueeze(0).to(device=device, dtype=dtype)
 
     visual = model.visual
+    convolutional_stage = False
     if hasattr(visual, "transformer") and hasattr(visual.transformer, "resblocks"):
         blocks = visual.transformer.resblocks
     elif hasattr(visual, "trunk") and hasattr(visual.trunk, "blocks"):
         blocks = visual.trunk.blocks
+    elif all(hasattr(visual, f"layer{index}") for index in range(1, 5)):
+        # OpenCLIP's ModifiedResNet exposes the four residual stages directly.
+        # The shallow-alignment paper's RN50/RN101 layer 3 is therefore index 2.
+        blocks = [getattr(visual, f"layer{index}") for index in range(1, 5)]
+        convolutional_stage = True
     else:
-        raise ValueError("Selected open_clip backbone does not expose intermediate vision blocks.")
+        raise ValueError(
+            "Selected open_clip backbone does not expose transformer blocks or "
+            "four residual stages."
+        )
 
     if layer_idx < 0 or layer_idx >= len(blocks):
         raise ValueError(f"Invalid intermediate layer index {layer_idx}. Valid range: [0, {len(blocks)-1}]")
@@ -89,7 +98,13 @@ def extract_open_clip_intermediate(image, processor, model, augmentation, device
         raise RuntimeError("Forward hook did not capture intermediate output.")
 
     hidden = layer_output["hidden"]
-    if pool_type == "cls":
+    if convolutional_stage:
+        if pool_type != "mean":
+            raise ValueError("Intermediate ResNet stages require --intermediate_pool mean")
+        if hidden.ndim != 4:
+            raise RuntimeError(f"Expected BCHW ResNet stage output, got {tuple(hidden.shape)}")
+        pooled = hidden.mean(dim=(-2, -1))
+    elif pool_type == "cls":
         pooled = hidden[:, 0, :]
     elif pool_type == "mean":
         pooled = hidden[:, 1:, :].mean(dim=1) if hidden.shape[1] > 1 else hidden.mean(dim=1)
@@ -330,8 +345,9 @@ if __name__ == "__main__":
         type=int,
         default=11,
         help=(
-            "0-indexed ViT transformer block output (after patch embed). "
-            "E.g. open_clip ViT-B/16 has 12 blocks, valid indices are 0–11."
+            "0-indexed ViT transformer block output (after patch embed), or "
+            "0-indexed residual stage for OpenCLIP RN50/RN101. E.g. ViT-B/16 "
+            "has 12 blocks (0–11), while paper ResNet layer 3 is index 2."
         ),
     )
     parser.add_argument("--intermediate_pool", type=str, choices=["cls", "mean"], default="cls")

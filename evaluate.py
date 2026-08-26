@@ -24,6 +24,49 @@ from module.util import (
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
 
 
+def _zero_padded_time_shift(features, shifts):
+    """Shift each batch row along time; positive values delay the signal."""
+    time_points = features.shape[-1]
+    source_time = (
+        torch.arange(time_points, device=features.device).unsqueeze(0)
+        - shifts.to(device=features.device, dtype=torch.long).unsqueeze(1)
+    )
+    valid = (source_time >= 0) & (source_time < time_points)
+    shape = (features.shape[0],) + (1,) * (features.ndim - 2) + (time_points,)
+    gather_index = source_time.clamp(0, time_points - 1).view(shape).expand_as(features)
+    shifted = torch.gather(features, -1, gather_index)
+    return shifted * valid.view(shape).expand_as(features).to(features.dtype)
+
+
+def canonicalize_query_latency(features, template, max_shift):
+    """Align each query independently to a source-only ERP template."""
+    if max_shift <= 0:
+        return features, torch.zeros(features.shape[0], dtype=torch.long, device=features.device)
+    template = torch.as_tensor(template, device=features.device, dtype=features.dtype)
+    if tuple(template.shape) != tuple(features.shape[1:]):
+        raise ValueError(
+            f"latency template shape {tuple(template.shape)} does not match "
+            f"one EEG query {tuple(features.shape[1:])}"
+        )
+    centered_template = template - template.mean(dim=-1, keepdim=True)
+    centered_template = centered_template.flatten().unsqueeze(0)
+    candidates = []
+    possible = torch.arange(-int(max_shift), int(max_shift) + 1, device=features.device)
+    for shift in possible.tolist():
+        shifted = _zero_padded_time_shift(
+            features,
+            torch.full((features.shape[0],), shift, device=features.device),
+        )
+        centered = shifted - shifted.mean(dim=-1, keepdim=True)
+        similarity = torch.nn.functional.cosine_similarity(
+            centered.flatten(1), centered_template.expand(features.shape[0], -1), dim=1
+        )
+        candidates.append(similarity)
+    best = torch.stack(candidates, dim=1).argmax(dim=1)
+    selected_shifts = possible[best]
+    return _zero_padded_time_shift(features, selected_shifts), selected_shifts
+
+
 def _load_json(path):
     if not os.path.isfile(path):
         return {}
@@ -233,7 +276,10 @@ def _forward_feature(args, modules, eeg_backbone_batch):
     return modules["eeg_projector"](eeg_backbone_batch)
 
 
-def _encode_dataset_features(eval_args, modules, model, img_projector, device, subject_ids, average):
+def _encode_dataset_features(
+    eval_args, modules, model, img_projector, device, subject_ids, average,
+    latency_template=None, latency_max_shift=0, eeg_tta_shifts=None,
+):
     dataset = EEGPreImageDataset(
         subject_ids,
         eval_args.eeg_data_dir,
@@ -272,8 +318,41 @@ def _encode_dataset_features(eval_args, modules, model, img_projector, device, s
             object_idx_batch = batch[4].to(device)
             image_idx_batch = batch[5].to(device)
 
-            eeg_backbone_batch = run_eeg_backbone(model, eval_args, eeg_batch, subject_id_batch)
-            eeg_feature_batch = _forward_feature(eval_args, modules, eeg_backbone_batch)
+            if latency_template is not None and latency_max_shift > 0:
+                eeg_batch, _ = canonicalize_query_latency(
+                    eeg_batch, latency_template, latency_max_shift
+                )
+
+            tta_shifts = tuple(eeg_tta_shifts or (0,))
+            if tta_shifts == (0,):
+                eeg_backbone_batch = run_eeg_backbone(
+                    model, eval_args, eeg_batch, subject_id_batch
+                )
+                eeg_feature_batch = _forward_feature(
+                    eval_args, modules, eeg_backbone_batch
+                )
+            else:
+                shifted_features = []
+                for shift in tta_shifts:
+                    shifted_eeg = _zero_padded_time_shift(
+                        eeg_batch,
+                        torch.full(
+                            (eeg_batch.shape[0],),
+                            int(shift),
+                            device=eeg_batch.device,
+                            dtype=torch.long,
+                        ),
+                    )
+                    shifted_backbone = run_eeg_backbone(
+                        model, eval_args, shifted_eeg, subject_id_batch
+                    )
+                    shifted_feature = _forward_feature(
+                        eval_args, modules, shifted_backbone
+                    )
+                    shifted_features.append(
+                        torch.nn.functional.normalize(shifted_feature, dim=1)
+                    )
+                eeg_feature_batch = torch.stack(shifted_features, dim=0).mean(dim=0)
             image_feature_proj = img_projector(image_feature_batch)
 
             eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
@@ -294,7 +373,8 @@ def _encode_dataset_features(eval_args, modules, model, img_projector, device, s
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory containing checkpoint_test_best.pth and train_config.json")
+    parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory containing the checkpoint and train_config.json")
+    parser.add_argument("--checkpoint_name", default="checkpoint_test_best.pth", type=str, help="checkpoint filename inside --checkpoint_dir")
     parser.add_argument("--output_dir", required=True, type=str)
     parser.add_argument("--output_name", required=True, type=str)
     parser.add_argument("--eval_mode", required=True, type=str, choices=["plain_cosine", "saw", "csls", "saw_csls"])
@@ -326,16 +406,35 @@ def main():
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
     parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded features + labels here (for caption_eval.py)")
     parser.add_argument("--feature_dim", type=int, default=None)
+    parser.add_argument(
+        "--test_data_average",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override the training data_average flag for inference-only test loading",
+    )
+    parser.add_argument("--latency_template_npy", type=str, default=None, help="source-only grand ERP template used for independent per-query latency canonicalization")
+    parser.add_argument("--latency_max_shift", type=int, default=0, help="maximum absolute per-query canonicalization shift in samples")
+    parser.add_argument(
+        "--eeg_tta_shifts",
+        type=int,
+        nargs="+",
+        default=None,
+        help=(
+            "deterministic zero-padded time shifts whose independently normalized "
+            "EEG embeddings are averaged per query (default: the exact shift-0 path)"
+        ),
+    )
     args = parser.parse_args()
 
     checkpoint_dir = os.path.abspath(args.checkpoint_dir)
-    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_test_best.pth")
+    checkpoint_path = os.path.join(checkpoint_dir, args.checkpoint_name)
     if not os.path.isfile(checkpoint_path):
-        raise FileNotFoundError(f"Could not find checkpoint_test_best.pth in '{checkpoint_dir}'")
+        raise FileNotFoundError(f"Could not find {args.checkpoint_name} in '{checkpoint_dir}'")
 
     train_cfg = _load_json(os.path.join(checkpoint_dir, "train_config.json"))
     eval_cfg = _load_json(os.path.join(checkpoint_dir, "evaluate_config.json"))
     eval_args = _build_eval_args(train_cfg, eval_cfg, args)
+    eval_args.eeg_tta_shifts = list(dict.fromkeys(args.eeg_tta_shifts or [0]))
 
     seed_everything(seed=args.seed if args.seed is not None else train_cfg.get("seed"))
 
@@ -348,7 +447,12 @@ def main():
     device = torch.device(eval_args.device if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    test_average = _to_bool(getattr(eval_args, "data_average", True), True)
+    test_average_override = getattr(eval_args, "test_data_average", None)
+    test_average = (
+        _to_bool(test_average_override, True)
+        if test_average_override is not None
+        else _to_bool(getattr(eval_args, "data_average", True), True)
+    )
     test_dataset = EEGPreImageDataset(
         [eval_args.test_subject_id],
         eval_args.eeg_data_dir,
@@ -422,6 +526,18 @@ def main():
         "alignment_subspace_dim": getattr(eval_args, "sattc_alignment_subspace_dim", None),
     }
 
+    latency_template = None
+    if args.latency_template_npy is not None:
+        latency_template = np.load(args.latency_template_npy)
+        if latency_template.ndim == 3:
+            fold_index = int(eval_args.test_subject_id) - 1
+            if not 0 <= fold_index < latency_template.shape[0]:
+                raise ValueError(
+                    f"test subject {eval_args.test_subject_id} has no row in latency "
+                    f"template array with shape {latency_template.shape}"
+                )
+            latency_template = latency_template[fold_index]
+
     eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
         eval_args,
         modules,
@@ -430,6 +546,9 @@ def main():
         device,
         [eval_args.test_subject_id],
         average=test_average,
+        latency_template=latency_template,
+        latency_max_shift=args.latency_max_shift,
+        eeg_tta_shifts=eval_args.eeg_tta_shifts,
     )
 
     if args.dump_npz:
@@ -482,6 +601,7 @@ def main():
         "checkpoint_path": checkpoint_path,
         "test_subject_id": int(eval_args.test_subject_id),
         "eval_mode": eval_args.eval_mode,
+        "eeg_tta_shifts": eval_args.eeg_tta_shifts,
         "top1_acc": top1_acc,
         "top5_acc": top5_acc,
     }
@@ -490,7 +610,8 @@ def main():
 
     print(
         f"eval_mode={eval_args.eval_mode} subject={eval_args.test_subject_id} "
-        f"top1={top1_acc:.2f} top5={top5_acc:.2f} checkpoint_epoch={checkpoint.get('epoch', -1)}"
+        f"eeg_tta_shifts={eval_args.eeg_tta_shifts} top1={top1_acc:.2f} "
+        f"top5={top5_acc:.2f} checkpoint_epoch={checkpoint.get('epoch', -1)}"
     )
 
 

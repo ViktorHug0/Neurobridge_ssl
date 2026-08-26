@@ -1,0 +1,37 @@
+{
+  "atm_iv": {
+    "eeg_encoder_type": "ATM",
+    "eeg_backbone_dim": 128,
+    "feature_dim": 128,
+    "image_feature_dir": "/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit",
+    "mixup_type": "pairwise"
+  },
+  "ge100": {
+    "eeg_encoder_type": "TSConv_parameterizable",
+    "eeg_backbone_dim": 1024,
+    "feature_dim": 512,
+    "image_feature_dir": "/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit",
+    "mixup_type": "group"
+  },
+  "atm_vith_group_e75": {
+    "eeg_encoder_type": "ATM",
+    "eeg_backbone_dim": 128,
+    "feature_dim": 128,
+    "image_feature_dir": "/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-H-14_layer10_mean",
+    "mixup_type": "group"
+  },
+  "iv33_group_e75": {
+    "eeg_encoder_type": "TSConv_parameterizable",
+    "eeg_backbone_dim": 1024,
+    "feature_dim": 512,
+    "image_feature_dir": "/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer33_mean_8bit",
+    "mixup_type": "group"
+  },
+  "dino16_group_e75": {
+    "eeg_encoder_type": "TSConv_parameterizable",
+    "eeg_backbone_dim": 1024,
+    "feature_dim": 512,
+    "image_feature_dir": "/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/dinov2-giant_layer16_mean",
+    "mixup_type": "group"
+  }
+}

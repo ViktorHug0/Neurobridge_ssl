@@ -13,6 +13,19 @@ output
 
 *.pth
 *.pdf
+*.aux
+*.nav
+*.snm
+*.toc
+
+# Beamer review renders and other generated presentation build products.
+ensemble_experiments/presentation/build/
+ensemble_experiments/presentation/*.aux
+ensemble_experiments/presentation/*.log
+ensemble_experiments/presentation/*.nav
+ensemble_experiments/presentation/*.out
+ensemble_experiments/presentation/*.snm
+ensemble_experiments/presentation/*.toc
 
 reference
 exp

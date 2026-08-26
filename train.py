@@ -31,8 +31,6 @@ from module.eeg_encoder.model import (
     EEGTransformer,
     TSConv30,
 )
-from module.adversarial import SubjectDiscriminator, dann_lambda, grad_reverse
-from module.distillation import cross_modal_distillation_loss
 from module.loss import ContrastiveLoss
 from module.util import (
     _estimate_mu_cov,
@@ -47,6 +45,17 @@ from module.projector import *
 from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
 from module.eeg_augmentation import RandomTimeShift, RandomGaussianNoise, RandomChannelDropout, RandomSmooth
+from module.subject_augmentation import (
+    coherent_cross_subject_stimulus_mix,
+    cross_dataset_residual_subject_mix,
+    sample_coherent_subject_weights,
+    subject_coherent_mixstyle,
+    subject_style_manifold,
+    translate_auxiliary_subjects,
+    cross_subject_spectral_style_mix,
+    coherent_subject_time_shift,
+    sample_coherent_subject_time_shifts,
+)
 
 
 def seed_everything(seed: int = None):
@@ -126,6 +135,96 @@ def compute_subject_mixup_regularization(mixed_eeg_feature, original_eeg_feature
     ) / mixed_eeg_feature.shape[0]
 
 
+def exact_stimulus_cross_subject_partners(
+    object_indices, image_indices, subject_ids, eligible_mask,
+):
+    """Choose a different eligible person viewing the exact same image."""
+    partners = torch.arange(
+        subject_ids.shape[0], device=subject_ids.device, dtype=torch.long
+    )
+    valid = torch.zeros_like(subject_ids, dtype=torch.bool)
+    groups = {}
+    for row, (obj, image, subject, eligible) in enumerate(zip(
+        object_indices.detach().cpu().tolist(),
+        image_indices.detach().cpu().tolist(),
+        subject_ids.detach().cpu().tolist(),
+        eligible_mask.detach().cpu().tolist(),
+    )):
+        if eligible:
+            groups.setdefault((int(obj), int(image)), []).append((row, int(subject)))
+    for rows in groups.values():
+        for row, subject in rows:
+            candidates = [other for other, other_subject in rows if other_subject != subject]
+            if not candidates:
+                continue
+            choice = torch.randint(len(candidates), (), device=subject_ids.device)
+            partners[row] = candidates[int(choice)]
+            valid[row] = True
+    return partners, valid
+
+
+def compute_mutual_reconstruction_loss(
+    model, content_features, real_eeg_targets, object_indices, image_indices,
+    subject_ids, eligible_mask,
+):
+    """Decode target-person EEG from another person's exact-image content."""
+    partners, valid = exact_stimulus_cross_subject_partners(
+        object_indices, image_indices, subject_ids, eligible_mask
+    )
+    if not torch.any(valid):
+        return content_features.new_tensor(0.0), 0
+    target_rows = torch.nonzero(valid, as_tuple=False).squeeze(1)
+    reconstruction = model.decode_subject_reconstruction(
+        content_features[partners[target_rows]], subject_ids[target_rows]
+    )
+    loss = F.smooth_l1_loss(reconstruction, real_eeg_targets[target_rows])
+    return loss, int(target_rows.numel())
+
+
+def exact_stimulus_cohort_targets(
+    eeg_targets, object_indices, image_indices, subject_ids,
+):
+    """Return one all-source EEG centroid for every complete exact-image group."""
+    targets = torch.zeros_like(eeg_targets)
+    valid = torch.zeros_like(subject_ids, dtype=torch.bool)
+    groups = {}
+    for row, (obj, image) in enumerate(zip(
+        object_indices.detach().cpu().tolist(),
+        image_indices.detach().cpu().tolist(),
+    )):
+        groups.setdefault((int(obj), int(image)), []).append(row)
+    for rows in groups.values():
+        row_index = torch.tensor(rows, device=eeg_targets.device, dtype=torch.long)
+        if torch.unique(subject_ids[row_index]).numel() < 2:
+            continue
+        centroid = eeg_targets[row_index].mean(dim=0)
+        targets[row_index] = centroid
+        valid[row_index] = True
+    return targets, valid
+
+
+def compute_cohort_reconstruction_loss(
+    model, content_features, real_eeg_targets, object_indices, image_indices,
+    subject_ids,
+):
+    targets, valid = exact_stimulus_cohort_targets(
+        real_eeg_targets, object_indices, image_indices, subject_ids
+    )
+    if not torch.any(valid):
+        return content_features.new_tensor(0.0), 0
+    reconstruction = model.decode_cohort_reconstruction(content_features[valid])
+    loss = F.smooth_l1_loss(reconstruction, targets[valid])
+    return loss, int(valid.sum().item())
+
+
+def _smooth_lambda_over_time(lam, n_time):
+    """Interpolate per-trial Beta control points into a smooth lambda(t)."""
+    control = lam.reshape(lam.shape[0], 1, lam.shape[1]).float()
+    return F.interpolate(
+        control, size=n_time, mode='linear', align_corners=True
+    ).to(lam.dtype)
+
+
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
     if args.eeg_encoder_type == 'ATM':
         return ATMS(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
@@ -152,6 +251,25 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             head_dropout=head_dropout,
             batch_norm=not args.tsconv_no_batch_norm,
             conv_bias=not args.tsconv_no_conv_bias,
+            domain_batch_norm_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+            subject_batch_norm_max_id=getattr(args, 'tsconv_subject_bn_max_id', 0),
+            subject_adapter_rank=getattr(args, 'subject_adapter_rank', 0),
+            subject_adapter_max_id=getattr(args, 'subject_adapter_max_id', 32),
+            subject_adapter_scale=getattr(args, 'subject_adapter_scale', 0.1),
+            subject_adapter_virtual_prob=getattr(args, 'subject_adapter_virtual_prob', 0.0),
+            subject_adapter_virtual_scale=getattr(args, 'subject_adapter_virtual_scale', 1.0),
+            subject_adapter_source_ids=getattr(args, 'train_subject_ids', []),
+            subject_adapter_inferred=getattr(args, 'subject_adapter_inferred', False),
+            mutual_reconstruction_hidden=(
+                getattr(args, 'mutual_reconstruction_hidden', 0)
+                if getattr(args, 'mutual_reconstruction_lambda', 0.0) > 0
+                else 0
+            ),
+            cohort_reconstruction_hidden=(
+                getattr(args, 'cohort_reconstruction_hidden', 0)
+                if getattr(args, 'cohort_reconstruction_lambda', 0.0) > 0
+                else 0
+            ),
         )
     if args.eeg_encoder_type == 'TSConv30':
         return TSConv30(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
@@ -159,6 +277,9 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
         return EEGTransformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGConformer':
         return EEGConformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type.startswith('Ortho'):
+        from ensemble_experiments.architectures.ortho_encoders import build_ortho_encoder
+        return build_ortho_encoder(args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num)
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
 
 
@@ -253,9 +374,41 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermedia
         eeg_batch = (eeg_batch - eeg_batch.mean(dim=-1, keepdim=True)) / eeg_batch.std(dim=-1, keepdim=True).clamp_min(1e-5)
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
-    elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable', 'TSConv30']:
+    elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable']:
+        temporal_augmentation = None
+        mixstyle_prob = getattr(args, 'subject_mixstyle_prob', 0.0)
+        manifold_prob = getattr(args, 'subject_style_manifold_prob', 0.0)
+        if model.training and manifold_prob > 0 and torch.rand((), device=eeg_batch.device) < manifold_prob:
+            temporal_augmentation = lambda features: subject_style_manifold(
+                features,
+                subject_id_batch,
+                rank=args.subject_style_manifold_rank,
+                latent_scale=args.subject_style_manifold_scale,
+                max_radius=args.subject_style_manifold_max_radius,
+            )
+        elif model.training and mixstyle_prob > 0 and torch.rand((), device=eeg_batch.device) < mixstyle_prob:
+            temporal_augmentation = lambda features: subject_coherent_mixstyle(
+                features,
+                subject_id_batch,
+                alpha=args.subject_mixstyle_alpha,
+                granularity=args.subject_mixstyle_granularity,
+            )
+        model_kwargs = {}
+        if (
+            getattr(args, 'tsconv_domain_bn_boundary', 0) > 0
+            or getattr(args, 'tsconv_subject_bn_max_id', 0) > 0
+            or getattr(args, 'subject_adapter_rank', 0) > 0
+        ):
+            model_kwargs['subject_ids'] = subject_id_batch
+        return model(
+            eeg_batch,
+            return_intermediate=return_intermediate,
+            temporal_augmentation=temporal_augmentation,
+            **model_kwargs,
+        )
+    elif args.eeg_encoder_type == 'TSConv30':
         if return_intermediate:
-            return model(eeg_batch, return_intermediate=True)
+            raise ValueError('TSConv30 does not expose intermediate features.')
         return model(eeg_batch)
     return model(eeg_batch)
 
@@ -433,20 +586,44 @@ def compute_subject_adaptation_loss(
 
 def cross_subject_stimulus_mix(
     features, object_indices, image_indices, subject_ids, alpha=1.0, mixup_type='pairwise',
-    return_mixup_metadata=False
+    return_mixup_metadata=False, group_self_anchor=0.0, partition_labels=None,
+    time_varying=0, hybrid_group_prob=0.5,
 ):
     if features.shape[0] < 2:
         if return_mixup_metadata:
             return features, {'partner_indices': None, 'mixed_mask': None}
         return features
 
+    if mixup_type == 'hybrid_group_pairwise':
+        if return_mixup_metadata:
+            raise ValueError('hybrid_group_pairwise does not provide pairwise metadata')
+        group_mixed = cross_subject_stimulus_mix(
+            features, object_indices, image_indices, subject_ids,
+            alpha=alpha, mixup_type='group', group_self_anchor=group_self_anchor,
+            partition_labels=partition_labels, time_varying=0,
+        )
+        pair_mixed = cross_subject_stimulus_mix(
+            features, object_indices, image_indices, subject_ids,
+            alpha=alpha, mixup_type='pairwise', partition_labels=partition_labels,
+            time_varying=time_varying,
+        )
+        use_group = torch.rand(features.shape[0], device=features.device) < float(hybrid_group_prob)
+        view_shape = (features.shape[0],) + (1,) * (features.ndim - 1)
+        return torch.where(use_group.view(view_shape), group_mixed, pair_mixed)
+
     obj = object_indices.detach().cpu().tolist()
     img = image_indices.detach().cpu().tolist()
     sid = subject_ids.detach().cpu().tolist()
 
+    if partition_labels is None:
+        partitions = [None] * len(obj)
+    else:
+        if partition_labels.shape != subject_ids.shape:
+            raise ValueError('partition_labels must match subject_ids')
+        partitions = partition_labels.detach().cpu().tolist()
     groups = {}
-    for i, (o, im) in enumerate(zip(obj, img)):
-        groups.setdefault((int(o), int(im)), []).append(i)
+    for i, (o, im, partition) in enumerate(zip(obj, img, partitions)):
+        groups.setdefault((int(o), int(im), partition), []).append(i)
 
     mixed = features.clone()
     partner_indices = torch.arange(features.shape[0], device=features.device)
@@ -461,10 +638,62 @@ def cross_subject_stimulus_mix(
         group_idx = torch.tensor(indices, device=features.device, dtype=torch.long)
         group_features = features[group_idx]
 
-        if mixup_type == 'group':
-            concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
-            weights = torch.distributions.Dirichlet(concentration).sample((group_size,)).to(group_features.dtype)
-            mixed_group = torch.einsum('ab,b...->a...', weights, group_features)
+        if mixup_type in {'group', 'leave_one_out_group'}:
+            if mixup_type == 'leave_one_out_group':
+                # Row i is a pseudo-held subject: synthesize its matched
+                # observation using only the other source people.
+                concentration = torch.full(
+                    (group_size - 1,), dist_alpha,
+                    device=features.device, dtype=torch.float32,
+                )
+                reduced = torch.distributions.Dirichlet(concentration).sample(
+                    (group_size,)
+                ).to(group_features.dtype)
+                weights = torch.zeros(
+                    group_size, group_size,
+                    device=features.device, dtype=group_features.dtype,
+                )
+                off_diagonal = ~torch.eye(
+                    group_size, device=features.device, dtype=torch.bool
+                )
+                weights[off_diagonal] = reduced.reshape(-1)
+            else:
+                concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
+                if time_varying > 1:
+                    controls = torch.distributions.Dirichlet(concentration).sample(
+                        (int(time_varying), group_size)
+                    ).to(group_features.dtype)
+                    curve = controls.permute(1, 2, 0).reshape(
+                        1, group_size * group_size, int(time_varying)
+                    )
+                    weights = F.interpolate(
+                        curve.float(), size=group_features.shape[-1],
+                        mode='linear', align_corners=True,
+                    ).reshape(group_size, group_size, group_features.shape[-1]).to(
+                        group_features.dtype
+                    )
+                else:
+                    weights = torch.distributions.Dirichlet(concentration).sample((group_size,)).to(group_features.dtype)
+            if group_self_anchor:
+                if mixup_type == 'leave_one_out_group':
+                    raise ValueError(
+                        'group_self_anchor is incompatible with leave_one_out_group'
+                    )
+                weights = (1.0 - float(group_self_anchor)) * weights
+                identity = torch.eye(
+                    group_size, device=features.device, dtype=group_features.dtype
+                )
+                if weights.ndim == 3:
+                    identity = identity.unsqueeze(-1)
+                weights = weights + float(group_self_anchor) * identity
+            if weights.ndim == 3:
+                flattened = group_features.reshape(
+                    group_size, -1, group_features.shape[-1]
+                )
+                mixed_group = torch.einsum('abt,bkt->akt', weights, flattened)
+                mixed_group = mixed_group.reshape_as(group_features)
+            else:
+                mixed_group = torch.einsum('ab,b...->a...', weights, group_features)
         else:
             group_subject_ids = [sid[i] for i in indices]
             if len(set(group_subject_ids)) == group_size:
@@ -484,8 +713,17 @@ def cross_subject_stimulus_mix(
             partner_indices[group_idx] = group_idx[partner_pos]
             mixed_mask[group_idx] = True
             concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
-            lam = torch.distributions.Beta(concentration, concentration).sample().to(group_features.dtype)
-            lam_shape = [group_size] + [1] * (group_features.dim() - 1)
+            beta = torch.distributions.Beta(concentration, concentration)
+            if time_varying > 1:
+                lam = torch.stack(
+                    [beta.sample() for _ in range(int(time_varying))], dim=-1
+                ).to(group_features.dtype)
+                lam = _smooth_lambda_over_time(lam, group_features.shape[-1])
+                lam_shape = [group_size] + [1] * (group_features.dim() - 2) + [-1]
+            else:
+                # Keep the historical scalar sampler bit-for-bit when disabled.
+                lam = beta.sample().to(group_features.dtype)
+                lam_shape = [group_size] + [1] * (group_features.dim() - 1)
             lam = lam.view(*lam_shape)
             mixed_group = lam * group_features + (1.0 - lam) * group_features[partner_pos]
 
@@ -494,6 +732,44 @@ def cross_subject_stimulus_mix(
     if return_mixup_metadata:
         return mixed, {'partner_indices': partner_indices, 'mixed_mask': mixed_mask}
     return mixed
+
+
+def select_rows_per_exact_image(object_indices, image_indices, rows_per_image=1):
+    """Select a bounded number of rows from every exact-image group.
+
+    Group SubjectMix needs all source rows to construct its Dirichlet draw, but
+    contrastive training need not retain all resulting virtual rows.  Selection
+    happens only after synthesis, allowing a batch to contain many more unique
+    image negatives without changing the counterfactual generator.
+    """
+    if rows_per_image <= 0:
+        raise ValueError("rows_per_image must be positive")
+    groups = {}
+    for index, key in enumerate(zip(
+        object_indices.detach().cpu().tolist(),
+        image_indices.detach().cpu().tolist(),
+    )):
+        groups.setdefault((int(key[0]), int(key[1])), []).append(index)
+    selected = [
+        index
+        for indices in groups.values()
+        for index in indices[:int(rows_per_image)]
+    ]
+    return torch.tensor(selected, device=object_indices.device, dtype=torch.long)
+
+
+def select_hard_counterfactual_views(eeg_features, image_features, num_views):
+    """Select the currently worst aligned draw for every base batch row."""
+    if num_views <= 1 or eeg_features.shape != image_features.shape:
+        raise ValueError("hard-view selection needs matching features and at least two views")
+    if eeg_features.shape[0] % int(num_views) != 0:
+        raise ValueError("feature rows must be divisible by num_views")
+    base_rows = eeg_features.shape[0] // int(num_views)
+    agreement = F.cosine_similarity(eeg_features, image_features, dim=1)
+    hard_view = agreement.view(int(num_views), base_rows).argmin(dim=0)
+    return hard_view * base_rows + torch.arange(
+        base_rows, device=eeg_features.device
+    )
 
 
 def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, extrapolate=0.0, eps=1e-8):
@@ -653,6 +929,8 @@ if __name__ == '__main__':
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
     parser.add_argument('--subject_mixup_within', action='store_true', help='rebuttal arm: Beta-mix 2 of a subject''s OWN reps for the same stimulus (within-subject; isolates the cross-subject factor). Needs un-averaged reps (no --data_average).')
     parser.add_argument('--within_mix_alpha', default=0.5, type=float, help='Beta(a,a) coefficient for --subject_mixup_within')
+    parser.add_argument('--bootstrap_repetition_average', action='store_true', help='resample each source subject`s repeated measurements with replacement before cross-subject augmentation; requires un-averaged training data')
+    parser.add_argument('--bootstrap_repetition_count', default=4, type=int, help='number of within-subject repetitions in each bootstrap average')
     parser.add_argument('--subject_ea_align', action='store_true', help='rebuttal arm: per-subject Euclidean Alignment (channel-covariance whitening) of raw EEG at load, applied to train/val/test')
     parser.add_argument('--cross_subject_average', action='store_true', help='train on synthetic per-image trials, each the mean of a random-size (Beta-drawn) random subset of cross-subject raw recordings')
     parser.add_argument('--xavg_beta_a', default=1.0, type=float, help='Beta(a,b) shape a for the k distribution in --cross_subject_average (a<b skews to fewer recordings)')
@@ -660,14 +938,37 @@ if __name__ == '__main__':
     parser.add_argument('--xavg_kmin', default=4, type=int, help='minimum recordings averaged per synthetic trial')
     parser.add_argument('--xavg_kmax', default=36, type=int, help='maximum recordings averaged per synthetic trial')
     parser.add_argument('--subject_mixup_mode', type=str, choices=['none', 'raw_eeg', 'embedding'], default='none', help='cross-subject same-stimulus convex mixing mode')
-    parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or full same-stimulus group mixing')
-    parser.add_argument('--clean_xadv_lambda', default=0.0, type=float, help='clean-xadv: DANN-annealed cap for the gradient-reversal subject adversary on the backbone (0 disables)')
-    parser.add_argument('--clean_xadv_head', type=str, choices=['linear', 'mlp'], default='mlp', help='clean-xadv subject discriminator head')
-    parser.add_argument('--clean_xadv_hidden', default=256, type=int, help='clean-xadv MLP discriminator hidden width')
+    parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group', 'hybrid_group_pairwise', 'leave_one_out_group', 'coherent_group', 'meta_residual'], default='pairwise', help='pairwise mixing, per-stimulus group mixing, their rowwise hybrid, leave-one-person-out group mixing, coherent cohorts, or centered auxiliary-cohort residual injection')
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
+    parser.add_argument('--subject_mixup_prob', default=1.0, type=float, help='per-row probability of using the synthetic subject; lower values retain pure empirical rows instead of anchoring every mixture')
+    parser.add_argument('--subject_mixup_views', default=1, type=int, help='independent full group-mix cohorts per exact image in each batch (1 keeps historical batch shape)')
+    parser.add_argument('--subject_mixup_hard_view', action='store_true', help='with multiple group draws, train on the currently worst-aligned draw for each base row')
+    parser.add_argument('--subject_mixup_rows_per_image', default=0, type=int, help='after group synthesis retain at most this many virtual rows per exact image (0 keeps all rows)')
+    parser.add_argument('--mix_time_varying', default=0, type=int, help='number of smooth temporal control points for pairwise SubjectMix coefficients (0/1 keeps one scalar per trial)')
+    parser.add_argument('--hybrid_group_prob', default=0.5, type=float, help='rowwise probability of scalar group mixing in hybrid_group_pairwise; remaining rows use pairwise mixing')
+    parser.add_argument('--group_mix_self_anchor', default=0.0, type=float, help='for group mix, retain this fixed fraction of each row`s original subject before adding its Dirichlet mixture')
+    parser.add_argument('--subject_mixup_partition_boundary', default=0, type=int, help='if positive, mix subjects below and at/above this ID separately (used to avoid waveform mixing across EEG datasets)')
+    parser.add_argument('--meta_residual_scale', default=0.5, type=float, help='scale of centered auxiliary-cohort residuals for --mixup_type meta_residual')
+    parser.add_argument('--cross_dataset_translation', default='', type=str, help='NPZ affine channel map fitted on paired training-stimulus cohort means; applied only to auxiliary subjects before mixing')
+    parser.add_argument('--cross_dataset_translation_blend', default=1.0, type=float, help='interpolation from raw auxiliary EEG (0) to the fitted primary-domain counterfactual (1)')
     parser.add_argument('--subject_mixup_reg_lambda', default=0.0, type=float, help='weight for raw_eeg pairwise mixup embedding regularization')
     parser.add_argument('--single_emb_stop_grad', action='store_true', help='detach original single-subject embeddings in mixup regularization')
     parser.add_argument('--subject_mixup_reg_on_backbone', action='store_true', help='compute mixup regularization on backbone features instead of aligned embeddings')
+    parser.add_argument('--spectral_style_mix_prob', default=0.0, type=float, help='probability per batch of same-stimulus Dirichlet mixing in log Fourier-magnitude space while retaining each trial`s phase')
+    parser.add_argument('--spectral_style_mix_alpha', default=0.5, type=float, help='Dirichlet concentration for --spectral_style_mix_prob')
+    parser.add_argument('--coherent_latency_max_shift', default=0, type=int, help='maximum absolute training-only latency shift in samples; one sampled shift is reused for every stimulus of a virtual subject for an epoch')
+    parser.add_argument('--coherent_latency_std', default=2.0, type=float, help='standard deviation in samples of the bounded epoch-coherent subject latency distribution')
+    parser.add_argument('--subject_mixstyle_prob', default=0.0, type=float, help='probability per training batch of subject-coherent MixStyle after the TSConv temporal block (0 disables)')
+    parser.add_argument('--subject_mixstyle_alpha', default=0.5, type=float, help='Beta(a,a) interpolation coefficient for virtual-subject temporal styles')
+    parser.add_argument('--subject_mixstyle_granularity', choices=['filter', 'filter_channel'], default='filter_channel', help='statistics retained by subject-coherent temporal MixStyle')
+    parser.add_argument('--subject_style_manifold_prob', default=0.0, type=float, help='probability per training batch of sampling coherent low-rank subject styles after the TSConv temporal block (0 disables)')
+    parser.add_argument('--subject_style_manifold_rank', default=2, type=int, help='PCA rank of the source-subject temporal mean/log-scale manifold')
+    parser.add_argument('--subject_style_manifold_scale', default=1.0, type=float, help='standard-deviation multiplier for sampled subject-style latent codes')
+    parser.add_argument('--subject_style_manifold_max_radius', default=2.0, type=float, help='per-coordinate truncation radius for Gaussian subject-style codes')
+    parser.add_argument('--coherent_mix_scope', choices=['epoch', 'run'], default='epoch', help='how long coherent_group virtual-subject mixture weights are reused')
+    parser.add_argument('--coherent_mix_self_anchor', default=0.0, type=float, help='fixed weight retained on each virtual subject`s corresponding real subject (0 <= value < 1)')
+    parser.add_argument('--coherent_mix_residual_scale', default=1.0, type=float, help='scale virtual-subject deviations from the per-stimulus cohort centroid; >1 extrapolates beyond the convex hull')
+    parser.add_argument('--coherent_mix_jitter', default=0.0, type=float, help='blend stable coherent weights with fresh per-stimulus Dirichlet weights (0=fully coherent, 1=ordinary group mixing)')
     parser.add_argument('--concept_positives', action='store_true', help='treat every image of the same THINGS concept as a positive (test retrieval is concept-level: 200 concepts, 1 image each)')
     parser.add_argument('--images_per_concept', default=1, type=int, help='images of the same concept drawn into one batch; >1 gives --concept_positives something to pull together')
     parser.add_argument('--shared_encoder_hidden', default=0, type=int, help='SAMGA shared encoder g(): hidden width of the MLP applied to BOTH modalities after their projectors (0 disables)')
@@ -686,6 +987,8 @@ if __name__ == '__main__':
                         help='weight of training-only multi-resolution contrastive supervision')
     parser.add_argument('--auxiliary_alignment_epochs', default=0, type=int,
                         help='apply auxiliary alignment heads for first N epochs (0 = all)')
+    parser.add_argument('--teacher_alignment_lambda', default=0.0, type=float,
+                        help='cosine distillation weight from the final training-only target block into the main EEG alignment space')
     parser.add_argument(
         '--auxiliary_image_targets', action='store_true',
         help=(
@@ -694,12 +997,6 @@ if __name__ == '__main__':
             'heads are not saved in the inference checkpoint'
         ),
     )
-    parser.add_argument('--semantic_relational_lambda', default=0.0, type=float,
-                        help='weight for training-only soft rankings distilled from all image target spaces')
-    parser.add_argument('--semantic_relational_epochs', default=0, type=int,
-                        help='apply semantic relational distillation for first N epochs (0 = all)')
-    parser.add_argument('--semantic_relational_temperature', default=0.1, type=float,
-                        help='soft-ranking temperature for training-only semantic relational distillation')
     parser.add_argument('--matryoshka_dims', default='', type=str,
                         help='comma-separated prefix widths for nested contrastive supervision of the final embedding')
     parser.add_argument('--matryoshka_lambda', default=0.0, type=float,
@@ -720,7 +1017,37 @@ if __name__ == '__main__':
     parser.add_argument('--sattc_cw_shrink', default=0.05, type=float, help='covariance shrinkage for candidate-side whitening (CW)')
     parser.add_argument('--sattc_cw_diag', action='store_true', help='use diagonal covariance for candidate-side whitening (CW)')
     parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
-    parser.add_argument('--select_best_on', type=str, choices=['test', 'val'], default='test', help='which split selects the best checkpoint')
+    parser.add_argument('--val_concept_ratio', default=0.0, type=float, help='hold out this fraction of TRAINING CONCEPTS (all their images, all training subjects) as a validation split for checkpoint selection; keeps all training subjects, unlike --val_subject_id')
+    parser.add_argument('--val_concept_seed', default=20260822, type=int, help='seed choosing the held-out concepts; constant across folds and arms on purpose so every arm trains on identical data')
+    parser.add_argument('--save_testsel_checkpoint', action='store_true', help='additionally save checkpoint_testsel_best.pth (best held-out test loss) alongside the selected checkpoint, as a matched control for val-selected runs')
+    parser.add_argument(
+        '--select_best_on',
+        type=str,
+        choices=['test', 'val', 'fixed'],
+        default='test',
+        help=(
+            'checkpoint rule: held-out test loss, source validation loss, or the '
+            'final predeclared epoch (fixed; no label-based checkpoint selection)'
+        ),
+    )
+    parser.add_argument(
+        '--early_stop_patience',
+        type=int,
+        default=0,
+        help=(
+            'stop after this many epochs without source-validation loss improvement; '
+            '0 disables and nonzero values require --select_best_on val'
+        ),
+    )
+    parser.add_argument(
+        '--early_stop_min_delta',
+        type=float,
+        default=0.0,
+        help=(
+            'minimum source-validation loss decrease that resets early-stop '
+            'patience; checkpoint selection still retains every exact improvement'
+        ),
+    )
     parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
     parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
     parser.add_argument('--subject_probe_interval', type=int, default=1, help='train/eval subject probes every N epochs')
@@ -748,6 +1075,12 @@ if __name__ == '__main__':
     )
     parser.add_argument('--init_checkpoint', default='', type=str,
                         help='initialize the encoder and projectors from a compatible training checkpoint')
+    parser.add_argument('--init_checkpoint_scope', choices=['all', 'encoder', 'conv'], default='all',
+                        help='load all compatible modules, only the EEG encoder, or only TSConv convolution weights from --init_checkpoint')
+    parser.add_argument('--freeze_eeg_encoder', action='store_true',
+                        help='freeze an initialized EEG encoder in eval mode and train only downstream modules')
+    parser.add_argument('--freeze_image_projector', action='store_true',
+                        help='keep the image projector fixed after full checkpoint initialization')
     parser.add_argument('--tsconv_temporal_filters', default=40, type=int, help='temporal filter count for TSConv_parameterizable')
     parser.add_argument('--tsconv_temporal_kernel', default=25, type=int, help='temporal kernel width for TSConv_parameterizable')
     parser.add_argument('--tsconv_pool_kernel', default=51, type=int, help='temporal average-pooling kernel for TSConv_parameterizable')
@@ -758,7 +1091,20 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_dropout', default=0.5, type=float, help='backbone dropout for TSConv_parameterizable')
     parser.add_argument('--tsconv_head_dropout', default=-1.0, type=float, help='projection-head dropout for TSConv_parameterizable; negative reuses --tsconv_dropout')
     parser.add_argument('--tsconv_no_batch_norm', action='store_true', help='disable BatchNorm layers in TSConv_parameterizable')
+    parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
+    parser.add_argument('--tsconv_subject_bn_max_id', default=0, type=int, help='use source-person TSConv BatchNorm paths plus population path 0 (0 disables)')
     parser.add_argument('--tsconv_no_conv_bias', action='store_true', help='disable convolution biases in TSConv_parameterizable')
+    parser.add_argument('--subject_adapter_rank', default=0, type=int, help='rank of learned source-person FiLM random effects at the temporal TSConv block (0 disables)')
+    parser.add_argument('--subject_adapter_max_id', default=32, type=int, help='largest subject ID addressable by the source-person adapter; ID 0 is the population path')
+    parser.add_argument('--subject_adapter_scale', default=0.1, type=float, help='residual scale of channelwise subject FiLM effects')
+    parser.add_argument('--subject_adapter_virtual_prob', default=0.0, type=float, help='probability that each virtual batch identity draws a source-embedding Gaussian random effect')
+    parser.add_argument('--subject_adapter_virtual_scale', default=1.0, type=float, help='posterior-predictive scale around the empirical source-adapter distribution')
+    parser.add_argument('--subject_adapter_inferred', action='store_true', help='infer a continuous rank-R subject FiLM code from each EEG observation, including unseen people')
+    parser.add_argument('--subject_adapter_router_lambda', default=0.0, type=float, help='source-ID classification weight anchoring the amortized subject-code router')
+    parser.add_argument('--mutual_reconstruction_lambda', default=0.0, type=float, help='weight for exact-stimulus cross-person EEG reconstruction through source random effects')
+    parser.add_argument('--mutual_reconstruction_hidden', default=256, type=int, help='hidden width of the training-time conditional EEG reconstruction decoder')
+    parser.add_argument('--cohort_reconstruction_lambda', default=0.0, type=float, help='weight for decoding the exact-image source-cohort EEG centroid from each content representation')
+    parser.add_argument('--cohort_reconstruction_hidden', default=256, type=int, help='hidden width of the training-only cohort-mean EEG decoder')
     parser.add_argument('--image_aug', action='store_true')
     parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--eeg_test_aug', action='store_true')
@@ -791,13 +1137,191 @@ if __name__ == '__main__':
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
     parser.add_argument('--save_last_checkpoint', action='store_true', help='also write checkpoint_last.pth (final epoch); off by default since nothing reads it and it doubles checkpoint disk use')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
+    parser.add_argument('--train_rng_seed', type=int, default=None,
+                        help='optional RNG reset after module initialization, for matched batch/mixup draws across model variants')
     args = parser.parse_args()
     if args.projector_activation == 'topk' and args.projector_topk <= 0:
         raise ValueError('--projector_topk must be > 0 when --projector_activation topk')
     if args.subject_mixup_reg_lambda < 0:
         raise ValueError("--subject_mixup_reg_lambda must be non-negative.")
+    if not 0 <= args.subject_mixup_prob <= 1:
+        raise ValueError('--subject_mixup_prob must lie in [0, 1].')
+    if args.subject_mixup_views <= 0:
+        raise ValueError('--subject_mixup_views must be positive.')
+    if args.subject_mixup_views > 1:
+        if (
+            args.subject_mixup_mode != 'raw_eeg'
+            or args.mixup_type != 'group'
+            or args.subject_mixup_prob != 1
+        ):
+            raise ValueError('multiple subject mixup views require pure raw-EEG group mixing.')
+        if args.subject_adapter_rank > 0 or args.tsconv_subject_bn_max_id > 0:
+            raise ValueError('multiple subject mixup views are not combined with source-person routing.')
+    if args.subject_mixup_hard_view:
+        if args.subject_mixup_views <= 1:
+            raise ValueError('--subject_mixup_hard_view requires multiple subject mixup views.')
+        if any((
+            args.subject_mixup_reg_lambda > 0,
+            args.train_saw,
+            args.subject_adapt_lambda > 0,
+            args.auxiliary_alignment_lambda > 0,
+            args.teacher_alignment_lambda > 0,
+            args.cohort_reconstruction_lambda > 0,
+            args.brain2brain_lambda > 0,
+            args.relational_lambda > 0,
+            args.mmd_lambda > 0,
+            args.vrex_lambda > 0,
+            args.matryoshka_lambda > 0,
+        )):
+            raise ValueError('hard-view selection is only supported with the base contrastive objective.')
+    if args.subject_mixup_rows_per_image < 0:
+        raise ValueError('--subject_mixup_rows_per_image must be non-negative.')
+    if args.subject_mixup_rows_per_image > 0:
+        if (
+            args.subject_mixup_mode != 'raw_eeg'
+            or args.mixup_type != 'group'
+            or args.subject_mixup_prob != 1
+            or args.subject_mixup_views != 1
+        ):
+            raise ValueError('row-reduced counterfactual batches require one pure raw-EEG group view.')
+        if args.subject_mixup_reg_lambda > 0:
+            raise ValueError('row-reduced counterfactual batches do not support pairwise mixup regularization.')
+    if args.mix_time_varying < 0:
+        raise ValueError('--mix_time_varying must be non-negative.')
+    if args.mix_time_varying > 1 and args.mixup_type not in {'pairwise', 'group', 'hybrid_group_pairwise'}:
+        raise ValueError('--mix_time_varying > 1 currently requires pairwise, group, or hybrid mixing.')
+    if not 0 <= args.hybrid_group_prob <= 1:
+        raise ValueError('--hybrid_group_prob must lie in [0, 1].')
+    if args.coherent_latency_max_shift < 0 or args.coherent_latency_std < 0:
+        raise ValueError('--coherent_latency_max_shift and --coherent_latency_std must be non-negative.')
+    if args.teacher_alignment_lambda < 0:
+        raise ValueError('--teacher_alignment_lambda must be non-negative.')
+    if args.teacher_alignment_lambda > 0 and not args.auxiliary_image_targets:
+        raise ValueError('--teacher_alignment_lambda requires --auxiliary_image_targets.')
+    if not 0.0 <= args.group_mix_self_anchor < 1.0:
+        raise ValueError('--group_mix_self_anchor must be in [0, 1).')
+    if args.group_mix_self_anchor > 0 and args.mixup_type != 'group':
+        raise ValueError('--group_mix_self_anchor requires --mixup_type group.')
+    if args.subject_mixup_partition_boundary < 0:
+        raise ValueError('--subject_mixup_partition_boundary must be non-negative.')
+    if args.tsconv_domain_bn_boundary < 0:
+        raise ValueError('--tsconv_domain_bn_boundary must be non-negative.')
+    if args.tsconv_subject_bn_max_id < 0:
+        raise ValueError('--tsconv_subject_bn_max_id must be non-negative.')
+    if args.tsconv_domain_bn_boundary > 0 and args.tsconv_subject_bn_max_id > 0:
+        raise ValueError('domain and subject TSConv BatchNorm routing are mutually exclusive.')
+    if args.tsconv_domain_bn_boundary > 0:
+        if args.eeg_encoder_type != 'TSConv_parameterizable':
+            raise ValueError('--tsconv_domain_bn_boundary requires TSConv_parameterizable.')
+        if args.tsconv_no_batch_norm:
+            raise ValueError('--tsconv_domain_bn_boundary is incompatible with --tsconv_no_batch_norm.')
+    if args.tsconv_subject_bn_max_id > 0:
+        if args.eeg_encoder_type != 'TSConv_parameterizable':
+            raise ValueError('--tsconv_subject_bn_max_id requires TSConv_parameterizable.')
+        if args.tsconv_no_batch_norm:
+            raise ValueError('--tsconv_subject_bn_max_id is incompatible with --tsconv_no_batch_norm.')
+        if args.tsconv_subject_bn_max_id < max(
+            list(args.train_subject_ids) + list(args.test_subject_ids), default=0
+        ):
+            raise ValueError('--tsconv_subject_bn_max_id must cover all configured subject IDs.')
+        if args.subject_mixup_mode != 'raw_eeg' or args.subject_mixup_prob >= 1:
+            raise ValueError('subject BatchNorm requires raw EEG mixing with some real rows.')
+    if args.subject_adapter_rank < 0 or args.subject_adapter_scale < 0:
+        raise ValueError('--subject_adapter_rank and --subject_adapter_scale must be non-negative.')
+    if not 0 <= args.subject_adapter_virtual_prob <= 1 or args.subject_adapter_virtual_scale < 0:
+        raise ValueError('subject adapter virtual probability must be in [0,1] and scale non-negative.')
+    if args.subject_adapter_rank > 0:
+        if args.eeg_encoder_type != 'TSConv_parameterizable':
+            raise ValueError('--subject_adapter_rank requires TSConv_parameterizable.')
+        all_subject_ids = list(args.train_subject_ids) + list(args.test_subject_ids)
+        if args.subject_adapter_max_id < max(all_subject_ids, default=0):
+            raise ValueError('--subject_adapter_max_id must cover all configured subject IDs.')
+    if args.subject_adapter_virtual_prob > 0:
+        if args.subject_adapter_rank <= 0 or args.subject_mixup_mode != 'raw_eeg':
+            raise ValueError('virtual adapter sampling requires a subject adapter and raw EEG mixing.')
+        if args.tsconv_subject_bn_max_id > 0:
+            raise ValueError('virtual adapter sampling is not combined with subject BatchNorm routing.')
+    if args.subject_adapter_router_lambda < 0:
+        raise ValueError('--subject_adapter_router_lambda must be non-negative.')
+    if args.subject_adapter_inferred:
+        if args.subject_adapter_rank <= 0 or args.eeg_encoder_type != 'TSConv_parameterizable':
+            raise ValueError('--subject_adapter_inferred requires a parameterizable subject adapter.')
+        if args.subject_adapter_virtual_prob > 0:
+            raise ValueError('inferred and lookup-table virtual subject adapters are mutually exclusive.')
+    elif args.subject_adapter_router_lambda > 0:
+        raise ValueError('--subject_adapter_router_lambda requires --subject_adapter_inferred.')
+    if args.mutual_reconstruction_lambda < 0 or args.mutual_reconstruction_hidden <= 0:
+        raise ValueError('--mutual_reconstruction_lambda must be non-negative and its hidden width positive.')
+    if args.mutual_reconstruction_lambda > 0:
+        if args.subject_adapter_rank <= 0:
+            raise ValueError('--mutual_reconstruction_lambda requires --subject_adapter_rank > 0.')
+        if args.subject_mixup_mode == 'raw_eeg' and args.subject_mixup_prob >= 1:
+            raise ValueError('mutual reconstruction needs some unchanged real rows; set --subject_mixup_prob < 1.')
+    if args.cohort_reconstruction_lambda < 0 or args.cohort_reconstruction_hidden <= 0:
+        raise ValueError('--cohort_reconstruction_lambda must be non-negative and its hidden width positive.')
+    if args.cohort_reconstruction_lambda > 0 and args.eeg_encoder_type != 'TSConv_parameterizable':
+        raise ValueError('--cohort_reconstruction_lambda requires TSConv_parameterizable.')
+    if args.freeze_image_projector:
+        if not args.init_checkpoint or args.init_checkpoint_scope != 'all':
+            raise ValueError('--freeze_image_projector requires --init_checkpoint with scope all.')
+        if args.shared_encoder_hidden > 0:
+            raise ValueError('--freeze_image_projector is not supported with a shared encoder.')
+    if args.freeze_eeg_encoder and not args.init_checkpoint:
+        raise ValueError('--freeze_eeg_encoder requires --init_checkpoint.')
+    if args.subject_mixup_partition_boundary > 0 and args.mixup_type == 'coherent_group':
+        raise ValueError('--subject_mixup_partition_boundary is not implemented for coherent_group.')
+    if args.meta_residual_scale < 0:
+        raise ValueError('--meta_residual_scale must be non-negative.')
+    if not 0.0 <= args.cross_dataset_translation_blend <= 1.0:
+        raise ValueError('--cross_dataset_translation_blend must be in [0, 1].')
+    if args.cross_dataset_translation and args.subject_mixup_partition_boundary <= 0:
+        raise ValueError('--cross_dataset_translation requires a positive --subject_mixup_partition_boundary.')
+    if args.mixup_type == 'meta_residual':
+        if args.subject_mixup_mode != 'raw_eeg' or args.subject_mixup_partition_boundary <= 0:
+            raise ValueError('--mixup_type meta_residual requires raw_eeg mode and a positive partition boundary.')
     if args.subject_mixup_reg_lambda > 0 and (args.subject_mixup_mode != 'raw_eeg' or args.mixup_type != 'pairwise'):
         raise ValueError("--subject_mixup_reg_lambda currently requires --subject_mixup_mode raw_eeg and --mixup_type pairwise.")
+    if not 0.0 <= args.spectral_style_mix_prob <= 1.0:
+        raise ValueError('--spectral_style_mix_prob must be in [0, 1].')
+    if args.spectral_style_mix_alpha <= 0:
+        raise ValueError('--spectral_style_mix_alpha must be positive.')
+    if args.spectral_style_mix_prob > 0 and not args.grouped_batch_sampler:
+        raise ValueError('--spectral_style_mix_prob requires --grouped_batch_sampler.')
+    if not 0.0 <= args.subject_mixstyle_prob <= 1.0:
+        raise ValueError('--subject_mixstyle_prob must be in [0, 1].')
+    if args.subject_mixstyle_alpha <= 0:
+        raise ValueError('--subject_mixstyle_alpha must be positive.')
+    if not 0.0 <= args.subject_style_manifold_prob <= 1.0:
+        raise ValueError('--subject_style_manifold_prob must be in [0, 1].')
+    if args.subject_style_manifold_rank <= 0:
+        raise ValueError('--subject_style_manifold_rank must be positive.')
+    if args.subject_style_manifold_scale < 0:
+        raise ValueError('--subject_style_manifold_scale must be non-negative.')
+    if args.subject_style_manifold_max_radius <= 0:
+        raise ValueError('--subject_style_manifold_max_radius must be positive.')
+    if args.subject_mixstyle_prob > 0 and args.subject_style_manifold_prob > 0:
+        raise ValueError('--subject_mixstyle_prob and --subject_style_manifold_prob are mutually exclusive.')
+    if not 0.0 <= args.coherent_mix_self_anchor < 1.0:
+        raise ValueError('--coherent_mix_self_anchor must be in [0, 1).')
+    if args.coherent_mix_residual_scale < 0:
+        raise ValueError('--coherent_mix_residual_scale must be non-negative.')
+    if not 0.0 <= args.coherent_mix_jitter <= 1.0:
+        raise ValueError('--coherent_mix_jitter must be in [0, 1].')
+    if args.mixup_type == 'coherent_group':
+        if args.subject_mixup_mode != 'raw_eeg':
+            raise ValueError('--mixup_type coherent_group requires --subject_mixup_mode raw_eeg.')
+        if not args.grouped_batch_sampler:
+            raise ValueError('--mixup_type coherent_group requires --grouped_batch_sampler.')
+    if args.subject_mixstyle_prob > 0:
+        if args.eeg_encoder_type not in ('TSConv', 'TSConv_parameterizable'):
+            raise ValueError('--subject_mixstyle_prob currently requires TSConv or TSConv_parameterizable.')
+        if not args.grouped_batch_sampler:
+            raise ValueError('--subject_mixstyle_prob requires --grouped_batch_sampler for balanced matched-stimulus batches.')
+    if args.subject_style_manifold_prob > 0:
+        if args.eeg_encoder_type not in ('TSConv', 'TSConv_parameterizable'):
+            raise ValueError('--subject_style_manifold_prob currently requires TSConv or TSConv_parameterizable.')
+        if not args.grouped_batch_sampler:
+            raise ValueError('--subject_style_manifold_prob requires --grouped_batch_sampler for balanced matched-stimulus batches.')
     if args.subject_probe_holdout:
         if not (0.0 < args.subject_probe_holdout_ratio < 1.0):
             raise ValueError("--subject_probe_holdout_ratio must be strictly between 0 and 1.")
@@ -811,6 +1335,11 @@ if __name__ == '__main__':
     if args.subject_mixup_within:
         if args.data_average or args.cross_subject_average or args.subject_mixup_mode != 'none':
             raise ValueError("--subject_mixup_within needs un-averaged reps and replaces cross-subject mixup: drop --data_average, --cross_subject_average, and set --subject_mixup_mode none.")
+    if args.bootstrap_repetition_average:
+        if args.data_average or args.cross_subject_average or args.subject_mixup_within:
+            raise ValueError('--bootstrap_repetition_average requires un-averaged data and is incompatible with --data_average, --cross_subject_average, and --subject_mixup_within.')
+        if args.bootstrap_repetition_count < 1:
+            raise ValueError('--bootstrap_repetition_count must be positive.')
     if args.cross_subject_average:
         conflicts = [name for flag, name in [
             (args.data_average, '--data_average'),
@@ -870,6 +1399,11 @@ if __name__ == '__main__':
         log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
         if len(args.train_subject_ids) == 0:
             raise ValueError("After removing val_subject_id, train_subject_ids is empty.")
+    if args.mixup_type == 'coherent_group' and args.samples_per_image < len(args.train_subject_ids):
+        raise ValueError(
+            '--mixup_type coherent_group requires samples_per_image >= the number of '
+            f'training subjects ({len(args.train_subject_ids)}) so every stimulus group is complete.'
+        )
 
     with open(os.path.join(args.output_dir, "last_run.txt"), 'w') as f:
         f.write(writer.log_dir)
@@ -877,7 +1411,36 @@ if __name__ == '__main__':
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     log(f'Using device: {device}')
     log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
+    log(
+        'Subject-coherent temporal MixStyle: '
+        f'prob={args.subject_mixstyle_prob}, alpha={args.subject_mixstyle_alpha}, '
+        f'granularity={args.subject_mixstyle_granularity}'
+    )
+    log(
+        'Low-rank temporal subject-style manifold: '
+        f'prob={args.subject_style_manifold_prob}, rank={args.subject_style_manifold_rank}, '
+        f'scale={args.subject_style_manifold_scale}, max_radius={args.subject_style_manifold_max_radius}'
+    )
     log(f'Evaluation mode: {args.eval_mode}')
+
+    cross_dataset_translation = None
+    if args.cross_dataset_translation:
+        translation_npz = np.load(args.cross_dataset_translation)
+        required_keys = {'channel_map', 'source_mean', 'target_mean'}
+        missing_keys = required_keys.difference(translation_npz.files)
+        if missing_keys:
+            raise ValueError(
+                f'{args.cross_dataset_translation} is missing translation arrays: '
+                f'{sorted(missing_keys)}'
+            )
+        cross_dataset_translation = tuple(
+            torch.as_tensor(translation_npz[key], dtype=torch.float32, device=device)
+            for key in ('channel_map', 'source_mean', 'target_mean')
+        )
+        log(
+            'Auxiliary cohort translation: '
+            f'{args.cross_dataset_translation}, blend={args.cross_dataset_translation_blend}'
+        )
 
     if args.grouped_batch_sampler and args.data_random:
         raise ValueError("Grouped batching requires deterministic indices. Disable --data_random when using --grouped_batch_sampler.")
@@ -918,6 +1481,8 @@ if __name__ == '__main__':
         xavg_kmax=args.xavg_kmax,
         subject_mixup_within=args.subject_mixup_within,
         within_mix_alpha=args.within_mix_alpha,
+        bootstrap_repetition_average=args.bootstrap_repetition_average,
+        bootstrap_repetition_count=args.bootstrap_repetition_count,
         subject_ea_align=args.subject_ea_align,
     )
 
@@ -954,33 +1519,6 @@ if __name__ == '__main__':
             for index in range(1, len(target_dims))
         ]
 
-    def semantic_consensus_similarity(features):
-        """Average frozen-image neighbourhoods without creating inference heads."""
-        blocks = [
-            features[..., target_offsets[index]:target_offsets[index + 1]]
-            for index in range(len(target_dims))
-        ]
-        consensus = None
-        for block in blocks:
-            normalized = F.normalize(block, dim=-1)
-            similarity = normalized @ normalized.transpose(0, 1)
-            consensus = similarity if consensus is None else consensus + similarity
-        return consensus / len(blocks)
-
-    if args.semantic_relational_lambda > 0:
-        if not args.auxiliary_image_targets:
-            raise ValueError(
-                '--semantic_relational_lambda requires --auxiliary_image_targets'
-            )
-        if args.semantic_relational_temperature <= 0:
-            raise ValueError('--semantic_relational_temperature must be positive')
-        log(
-            'Training-only semantic neighbourhood distillation: '
-            f'targets={len(target_dims)}, lambda={args.semantic_relational_lambda}, '
-            f'temperature={args.semantic_relational_temperature}, '
-            f'epochs={args.semantic_relational_epochs or "all"}'
-        )
-
     backbone_feature_dim = args.eeg_backbone_dim if args.eeg_backbone_dim > 0 else image_feature_dim
     channels_num = train_dataset.channels_num
     log(f'EEG sample points: {eeg_sample_points}')
@@ -992,6 +1530,46 @@ if __name__ == '__main__':
 
     pin_memory = device.type == "cuda"
     train_main_dataset = train_dataset
+    concept_val_dataloader = None
+    if args.val_concept_ratio > 0.0:
+        # Honest checkpoint selection without giving up a training subject: hold out a
+        # fixed slice of training CONCEPTS (every image of them, across every training
+        # subject).  Concept-disjoint mirrors the real test condition of 200 unseen
+        # concepts; an image-level split would leave concept-mates in training, which
+        # --multi_positive_loss is explicitly trained to pull together.
+        if args.data_random:
+            raise ValueError("--val_concept_ratio requires deterministic indexing (disable --data_random).")
+        if eeg_transform is not None or args.image_aug:
+            raise ValueError("--val_concept_ratio assumes an unaugmented val view; disable --eeg_aug/--image_aug.")
+        groups = train_dataset.get_image_group_indices()
+        concepts = sorted({key[0] for key in groups})
+        holdout_count = min(
+            max(1, int(np.floor(len(concepts) * float(args.val_concept_ratio)))),
+            len(concepts) - 1,
+        )
+        # Constant seed on purpose: every fold and every arm must hold out the SAME
+        # concepts, otherwise the arms are trained on different data and cannot be
+        # ensembled against each other.
+        held = set(
+            np.random.default_rng(args.val_concept_seed).permutation(concepts)[:holdout_count].tolist()
+        )
+        concept_val_indices, main_train_indices = [], []
+        for key, indices in groups.items():
+            (concept_val_indices if key[0] in held else main_train_indices).extend(indices)
+        train_main_dataset = (
+            _GroupedSubset(train_dataset, main_train_indices)
+            if args.grouped_batch_sampler
+            else Subset(train_dataset, main_train_indices)
+        )
+        concept_val_dataloader = DataLoader(
+            Subset(train_dataset, concept_val_indices),
+            batch_size=200, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory,
+        )
+        log(
+            f"Concept val split: held_out_concepts={holdout_count}/{len(concepts)} "
+            f"(seed={args.val_concept_seed}), train_items={len(main_train_indices)}, "
+            f"val_items={len(concept_val_indices)}"
+        )
     subj_probe_train_dataloader = None
     subj_probe_val_dataloader = None
     if args.subject_probe_holdout:
@@ -1075,13 +1653,23 @@ if __name__ == '__main__':
             pin_memory=pin_memory,
         )
 
-    if args.select_best_on == 'val' and args.val_subject_id is None:
-        raise ValueError("--select_best_on val requires --val_subject_id.")
+    if args.select_best_on == 'val' and args.val_subject_id is None and args.val_concept_ratio <= 0.0:
+        raise ValueError("--select_best_on val requires --val_subject_id or --val_concept_ratio.")
+    if args.val_subject_id is not None and args.val_concept_ratio > 0.0:
+        raise ValueError("--val_subject_id and --val_concept_ratio are two different validation designs; pick one.")
+    if args.subject_probe_holdout and args.val_concept_ratio > 0.0:
+        raise ValueError("--subject_probe_holdout and --val_concept_ratio both re-split the train set; pick one.")
+    if args.early_stop_patience < 0:
+        raise ValueError("--early_stop_patience must be nonnegative.")
+    if args.early_stop_patience > 0 and args.select_best_on != 'val':
+        raise ValueError("--early_stop_patience requires --select_best_on val.")
+    if args.early_stop_min_delta < 0:
+        raise ValueError("--early_stop_min_delta must be nonnegative.")
     if args.val_subject_id is not None:
         if args.val_subject_id in args.test_subject_ids:
             raise ValueError("val_subject_id must be different from test_subject_ids.")
 
-    val_dataloader = None
+    val_dataloader = concept_val_dataloader
     if args.val_subject_id is not None:
         print('\n>>> Loading Validation Data <<<')
         val_dataset = EEGPreImageDataset(
@@ -1132,6 +1720,9 @@ if __name__ == '__main__':
         'tsconv_temporal_filters', 'tsconv_temporal_kernel', 'tsconv_pool_kernel', 'tsconv_pool_stride',
         'tsconv_spatial_filters', 'tsconv_projection_filters', 'tsconv_activation', 'tsconv_dropout',
         'tsconv_head_dropout', 'tsconv_no_batch_norm', 'tsconv_no_conv_bias',
+        'tsconv_domain_bn_boundary',
+        'subject_adapter_rank', 'subject_adapter_max_id', 'subject_adapter_scale',
+        'subject_adapter_inferred',
         'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
@@ -1188,13 +1779,59 @@ if __name__ == '__main__':
 
     if args.init_checkpoint:
         initial = torch.load(args.init_checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(initial['model_state_dict'])
-        eeg_projector.load_state_dict(initial['eeg_projector_state_dict'])
-        img_projector.load_state_dict(initial['img_projector_state_dict'])
-        text_projector.load_state_dict(initial['text_projector_state_dict'])
-        log(f'Initialized encoder/projectors from {args.init_checkpoint}')
+        if args.init_checkpoint_scope == 'conv':
+            convolution_prefixes = ('tsconv.0.', 'tsconv.4.', 'projection.')
+            convolution_state = {
+                key: value for key, value in initial['model_state_dict'].items()
+                if key.startswith(convolution_prefixes)
+            }
+            if not convolution_state:
+                raise ValueError(
+                    '--init_checkpoint_scope conv found no compatible TSConv convolution weights'
+                )
+            incompatible = model.load_state_dict(convolution_state, strict=False)
+            unexpected = list(incompatible.unexpected_keys)
+            if unexpected:
+                raise ValueError(f'Unexpected convolution checkpoint keys: {unexpected}')
+            log(
+                f'Initialized {len(convolution_state)} TSConv convolution tensors from '
+                f'{args.init_checkpoint}; normalization, head, and projectors remain fresh'
+            )
+        else:
+            model.load_state_dict(initial['model_state_dict'])
+            if args.init_checkpoint_scope == 'all':
+                eeg_projector.load_state_dict(initial['eeg_projector_state_dict'])
+                img_projector.load_state_dict(initial['img_projector_state_dict'])
+                text_projector.load_state_dict(initial['text_projector_state_dict'])
+            log(
+                f'Initialized {args.init_checkpoint_scope} from {args.init_checkpoint}'
+            )
+        del initial
+
+    if args.freeze_eeg_encoder:
+        set_requires_grad(model, False)
+        model.eval()
+        log('Frozen initialized EEG encoder in eval mode')
+
+    if args.freeze_image_projector:
+        set_requires_grad(img_projector, False)
+        img_projector.eval()
+        log('Frozen pretrained image projector for fine-tuning')
 
     align_dim = args.feature_dim if args.projector != 'direct' else backbone_feature_dim
+    if args.teacher_alignment_lambda > 0:
+        if len(target_dims) != 2:
+            raise ValueError(
+                '--teacher_alignment_lambda requires exactly one training-only target block.'
+            )
+        if int(target_dims[-1]) != int(align_dim):
+            raise ValueError(
+                f'Teacher target dim {target_dims[-1]} must equal alignment dim {align_dim}.'
+            )
+        log(
+            f'Natural EEG teacher alignment: dim={align_dim}, '
+            f'lambda={args.teacher_alignment_lambda}'
+        )
     probe_class_map = {sid: idx for idx, sid in enumerate(sorted(args.train_subject_ids))}
     num_probe_classes = len(probe_class_map)
     subj_probe_heads = None
@@ -1311,18 +1948,6 @@ if __name__ == '__main__':
 
     total_epochs = args.num_epochs
 
-    # clean-xadv: gradient-reversal subject adversary on the backbone
-    subject_discriminator = None
-    xadv_class_map = {sid: idx for idx, sid in enumerate(sorted(args.train_subject_ids))}
-    if args.clean_xadv_lambda > 0:
-        subject_discriminator = SubjectDiscriminator(
-            backbone_feature_dim, len(xadv_class_map),
-            head=args.clean_xadv_head, hidden=args.clean_xadv_hidden,
-        ).to(device)
-        log(f'clean-xadv discriminator ({args.clean_xadv_head}) over {len(xadv_class_map)} subjects, '
-            f'lambda cap={args.clean_xadv_lambda}: '
-            f'{sum(p.numel() for p in subject_discriminator.parameters()) / 1e6:.2f}M params')
-
     module_registry = {
         'model': model,
         'eeg_projector': eeg_projector,
@@ -1331,8 +1956,6 @@ if __name__ == '__main__':
     }
     if eeg_confidence_head is not None:
         module_registry['eeg_confidence_head'] = eeg_confidence_head
-    if subject_discriminator is not None:
-        module_registry['subject_discriminator'] = subject_discriminator
     if auxiliary_eeg_projectors is not None:
         module_registry['auxiliary_eeg_projectors'] = auxiliary_eeg_projectors
         module_registry['auxiliary_img_projectors'] = auxiliary_img_projectors
@@ -1357,6 +1980,13 @@ if __name__ == '__main__':
             return floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
+
+    if args.train_rng_seed is not None:
+        seed_everything(args.train_rng_seed)
+        log(
+            f'Reset training RNG to {args.train_rng_seed} after module initialization; '
+            'batch order and stochastic augmentation draws are matched across variants'
+        )
 
     def forward_architecture(eeg_backbone_batch):
         eeg_feature = eeg_projector(eeg_backbone_batch)
@@ -1593,6 +2223,8 @@ if __name__ == '__main__':
     best_top1_acc = 0.0
     best_top5_acc = 0.0
     best_test_loss = float('inf')
+    best_testsel_loss = float('inf')
+    best_testsel_epoch = -1
     best_test_epoch = 0
     best_selected_top1 = 0.0   # top1 on whichever split selects; == best_top1_acc unless select_best_on=val
     history = {'epoch': [], 'train_loss': [], 'test_loss': [], 'top1_acc': []}
@@ -1636,24 +2268,44 @@ if __name__ == '__main__':
             f'top1={initial_top1:.2f} top5={initial_top5:.2f}'
         )
 
+    coherent_mix_cohort = None
+    if args.mixup_type == 'coherent_group' and args.coherent_mix_scope == 'run':
+        coherent_mix_cohort = sample_coherent_subject_weights(
+            args.train_subject_ids,
+            alpha=args.subject_mixup_alpha,
+            self_anchor=args.coherent_mix_self_anchor,
+            device=device,
+        )
+
+    epochs_without_selection_improvement = 0
+    early_stop_reference_loss = best_test_loss
     for epoch in range(1, total_epochs + 1):
-        model.train()
+        if args.freeze_eeg_encoder:
+            model.eval()
+        else:
+            model.train()
         eeg_projector.train()
-        img_projector.train()
+        if args.freeze_image_projector:
+            img_projector.eval()
+        else:
+            img_projector.train()
         text_projector.train()
         criterion.train()
-        if subject_discriminator is not None:
-            subject_discriminator.train()
         total_loss = 0.0
         total_cl_loss = 0.0
         total_subject_mixup_reg_loss = 0.0
+        total_mutual_reconstruction_loss = 0.0
+        total_mutual_reconstruction_rows = 0
+        total_cohort_reconstruction_loss = 0.0
+        total_cohort_reconstruction_rows = 0
+        total_subject_router_loss = 0.0
+        total_subject_router_rows = 0
         total_subject_adapt_loss = 0.0
         total_subject_adapt_subjects = 0
-        total_clean_xadv_loss = 0.0
         total_b2b_loss = 0.0
         total_rel_loss = 0.0
-        total_semantic_relational_loss = 0.0
         total_auxiliary_alignment_loss = 0.0
+        total_teacher_alignment_loss = 0.0
         total_matryoshka_loss = 0.0
         total_vrex_loss = 0.0
         total_mmd_loss = 0.0
@@ -1663,7 +2315,19 @@ if __name__ == '__main__':
         if shared_encoder is not None and not in_coarse_stage:
             set_requires_grad(shared_encoder, False)
             shared_encoder.eval()
-        clean_xadv_lambda = dann_lambda(epoch, total_epochs, args.clean_xadv_lambda) if subject_discriminator is not None else 0.0
+        if args.mixup_type == 'coherent_group' and args.coherent_mix_scope == 'epoch':
+            coherent_mix_cohort = sample_coherent_subject_weights(
+                args.train_subject_ids,
+                alpha=args.subject_mixup_alpha,
+                self_anchor=args.coherent_mix_self_anchor,
+                device=device,
+            )
+        latency_subject_ids, latency_shifts = sample_coherent_subject_time_shifts(
+            args.train_subject_ids,
+            args.coherent_latency_max_shift,
+            args.coherent_latency_std,
+            device=device,
+        )
 
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs}"):
             eeg_batch = batch[0].to(device)
@@ -1680,31 +2344,230 @@ if __name__ == '__main__':
                     shrink=args.op_transfer_shrink,
                     extrapolate=args.op_transfer_extrapolate,
                 )
-            original_eeg_batch = eeg_batch
-            mixup_metadata = None
-            if args.subject_mixup_mode == 'raw_eeg':
-                mixup_out = cross_subject_stimulus_mix(
+            if cross_dataset_translation is not None:
+                eeg_batch = translate_auxiliary_subjects(
+                    eeg_batch,
+                    subject_id_batch,
+                    args.subject_mixup_partition_boundary,
+                    *cross_dataset_translation,
+                    blend=args.cross_dataset_translation_blend,
+                )
+            if (
+                args.spectral_style_mix_prob > 0
+                and random.random() < args.spectral_style_mix_prob
+            ):
+                eeg_batch = cross_subject_spectral_style_mix(
                     eeg_batch,
                     object_idx_batch,
                     image_idx_batch,
                     subject_id_batch,
-                    alpha=args.subject_mixup_alpha,
-                    mixup_type=args.mixup_type,
-                    return_mixup_metadata=args.subject_mixup_reg_lambda > 0,
+                    alpha=args.spectral_style_mix_alpha,
                 )
+            original_eeg_batch = eeg_batch
+            mixup_metadata = None
+            backbone_subject_id_batch = subject_id_batch
+            reconstruction_eligible_mask = torch.ones_like(
+                subject_id_batch, dtype=torch.bool
+            )
+            if args.subject_mixup_mode == 'raw_eeg':
+                synthetic_mask = torch.ones(
+                    eeg_batch.shape[0], device=eeg_batch.device, dtype=torch.bool
+                )
+                if args.mixup_type == 'coherent_group':
+                    mixup_out = coherent_cross_subject_stimulus_mix(
+                        eeg_batch,
+                        object_idx_batch,
+                        image_idx_batch,
+                        subject_id_batch,
+                        coherent_mix_cohort[0],
+                        coherent_mix_cohort[1],
+                        residual_scale=args.coherent_mix_residual_scale,
+                        jitter=args.coherent_mix_jitter,
+                        jitter_alpha=args.subject_mixup_alpha,
+                    )
+                elif args.mixup_type == 'meta_residual':
+                    mixup_out = cross_dataset_residual_subject_mix(
+                        eeg_batch,
+                        object_idx_batch,
+                        image_idx_batch,
+                        subject_id_batch,
+                        partition_boundary=args.subject_mixup_partition_boundary,
+                        alpha=args.subject_mixup_alpha,
+                        residual_scale=args.meta_residual_scale,
+                    )
+                else:
+                    mix_partition_labels = None
+                    if args.subject_mixup_partition_boundary > 0:
+                        mix_partition_labels = (
+                            subject_id_batch >= args.subject_mixup_partition_boundary
+                        ).long()
+                    mixup_out = cross_subject_stimulus_mix(
+                        eeg_batch,
+                        object_idx_batch,
+                        image_idx_batch,
+                        subject_id_batch,
+                        alpha=args.subject_mixup_alpha,
+                        mixup_type=args.mixup_type,
+                        return_mixup_metadata=args.subject_mixup_reg_lambda > 0,
+                        group_self_anchor=args.group_mix_self_anchor,
+                        partition_labels=mix_partition_labels,
+                        time_varying=args.mix_time_varying,
+                        hybrid_group_prob=args.hybrid_group_prob,
+                    )
                 if args.subject_mixup_reg_lambda > 0:
                     eeg_batch, mixup_metadata = mixup_out
                 else:
                     eeg_batch = mixup_out
-            eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
+                if args.subject_mixup_prob < 1:
+                    synthetic_mask = torch.rand(
+                        eeg_batch.shape[0], device=eeg_batch.device
+                    ) < args.subject_mixup_prob
+                    view_shape = (eeg_batch.shape[0],) + (1,) * (eeg_batch.ndim - 1)
+                    eeg_batch = torch.where(
+                        synthetic_mask.view(view_shape), eeg_batch, original_eeg_batch
+                    )
+                    if mixup_metadata is not None:
+                        mixup_metadata['mixed_mask'] &= synthetic_mask
+                if args.subject_adapter_rank > 0 or args.tsconv_subject_bn_max_id > 0:
+                    # Real rows use their learned source random effect. Virtual
+                    # rows use either ID zero (the inference population path)
+                    # or a negative virtual-identity key for empirical-Bayes
+                    # adapter draws.
+                    virtual_ids = (
+                        -subject_id_batch
+                        if (
+                            args.subject_adapter_rank > 0
+                            and args.subject_adapter_virtual_prob > 0
+                            and args.tsconv_subject_bn_max_id <= 0
+                        )
+                        else torch.zeros_like(subject_id_batch)
+                    )
+                    backbone_subject_id_batch = torch.where(
+                        synthetic_mask, virtual_ids, subject_id_batch
+                    )
+                reconstruction_eligible_mask = ~synthetic_mask
+                if args.subject_mixup_rows_per_image > 0:
+                    keep = select_rows_per_exact_image(
+                        object_idx_batch,
+                        image_idx_batch,
+                        args.subject_mixup_rows_per_image,
+                    )
+                    eeg_batch = eeg_batch[keep]
+                    original_eeg_batch = original_eeg_batch[keep]
+                    image_feature_batch = image_feature_batch[keep]
+                    text_feature_batch = text_feature_batch[keep]
+                    subject_id_batch = subject_id_batch[keep]
+                    object_idx_batch = object_idx_batch[keep]
+                    image_idx_batch = image_idx_batch[keep]
+                    backbone_subject_id_batch = backbone_subject_id_batch[keep]
+                    reconstruction_eligible_mask = reconstruction_eligible_mask[keep]
+                if args.subject_mixup_views > 1:
+                    eeg_views = [eeg_batch]
+                    for _ in range(1, args.subject_mixup_views):
+                        eeg_views.append(cross_subject_stimulus_mix(
+                            original_eeg_batch,
+                            object_idx_batch,
+                            image_idx_batch,
+                            subject_id_batch,
+                            alpha=args.subject_mixup_alpha,
+                            mixup_type='group',
+                            group_self_anchor=args.group_mix_self_anchor,
+                            time_varying=args.mix_time_varying,
+                        ))
+                    eeg_batch = torch.cat(eeg_views, dim=0)
+                    original_eeg_batch = torch.cat(
+                        [original_eeg_batch] * args.subject_mixup_views, dim=0
+                    )
+                    image_feature_batch = torch.cat(
+                        [image_feature_batch] * args.subject_mixup_views, dim=0
+                    )
+                    text_feature_batch = torch.cat(
+                        [text_feature_batch] * args.subject_mixup_views, dim=0
+                    )
+                    subject_id_batch = subject_id_batch.repeat(args.subject_mixup_views)
+                    object_idx_batch = object_idx_batch.repeat(args.subject_mixup_views)
+                    image_idx_batch = image_idx_batch.repeat(args.subject_mixup_views)
+                    backbone_subject_id_batch = torch.zeros_like(subject_id_batch)
+                    reconstruction_eligible_mask = torch.zeros_like(
+                        subject_id_batch, dtype=torch.bool
+                    )
+            if args.coherent_latency_max_shift > 0:
+                eeg_batch = coherent_subject_time_shift(
+                    eeg_batch,
+                    subject_id_batch,
+                    latency_subject_ids,
+                    latency_shifts,
+                )
+            eeg_backbone_batch = run_eeg_backbone(
+                model, args, eeg_batch, backbone_subject_id_batch
+            )
+            subject_router_loss = eeg_batch.new_tensor(0.0)
+            subject_router_rows = 0
+            if args.subject_adapter_router_lambda > 0:
+                subject_router_loss, subject_router_rows = (
+                    model.subject_adapter_router_loss(backbone_subject_id_batch)
+                )
+            mutual_reconstruction_loss = eeg_batch.new_tensor(0.0)
+            mutual_reconstruction_rows = 0
+            if args.mutual_reconstruction_lambda > 0:
+                mutual_reconstruction_loss, mutual_reconstruction_rows = (
+                    compute_mutual_reconstruction_loss(
+                        model,
+                        eeg_backbone_batch,
+                        original_eeg_batch,
+                        object_idx_batch,
+                        image_idx_batch,
+                        subject_id_batch,
+                        reconstruction_eligible_mask,
+                    )
+                )
+            cohort_reconstruction_loss = eeg_batch.new_tensor(0.0)
+            cohort_reconstruction_rows = 0
+            if args.cohort_reconstruction_lambda > 0:
+                cohort_reconstruction_loss, cohort_reconstruction_rows = (
+                    compute_cohort_reconstruction_loss(
+                        model,
+                        eeg_backbone_batch,
+                        original_eeg_batch,
+                        object_idx_batch,
+                        image_idx_batch,
+                        subject_id_batch,
+                    )
+                )
             if args.subject_mixup_mode == 'embedding':
+                mix_partition_labels = None
+                if args.subject_mixup_partition_boundary > 0:
+                    mix_partition_labels = (
+                        subject_id_batch >= args.subject_mixup_partition_boundary
+                    ).long()
                 eeg_backbone_batch = cross_subject_stimulus_mix(
                     eeg_backbone_batch, object_idx_batch, image_idx_batch, subject_id_batch,
-                    alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type
+                    alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type,
+                    group_self_anchor=args.group_mix_self_anchor,
+                    partition_labels=mix_partition_labels,
+                    time_varying=args.mix_time_varying,
+                    hybrid_group_prob=args.hybrid_group_prob,
                 )
             arch_out = forward_architecture(eeg_backbone_batch)
 
             loss = eeg_batch.new_tensor(0.0)
+
+            if args.subject_adapter_router_lambda > 0:
+                loss = loss + args.subject_adapter_router_lambda * subject_router_loss
+                total_subject_router_loss += subject_router_loss.item()
+                total_subject_router_rows += subject_router_rows
+            if args.mutual_reconstruction_lambda > 0:
+                loss = loss + (
+                    args.mutual_reconstruction_lambda * mutual_reconstruction_loss
+                )
+                total_mutual_reconstruction_loss += mutual_reconstruction_loss.item()
+                total_mutual_reconstruction_rows += mutual_reconstruction_rows
+            if args.cohort_reconstruction_lambda > 0:
+                loss = loss + (
+                    args.cohort_reconstruction_lambda * cohort_reconstruction_loss
+                )
+                total_cohort_reconstruction_loss += cohort_reconstruction_loss.item()
+                total_cohort_reconstruction_rows += cohort_reconstruction_rows
 
             eeg_feature_batch = arch_out['eeg_feature']
             eeg_confidence_batch = arch_out['eeg_confidence']
@@ -1732,31 +2595,26 @@ if __name__ == '__main__':
             text_feature_proj = text_projector(
                 primary_image_target(text_feature_batch)
             )
+            if args.subject_mixup_hard_view:
+                keep = select_hard_counterfactual_views(
+                    eeg_feature_batch,
+                    image_feature_proj,
+                    args.subject_mixup_views,
+                )
+                eeg_backbone_batch = eeg_backbone_batch[keep]
+                eeg_feature_batch = eeg_feature_batch[keep]
+                image_feature_batch = image_feature_batch[keep]
+                text_feature_batch = text_feature_batch[keep]
+                image_feature_proj = image_feature_proj[keep]
+                text_feature_proj = text_feature_proj[keep]
+                subject_id_batch = subject_id_batch[keep]
+                object_idx_batch = object_idx_batch[keep]
+                image_idx_batch = image_idx_batch[keep]
+                if eeg_confidence_batch is not None:
+                    eeg_confidence_batch = eeg_confidence_batch[keep]
             positive_mask = build_image_positive_mask(
                 object_idx_batch, image_idx_batch, args.concept_positives
             )
-            semantic_relational_active = (
-                args.semantic_relational_lambda > 0
-                and (
-                    args.semantic_relational_epochs <= 0
-                    or epoch <= args.semantic_relational_epochs
-                )
-            )
-            if semantic_relational_active:
-                with torch.no_grad():
-                    semantic_similarity = semantic_consensus_similarity(
-                        image_feature_batch
-                    )
-                semantic_relational_loss = cross_modal_distillation_loss(
-                    eeg_feature_batch,
-                    image_feature_proj,
-                    semantic_similarity,
-                    temperature=args.semantic_relational_temperature,
-                )
-                loss = loss + (
-                    args.semantic_relational_lambda * semantic_relational_loss
-                )
-                total_semantic_relational_loss += semantic_relational_loss.item()
             eeg_feature_for_loss, image_feature_for_loss = maybe_apply_train_saw(
                 eeg_feature_batch,
                 image_feature_proj,
@@ -1790,6 +2648,17 @@ if __name__ == '__main__':
                 auxiliary_alignment_loss = torch.stack(auxiliary_losses).mean()
                 loss = loss + args.auxiliary_alignment_lambda * auxiliary_alignment_loss
                 total_auxiliary_alignment_loss += auxiliary_alignment_loss.item()
+            if args.teacher_alignment_lambda > 0:
+                teacher_target = auxiliary_image_target_blocks(image_feature_batch)[-1]
+                teacher_alignment_loss = (
+                    1.0 - F.cosine_similarity(
+                        eeg_feature_batch,
+                        teacher_target.detach(),
+                        dim=1,
+                    )
+                ).mean()
+                loss = loss + args.teacher_alignment_lambda * teacher_alignment_loss
+                total_teacher_alignment_loss += teacher_alignment_loss.item()
             cl_loss = compute_cross_modal_loss(
                 criterion,
                 {'feature': eeg_feature_for_loss, 'confidence': eeg_confidence_batch},
@@ -1847,18 +2716,6 @@ if __name__ == '__main__':
                     loss = loss + args.vrex_lambda * vrex_loss
                     total_vrex_loss += vrex_loss.item()
 
-            if subject_discriminator is not None:
-                # GRL on the backbone: discriminator learns subject id (forward CE),
-                # encoder gets the reversed gradient -> pushed subject-invariant.
-                subj_targets = torch.tensor(
-                    [xadv_class_map[int(s)] for s in subject_id_batch.tolist()],
-                    device=device,
-                )
-                xadv_logits = subject_discriminator(grad_reverse(eeg_backbone_batch, clean_xadv_lambda))
-                clean_xadv_loss = F.cross_entropy(xadv_logits, subj_targets)
-                loss = loss + clean_xadv_loss
-                total_clean_xadv_loss += clean_xadv_loss.item()
-
             if args.subject_adapt_lambda > 0:
                 subject_adapt_loss, valid_subjects = compute_subject_adaptation_loss(
                     args,
@@ -1882,11 +2739,18 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train', avg_loss, epoch)
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_subject_mixup_reg', total_subject_mixup_reg_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_mutual_reconstruction', total_mutual_reconstruction_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_cohort_reconstruction', total_cohort_reconstruction_loss / len(dataloader), epoch)
+        writer.add_scalar('Loss/train_subject_router', total_subject_router_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_subject_adapt', total_subject_adapt_loss / len(dataloader), epoch)
-        writer.add_scalar('Loss/train_clean_xadv', total_clean_xadv_loss / len(dataloader), epoch)
         writer.add_scalar(
             'Loss/train_auxiliary_alignment',
             total_auxiliary_alignment_loss / len(dataloader),
+            epoch,
+        )
+        writer.add_scalar(
+            'Loss/train_teacher_alignment',
+            total_teacher_alignment_loss / len(dataloader),
             epoch,
         )
         writer.add_scalar(
@@ -1894,23 +2758,22 @@ if __name__ == '__main__':
             total_matryoshka_loss / len(dataloader),
             epoch,
         )
-        writer.add_scalar(
-            'Loss/train_semantic_relational',
-            total_semantic_relational_loss / len(dataloader),
-            epoch,
-        )
-        writer.add_scalar('clean_xadv/lambda', clean_xadv_lambda, epoch)
         log(
             f"Epoch [{epoch}/{total_epochs}] TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} "
             f"MIXREG={total_subject_mixup_reg_loss / len(dataloader):.4f} "
+            f"MRECON={total_mutual_reconstruction_loss / len(dataloader):.4f} "
+            f"MRECON_ROWS={total_mutual_reconstruction_rows / len(dataloader):.1f} "
+            f"CRECON={total_cohort_reconstruction_loss / len(dataloader):.4f} "
+            f"CRECON_ROWS={total_cohort_reconstruction_rows / len(dataloader):.1f} "
+            f"SROUTER={total_subject_router_loss / len(dataloader):.4f} "
+            f"SROUTER_ROWS={total_subject_router_rows / len(dataloader):.1f} "
             f"SADAPT={total_subject_adapt_loss / len(dataloader):.4f} "
             f"SADAPT_SUBJ={total_subject_adapt_subjects / len(dataloader):.2f} "
-            f"XADV={total_clean_xadv_loss / len(dataloader):.4f}(lam={clean_xadv_lambda:.3f}) "
             f"B2B={total_b2b_loss / len(dataloader):.4f} "
             f"REL={total_rel_loss / len(dataloader):.4f} "
-            f"SREL={total_semantic_relational_loss / len(dataloader):.4f} "
             f"AUX={total_auxiliary_alignment_loss / len(dataloader):.4f} "
+            f"TEACH={total_teacher_alignment_loss / len(dataloader):.4f} "
             f"MRL={total_matryoshka_loss / len(dataloader):.4f} "
             f"VREX={total_vrex_loss / len(dataloader):.4f} "
             f"MMD={total_mmd_loss / len(dataloader):.4f}{'' if in_coarse_stage else '(fine)'}"
@@ -2054,11 +2917,17 @@ if __name__ == '__main__':
             selected_loss = val_loss
             selected_top1 = val_top1
 
-        is_better = False
-        if selected_loss < best_test_loss:
-            is_better = True
-        elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
-            is_better = True
+        if args.select_best_on == 'fixed':
+            # Honest refit protocol: the epoch budget was chosen on source validation
+            # before this run.  Test metrics are still logged for reporting, but may
+            # not influence which weights are retained.
+            is_better = epoch == total_epochs
+        else:
+            is_better = False
+            if selected_loss < best_test_loss:
+                is_better = True
+            elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
+                is_better = True
 
         if is_better:
             best_test_loss = selected_loss
@@ -2069,9 +2938,32 @@ if __name__ == '__main__':
             best_test_sparsity = dict(test_sparsity)
             if args.save_weights:
                 torch.save(build_checkpoint(epoch, selected_loss, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
+        if args.save_testsel_checkpoint and avg_test_loss < best_testsel_loss:
+            # Matched control: what test-loss selection would have kept on this same
+            # trajectory. Never influences training or the selected checkpoint.
+            best_testsel_loss = avg_test_loss
+            best_testsel_epoch = epoch
+            torch.save(build_checkpoint(epoch, avg_test_loss, optimizer), f"{writer.log_dir}/checkpoint_testsel_best.pth")
+        if args.early_stop_patience > 0:
+            if selected_loss < early_stop_reference_loss - args.early_stop_min_delta:
+                early_stop_reference_loss = selected_loss
+                epochs_without_selection_improvement = 0
+            else:
+                epochs_without_selection_improvement += 1
 
         if scheduler is not None:
             scheduler.step()
+
+        if (
+            args.early_stop_patience > 0
+            and epochs_without_selection_improvement >= args.early_stop_patience
+        ):
+            log(
+                f"Early stopping after epoch {epoch}: no source-validation "
+                f"improvement for {epochs_without_selection_improvement} epochs "
+                f"(best epoch {best_test_epoch})."
+            )
+            break
 
     save_training_plot(history, os.path.join(log_dir, 'training_metrics.png'))
     if probe_history is not None:

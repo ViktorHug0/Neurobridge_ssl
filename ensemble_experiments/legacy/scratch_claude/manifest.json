@@ -1,0 +1,992 @@
+{
+ "ge100": {
+  "run": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300",
+  "mean": 37.0,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-051558-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-054712-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-061813-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-064917-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-072025-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-075134-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-082232-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-085331-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-092425-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300/20260818-095538-sub-10"
+  }
+ },
+ "group": {
+  "run": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300",
+  "mean": 36.7,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-004201-sub-01",
+   "2": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-005821-sub-02",
+   "3": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-011435-sub-03",
+   "4": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-013045-sub-04",
+   "5": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-014700-sub-05",
+   "6": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-020323-sub-06",
+   "7": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-021943-sub-07",
+   "8": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-023606-sub-08",
+   "9": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-025225-sub-09",
+   "10": "results/things_eeg/subjectmix_rebuttal/beta_k9_paperbase/seed3300/20260804-030847-sub-10"
+  }
+ },
+ "pair": {
+  "run": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300",
+  "mean": 35.9,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-190752-sub-01",
+   "2": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-193126-sub-02",
+   "3": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-195503-sub-03",
+   "4": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-201833-sub-04",
+   "5": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-204200-sub-05",
+   "6": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-210530-sub-06",
+   "7": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-212900-sub-07",
+   "8": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-215230-sub-08",
+   "9": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-221551-sub-09",
+   "10": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3300/20260429-223920-sub-10"
+  }
+ },
+ "p3301": {
+  "run": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301",
+  "mean": 35.7,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260429-230252-sub-01",
+   "2": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260429-232617-sub-02",
+   "3": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260429-234946-sub-03",
+   "4": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-001311-sub-04",
+   "5": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-003630-sub-05",
+   "6": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-005951-sub-06",
+   "7": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-012317-sub-07",
+   "8": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-014635-sub-08",
+   "9": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-020953-sub-09",
+   "10": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3301/20260430-023317-sub-10"
+  }
+ },
+ "p3302": {
+  "run": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302",
+  "mean": 36.1,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-025639-sub-01",
+   "2": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-032012-sub-02",
+   "3": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-034336-sub-03",
+   "4": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-040703-sub-04",
+   "5": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-043029-sub-05",
+   "6": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-045358-sub-06",
+   "7": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-051724-sub-07",
+   "8": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-054050-sub-08",
+   "9": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-060413-sub-09",
+   "10": "results/things_eeg/inter-subjects/tsconv_dropout_sweep_20260429-190741/param_k30_pool51_do050_featdim512_seed3302/20260430-062735-sub-10"
+  }
+ },
+ "tm3": {
+  "run": "results/things_eeg/hullaug/tm3/seed3300",
+  "mean": 35.3,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/hullaug/tm3/seed3300/20260806-101852-sub-01",
+   "3": "results/things_eeg/hullaug/tm3/seed3300/20260806-104413-sub-03",
+   "5": "results/things_eeg/hullaug/tm3/seed3300/20260806-110928-sub-05",
+   "2": "results/things_eeg/hullaug/tm3/seed3300/20260807-172550-sub-02",
+   "4": "results/things_eeg/hullaug/tm3/seed3300/20260807-172757-sub-04",
+   "6": "results/things_eeg/hullaug/tm3/seed3300/20260807-175334-sub-06",
+   "7": "results/things_eeg/hullaug/tm3/seed3300/20260807-175352-sub-07",
+   "8": "results/things_eeg/hullaug/tm3/seed3300/20260807-181917-sub-08",
+   "9": "results/things_eeg/hullaug/tm3/seed3300/20260807-181935-sub-09",
+   "10": "results/things_eeg/hullaug/tm3/seed3300/20260807-184441-sub-10"
+  }
+ },
+ "rvgroup": {
+  "run": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300",
+  "mean": 36.05,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-211308-sub-01",
+   "3": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-212822-sub-03",
+   "2": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-215134-sub-02",
+   "4": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-220711-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-222241-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-223815-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-225347-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-230948-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-232601-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/real_virtual_group_screen/p050_a05/seed3300/20260813-234213-sub-10"
+  }
+ },
+ "router": {
+  "run": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300",
+  "mean": 36.2,
+  "enc": "TSConv_parameterizable",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-011706-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-013954-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-020126-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-022250-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-024406-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-030529-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-032646-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-034806-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-040927-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/promising_allfolds/group_router_rv/seed3300/20260818-043039-sub-10"
+  }
+ },
+ "tsconv_iv": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup",
+  "mean": 36.1,
+  "enc": "TSConv",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-140039-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-142428-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-144832-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-151220-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-153559-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-155949-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-162334-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-164732-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-171124-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_TSConv_seed3300_mixup/20260430-173510-sub-10"
+  }
+ },
+ "atm_iv": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300",
+  "mean": 35.2,
+  "enc": "ATM",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-185002-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-193717-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-202431-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-211147-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-215852-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-224555-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260426-233259-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260427-002016-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260427-010721-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300/20260427-015424-sub-10"
+  }
+ },
+ "eegproj_iv": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup",
+  "mean": 27.4,
+  "enc": "EEGProject",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-112859-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-114358-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-115859-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-121353-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-122927-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-124501-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-130004-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-131520-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-133050-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGProject_seed3300_mixup/20260430-134555-sub-10"
+  }
+ },
+ "conf_iv": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup",
+  "mean": 26.6,
+  "enc": "EEGConformer",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-155318-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-165503-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-175648-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-185827-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-200009-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-210148-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-220320-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260502-230449-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260503-000626-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/InternViT-6B_layer28_mean_8bit_EEGConformer_seed3300_mixup/20260503-010804-sub-10"
+  }
+ },
+ "eegnet_iv": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300",
+  "mean": 26.2,
+  "enc": "EEGNet",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-203515-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-205426-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-211344-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-213255-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-215249-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-221158-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-223108-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-225017-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-230923-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/EEGNet_seed3300/20260427-232828-sub-10"
+  }
+ },
+ "labram_iv": {
+  "run": "results/things_eeg/foundation/LaBraM_mix_seed3300",
+  "mean": 31.85,
+  "enc": "LaBraM",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260726-174956-sub-01",
+   "2": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260726-191555-sub-02",
+   "3": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260726-204113-sub-03",
+   "4": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260726-220628-sub-04",
+   "5": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260726-233138-sub-05",
+   "6": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260727-005647-sub-06",
+   "7": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260727-022129-sub-07",
+   "8": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260727-034624-sub-08",
+   "9": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260727-051123-sub-09",
+   "10": "results/things_eeg/foundation/LaBraM_mix_seed3300/20260727-063605-sub-10"
+  }
+ },
+ "tsconv_eva": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup",
+  "mean": 33.95,
+  "enc": "TSConv",
+  "img": "EVA02-E-14_layer35_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-134411-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-140745-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-143112-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-145439-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-151801-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-154126-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-160446-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-162807-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-165119-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup/20260430-172106-sub-10"
+  }
+ },
+ "tsconv_bigg": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup",
+  "mean": 32.75,
+  "enc": "TSConv",
+  "img": "ViT-bigG-14_layer27_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-082522-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-084833-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-091144-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-093452-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-095804-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-102119-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-104437-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-110801-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-113111-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup/20260501-115418-sub-10"
+  }
+ },
+ "tsconv_vith": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup",
+  "mean": 32.65,
+  "enc": "TSConv",
+  "img": "ViT-H-14_layer10_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-090851-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-093152-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-095456-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-101820-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-104126-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-110444-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-112750-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-115051-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-121357-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_TSConv_seed3300_mixup/20260501-123701-sub-10"
+  }
+ },
+ "tsconv_dino": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup",
+  "mean": 31.0,
+  "enc": "TSConv",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-094450-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-100810-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-103131-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-105453-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-111807-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-114127-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-120445-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-122801-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-125124-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_TSConv_seed3300_mixup/20260502-131446-sub-10"
+  }
+ },
+ "tsconv_vitb": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup",
+  "mean": 29.7,
+  "enc": "TSConv",
+  "img": "ViT-B-16_layer06__mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-025904-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-032159-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-034450-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-040744-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-043035-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-045324-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-051616-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-053908-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-060155-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_TSConv_seed3300_mixup/20260503-062451-sub-10"
+  }
+ },
+ "atm_bigg": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300",
+  "mean": 32.45,
+  "enc": "ATM",
+  "img": "ViT-bigG-14_layer27_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-150443-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-154644-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-162844-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-171042-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-175241-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-183438-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-191632-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-195832-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-204035-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/ViT-bigG-14_layer27_mean_ATM_seed3300/20260428-212235-sub-10"
+  }
+ },
+ "atm_eva": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300",
+  "mean": 32.15,
+  "enc": "ATM",
+  "img": "EVA02-E-14_layer35_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260427-221735-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260427-230653-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260427-235351-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-004054-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-012800-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-021459-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-030202-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-034858-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-043550-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_EVA_bigg_20260427-221720/EVA02-E-14_layer35_mean_ATM_seed3300/20260428-052255-sub-10"
+  }
+ },
+ "atm_vith": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup",
+  "mean": 29.8,
+  "enc": "ATM",
+  "img": "ViT-H-14_layer10_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-175904-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-184645-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-193422-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-202205-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-210951-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-215733-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-224522-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260430-233308-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260501-002059-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup/20260501-024923-sub-10"
+  }
+ },
+ "atm_vitb": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup",
+  "mean": 27.5,
+  "enc": "ATM",
+  "img": "ViT-B-16_layer06__mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-133757-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-142546-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-151339-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-160141-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-164908-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-173638-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-182418-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-191142-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-195906-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_ATM_seed3300_mixup/20260502-204635-sub-10"
+  }
+ },
+ "atm_dino": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup",
+  "mean": 25.45,
+  "enc": "ATM",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260501-200951-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260501-205816-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260501-214607-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260501-223401-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260501-232154-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260502-000954-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260502-005736-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260502-014522-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260502-023315-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_ATM_seed3300_mixup/20260502-032114-sub-10"
+  }
+ },
+ "conf_vith": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup",
+  "mean": 26.35,
+  "enc": "EEGConformer",
+  "img": "ViT-H-14_layer10_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-115102-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-125324-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-135428-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-145527-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-155624-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-165725-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-175816-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-185909-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-200005-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGConformer_seed3300_mixup/20260503-210100-sub-10"
+  }
+ },
+ "eegproj_bigg": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup",
+  "mean": 25.25,
+  "enc": "EEGProject",
+  "img": "ViT-bigG-14_layer27_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-060450-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-061839-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-063234-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-064607-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-065952-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-071349-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-072757-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-074228-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-075627-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGProject_seed3300_mixup/20260501-081127-sub-10"
+  }
+ },
+ "eegnet_eva": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup",
+  "mean": 23.4,
+  "enc": "EEGNet",
+  "img": "EVA02-E-14_layer35_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-080221-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-082203-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-084203-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-090141-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-092136-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-094126-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-100112-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-102055-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-104034-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGNet_seed3300_mixup/20260430-110004-sub-10"
+  }
+ },
+ "tsconv_rn50": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300",
+  "mean": 20.95,
+  "enc": "TSConv",
+  "img": "RN50",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-161322-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-163601-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-165839-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-172111-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-174343-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-180617-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-182850-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-185130-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-191408-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/TSConv_seed3300/20260427-193648-sub-10"
+  }
+ },
+ "zip6_het": {
+  "run": "results/things_eeg/inter-subjects/multihead/zip6_e50_het",
+  "mean": 43.65,
+  "enc": "TSConv,TSConv,TSConv,ATM,ATM,ATM",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "3": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260807-173929-sub-03",
+   "8": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260807-190515-sub-08",
+   "5": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260807-202918-sub-05",
+   "7": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260809-183247-sub-07",
+   "6": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260809-195845-sub-06",
+   "4": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260809-212317-sub-04",
+   "2": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260809-224751-sub-02",
+   "9": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260810-001257-sub-09",
+   "1": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260810-013828-sub-01",
+   "10": "results/things_eeg/inter-subjects/multihead/zip6_e50_het/20260810-030309-sub-10"
+  }
+ },
+ "zip6_phb": {
+  "run": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb",
+  "mean": 42.65,
+  "enc": "TSConv,TSConv,TSConv,ATM,ATM,ATM",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "3": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260805-180953-sub-03",
+   "8": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260805-193403-sub-08",
+   "7": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260805-205757-sub-07",
+   "6": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260805-222158-sub-06",
+   "4": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260805-234606-sub-04",
+   "5": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260806-011121-sub-05",
+   "9": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260806-023615-sub-09",
+   "2": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260806-040004-sub-02",
+   "1": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260806-052411-sub-01",
+   "10": "results/things_eeg/inter-subjects/multihead/zip6_e50_phb/20260806-064916-sub-10"
+  }
+ },
+ "zip6_dim": {
+  "run": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly",
+  "mean": 39.05,
+  "enc": "TSConv,TSConv,TSConv,TSConv,TSConv,TSConv",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "3": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260809-183247-sub-03",
+   "8": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260809-194303-sub-08",
+   "7": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260809-205140-sub-07",
+   "6": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260809-215954-sub-06",
+   "4": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260809-230909-sub-04",
+   "5": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260810-001816-sub-05",
+   "9": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260810-012656-sub-09",
+   "2": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260810-023610-sub-02",
+   "1": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260810-034439-sub-01",
+   "10": "results/things_eeg/inter-subjects/multihead/zip6_e50_dimonly/20260810-045244-sub-10"
+  }
+ },
+ "eegproj_eva": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup",
+  "mean": 25.05,
+  "enc": "EEGProject",
+  "img": "EVA02-E-14_layer35_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-111932-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-113336-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-114748-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-120148-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-121606-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-123113-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-124601-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-130014-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-131452-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGProject_seed3300_mixup/20260430-132952-sub-10"
+  }
+ },
+ "conf_bigg": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup",
+  "mean": 24.95,
+  "enc": "EEGConformer",
+  "img": "ViT-bigG-14_layer27_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260503-223215-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260503-233325-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-003440-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-013550-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-023702-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-033814-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-043930-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-054036-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-064148-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGConformer_seed3300_mixup/20260504-074259-sub-10"
+  }
+ },
+ "conf_eva": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup",
+  "mean": 24.8,
+  "enc": "EEGConformer",
+  "img": "EVA02-E-14_layer35_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-122026-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-132137-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-142253-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-152409-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-162524-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-172633-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-182737-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-192847-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-202948-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_EEGConformer_seed3300_mixup/20260503-213055-sub-10"
+  }
+ },
+ "eegproj_vith": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup",
+  "mean": 24.35,
+  "enc": "EEGProject",
+  "img": "ViT-H-14_layer10_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-064921-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-070302-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-071658-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-073049-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-074510-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-075856-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-081301-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-082649-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-084041-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGProject_seed3300_mixup/20260501-085457-sub-10"
+  }
+ },
+ "eegnet_bigg": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup",
+  "mean": 23.4,
+  "enc": "EEGNet",
+  "img": "ViT-bigG-14_layer27_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-014220-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-031047-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-033008-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-034931-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-040850-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-042812-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-044736-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-050654-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-052613-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_EEGNet_seed3300_mixup/20260501-054532-sub-10"
+  }
+ },
+ "conf_dino": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup",
+  "mean": 23.1,
+  "enc": "EEGConformer",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-020942-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-031052-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-041157-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-051257-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-061358-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-071507-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-081600-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-091706-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-101812-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGConformer_seed3300_mixup/20260503-111915-sub-10"
+  }
+ },
+ "eegproj_dino": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup",
+  "mean": 22.9,
+  "enc": "EEGProject",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-072418-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-073814-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-075213-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-080559-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-081947-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-083352-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-084803-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-090214-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-091616-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGProject_seed3300_mixup/20260502-093036-sub-10"
+  }
+ },
+ "eegproj_vitb": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup",
+  "mean": 21.8,
+  "enc": "EEGProject",
+  "img": "ViT-B-16_layer06__mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-004410-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-005739-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-011109-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-012429-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-013755-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-015141-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-020459-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-021823-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-023150-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGProject_seed3300_mixup/20260503-024534-sub-10"
+  }
+ },
+ "conf_vitb": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup",
+  "mean": 21.6,
+  "enc": "EEGConformer",
+  "img": "ViT-B-16_layer06__mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260503-220156-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260503-230244-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-000339-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-010431-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-020524-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-030612-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-040705-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-050800-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-060850-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGConformer_seed3300_mixup/20260504-070938-sub-10"
+  }
+ },
+ "eegnet_vith": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup",
+  "mean": 21.5,
+  "enc": "EEGNet",
+  "img": "ViT-H-14_layer10_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-033723-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-035646-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-041601-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-043509-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-045418-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-051332-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-053241-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-055152-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-061100-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_EEGNet_seed3300_mixup/20260501-063009-sub-10"
+  }
+ },
+ "eegnet_dino": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup",
+  "mean": 21.1,
+  "enc": "EEGNet",
+  "img": "dinov2-giant_layer16_mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-040904-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-042827-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-044759-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-050731-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-052711-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-054653-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-060625-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-062553-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-064514-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/dinov2-giant_layer16_mean_EEGNet_seed3300_mixup/20260502-070445-sub-10"
+  }
+ },
+ "eegnet_vitb": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup",
+  "mean": 20.75,
+  "enc": "EEGNet",
+  "img": "ViT-B-16_layer06__mean",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-213358-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-215302-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-221207-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-223107-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-225009-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-230911-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-232808-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260502-234707-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260503-000606-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-B-16_layer06__mean_EEGNet_seed3300_mixup/20260503-002507-sub-10"
+  }
+ },
+ "atm_rn50": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300",
+  "mean": 18.4,
+  "enc": "ATM",
+  "img": "RN50",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-184923-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-193638-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-202401-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-211110-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-215809-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-224457-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260426-233144-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260427-001837-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260427-010537-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/ATM_seed3300/20260427-015230-sub-10"
+  }
+ },
+ "eegnet_rn50": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300",
+  "mean": 13.55,
+  "enc": "EEGNet",
+  "img": "RN50",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-110951-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-112852-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-114753-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-120656-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-122558-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-124501-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-130358-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-132251-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-134130-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGNet_seed3300/20260427-140011-sub-10"
+  }
+ },
+ "eegproj_rn50": {
+  "run": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300",
+  "mean": 12.55,
+  "enc": "EEGProject",
+  "img": "RN50",
+  "folds": {
+   "1": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-141903-sub-01",
+   "2": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-143028-sub-02",
+   "3": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-144149-sub-03",
+   "4": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-145321-sub-04",
+   "5": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-150504-sub-05",
+   "6": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-151635-sub-06",
+   "7": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-152756-sub-07",
+   "8": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-153922-sub-08",
+   "9": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-155042-sub-09",
+   "10": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184910/EEGProject_seed3300/20260427-160203-sub-10"
+  }
+ },
+ "iv23": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300",
+  "mean": 33.95,
+  "enc": "TSConv",
+  "img": "InternViT-6B_layer23_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-123020-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-125515-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-131907-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-134226-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-140539-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-142903-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-145217-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-151527-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-153839-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/iv23/seed3300/20260819-160147-sub-10"
+  }
+ },
+ "iv33": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300",
+  "mean": 35.85,
+  "enc": "TSConv",
+  "img": "InternViT-6B_layer33_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-162511-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-164956-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-171320-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-173706-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-180040-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-182358-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-184712-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-191026-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-193342-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/iv33/seed3300/20260819-195652-sub-10"
+  }
+ },
+ "atm23": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300",
+  "mean": 32.75,
+  "enc": "ATM",
+  "img": "InternViT-6B_layer23_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-151539-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-155015-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-162831-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-170439-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-174112-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-181712-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-185056-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-192117-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-195157-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/atm23/seed3300/20260819-202222-sub-10"
+  }
+ },
+ "atm33": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300",
+  "mean": 34.2,
+  "enc": "ATM",
+  "img": "InternViT-6B_layer33_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-205248-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-212326-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-215401-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-222437-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-225504-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-232530-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-235545-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260820-002555-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260820-000303-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/atm33/seed3300/20260819-234913-sub-10"
+  }
+ },
+ "atm17": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300",
+  "mean": 30.7,
+  "enc": "ATM",
+  "img": "InternViT-6B_layer28_mean_8bit (17ch)",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-202006-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-203656-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-205331-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-210958-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-212621-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-214253-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-215926-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-221557-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-223232-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/atm17/seed3300/20260819-224906-sub-10"
+  }
+ },
+ "tsconv17": {
+  "run": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300",
+  "mean": 32.85,
+  "enc": "TSConv",
+  "img": "InternViT-6B_layer28_mean_8bit (17ch)",
+  "folds": {
+   "1": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-222933-sub-01",
+   "2": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-224205-sub-02",
+   "3": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-225417-sub-03",
+   "4": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-230635-sub-04",
+   "5": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-231855-sub-05",
+   "6": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-233102-sub-06",
+   "7": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-234839-sub-07",
+   "8": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-233421-sub-08",
+   "9": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-231959-sub-09",
+   "10": "results/things_eeg/synthetic_subjects/layer_sweep/tsconv17/seed3300/20260819-230535-sub-10"
+  }
+ },
+ "ortho_convgru_group": {
+  "run": "results/things_eeg/ortho_arch/convgru_group/seed3300",
+  "mean": 26.85,
+  "enc": "OrthoConvGRU",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-025203-sub-01",
+   "2": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-031447-sub-02",
+   "3": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-033738-sub-03",
+   "4": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-040019-sub-04",
+   "5": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-042313-sub-05",
+   "6": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-044600-sub-06",
+   "7": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-050842-sub-07",
+   "8": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-053130-sub-08",
+   "9": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-055408-sub-09",
+   "10": "results/things_eeg/ortho_arch/convgru_group/seed3300/20260820-061653-sub-10"
+  }
+ },
+ "ortho_mixer_group": {
+  "run": "results/things_eeg/ortho_arch/mixer_group/seed3300",
+  "mean": 32.75,
+  "enc": "OrthoMixer",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-024322-sub-01",
+   "2": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-030149-sub-02",
+   "3": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-032021-sub-03",
+   "4": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-050856-sub-04",
+   "5": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-052743-sub-05",
+   "6": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-054624-sub-06",
+   "7": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-060455-sub-07",
+   "8": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-062339-sub-08",
+   "9": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-064217-sub-09",
+   "10": "results/things_eeg/ortho_arch/mixer_group/seed3300/20260820-070057-sub-10"
+  }
+ },
+ "ortho_perceiver_group": {
+  "run": "results/things_eeg/ortho_arch/perceiver_group/seed3300",
+  "mean": 29.6,
+  "enc": "OrthoPerceiver",
+  "img": "InternViT-6B_layer28_mean_8bit",
+  "folds": {
+   "1": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-034438-sub-01",
+   "2": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-040852-sub-02",
+   "3": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-043235-sub-03",
+   "4": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-063934-sub-04",
+   "5": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-070305-sub-05",
+   "6": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-072638-sub-06",
+   "7": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-075011-sub-07",
+   "8": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-081341-sub-08",
+   "9": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-083707-sub-09",
+   "10": "results/things_eeg/ortho_arch/perceiver_group/seed3300/20260820-090040-sub-10"
+  }
+ }
+}

@@ -1,0 +1,148 @@
+{
+  "protocol": "fixed all-ten selection; per-query row-z; uniform arithmetic mean",
+  "subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "roster": [
+    "atm25_valcon",
+    "atm_iv_valcon",
+    "atm31_valcon",
+    "atm33_valcon",
+    "atm35_valcon",
+    "iv25_valcon",
+    "iv28_valcon",
+    "iv31_valcon",
+    "iv33_valcon",
+    "iv35_valcon",
+    "iv33g_valcon",
+    "tsconv_bigg_valcon",
+    "sqf_bigg_valcon",
+    "sqf_vith_valcon",
+    "multi_eva_valcon",
+    "multi_vith_valcon",
+    "sqf_iv28_valcon",
+    "multi_iv28_valcon"
+  ],
+  "roster_size": 18,
+  "best": {
+    "2": {
+      "mean_top1": 41.400001525878906,
+      "members": [
+        "atm_iv_valcon",
+        "iv33g_valcon"
+      ],
+      "fold_top1": [
+        52.0,
+        50.0,
+        33.499996185302734,
+        36.0,
+        41.0,
+        36.499996185302734,
+        38.0,
+        33.499996185302734,
+        38.5,
+        55.0
+      ],
+      "combinations_evaluated": 153
+    },
+    "3": {
+      "mean_top1": 43.75,
+      "members": [
+        "atm_iv_valcon",
+        "iv33g_valcon",
+        "sqf_bigg_valcon"
+      ],
+      "fold_top1": [
+        57.0,
+        55.0,
+        33.0,
+        37.0,
+        40.5,
+        42.999996185302734,
+        43.5,
+        31.5,
+        41.0,
+        56.0
+      ],
+      "combinations_evaluated": 816
+    },
+    "4": {
+      "mean_top1": 44.900001525878906,
+      "members": [
+        "atm_iv_valcon",
+        "atm33_valcon",
+        "iv33g_valcon",
+        "tsconv_bigg_valcon"
+      ],
+      "fold_top1": [
+        52.499996185302734,
+        57.0,
+        32.0,
+        38.0,
+        47.5,
+        39.999996185302734,
+        42.0,
+        38.0,
+        42.5,
+        59.499996185302734
+      ],
+      "combinations_evaluated": 3060
+    },
+    "5": {
+      "mean_top1": 45.150001525878906,
+      "members": [
+        "atm_iv_valcon",
+        "atm31_valcon",
+        "atm35_valcon",
+        "iv33g_valcon",
+        "tsconv_bigg_valcon"
+      ],
+      "fold_top1": [
+        55.5,
+        55.0,
+        33.499996185302734,
+        39.0,
+        47.0,
+        38.0,
+        39.5,
+        39.5,
+        44.5,
+        59.999996185302734
+      ],
+      "combinations_evaluated": 8568
+    },
+    "6": {
+      "mean_top1": 45.650001525878906,
+      "members": [
+        "atm_iv_valcon",
+        "atm33_valcon",
+        "atm35_valcon",
+        "iv33g_valcon",
+        "tsconv_bigg_valcon",
+        "sqf_iv28_valcon"
+      ],
+      "fold_top1": [
+        53.999996185302734,
+        56.5,
+        34.5,
+        39.5,
+        47.5,
+        41.0,
+        42.0,
+        37.5,
+        43.5,
+        60.499996185302734
+      ],
+      "combinations_evaluated": 18564
+    }
+  }
+}

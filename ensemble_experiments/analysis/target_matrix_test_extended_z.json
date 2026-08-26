@@ -1,0 +1,160 @@
+{
+  "protocol": "fixed all-ten selection; per-query row-z; uniform arithmetic mean",
+  "subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "roster": [
+    "atm23",
+    "atm25",
+    "atm_iv",
+    "atm31",
+    "atm33",
+    "atm35",
+    "iv23",
+    "iv25",
+    "iv28",
+    "iv31",
+    "iv33",
+    "iv35",
+    "sqf28",
+    "inductive_v2_multiscale_ts_mixer",
+    "temporal_conformer",
+    "convnext1d",
+    "ortho_mixer_group",
+    "ortho_perceiver_group",
+    "ortho_convgru_group",
+    "ge100",
+    "tsconv_eva",
+    "tsconv_vith",
+    "tsconv_bigg",
+    "atm_vith",
+    "atm_iv_group_e75",
+    "iv33_group_e75",
+    "sqf_bigg",
+    "sqf_vith",
+    "multi_eva",
+    "multi_vith"
+  ],
+  "roster_size": 30,
+  "best": {
+    "2": {
+      "mean_top1": 44.10000228881836,
+      "members": [
+        "atm_iv_group_e75",
+        "iv33_group_e75"
+      ],
+      "fold_top1": [
+        54.5,
+        51.5,
+        33.0,
+        37.5,
+        39.5,
+        42.999996185302734,
+        42.5,
+        35.0,
+        44.5,
+        59.999996185302734
+      ],
+      "combinations_evaluated": 435
+    },
+    "3": {
+      "mean_top1": 46.54999923706055,
+      "members": [
+        "atm25",
+        "iv33_group_e75",
+        "sqf_bigg"
+      ],
+      "fold_top1": [
+        58.0,
+        55.5,
+        35.0,
+        37.0,
+        45.0,
+        45.5,
+        47.0,
+        37.0,
+        46.5,
+        58.999996185302734
+      ],
+      "combinations_evaluated": 4060
+    },
+    "4": {
+      "mean_top1": 48.20000076293945,
+      "members": [
+        "sqf28",
+        "atm_vith",
+        "atm_iv_group_e75",
+        "iv33_group_e75"
+      ],
+      "fold_top1": [
+        59.499996185302734,
+        57.0,
+        36.499996185302734,
+        39.999996185302734,
+        47.0,
+        42.0,
+        48.0,
+        34.5,
+        52.499996185302734,
+        65.0
+      ],
+      "combinations_evaluated": 27405
+    },
+    "5": {
+      "mean_top1": 48.85000228881836,
+      "members": [
+        "atm25",
+        "iv35",
+        "atm_iv_group_e75",
+        "iv33_group_e75",
+        "sqf_bigg"
+      ],
+      "fold_top1": [
+        61.0,
+        58.499996185302734,
+        39.0,
+        42.5,
+        49.499996185302734,
+        45.5,
+        48.5,
+        37.0,
+        45.999996185302734,
+        61.0
+      ],
+      "combinations_evaluated": 142506
+    },
+    "6": {
+      "mean_top1": 49.5,
+      "members": [
+        "atm25",
+        "iv35",
+        "atm_vith",
+        "atm_iv_group_e75",
+        "iv33_group_e75",
+        "sqf_bigg"
+      ],
+      "fold_top1": [
+        58.999996185302734,
+        58.499996185302734,
+        39.0,
+        42.5,
+        51.0,
+        41.5,
+        47.5,
+        38.5,
+        51.5,
+        66.0
+      ],
+      "combinations_evaluated": 593775
+    }
+  }
+}

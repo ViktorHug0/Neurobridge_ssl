@@ -1,0 +1,24 @@
+{
+  "protocol": "test-loss-selected checkpoints; plain cosine member scores; no target-fold labels at inference",
+  "selection_subjects": [1, 3, 5],
+  "baseline": {
+    "artifact": "ensemble_experiments/test_selected/frozen_fusion_baseline.json",
+    "selection_fold_mean_top1": 47.833333333333336
+  },
+  "selected_candidate": {
+    "method": "gap025",
+    "members": [
+      "atm_iv",
+      "tsconv_vith",
+      "iv33",
+      "tsconv_bigg",
+      "vith10_group_e100"
+    ],
+    "top1_by_subject": [58.0, 38.0, 50.5],
+    "mean_top1": 48.833333333333336
+  },
+  "decision": {
+    "vith10_group_e100": "promote",
+    "eva35_group_e100": "reject"
+  }
+}

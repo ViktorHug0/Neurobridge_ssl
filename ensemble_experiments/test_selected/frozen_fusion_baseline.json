@@ -1,0 +1,28 @@
+{
+  "status": "frozen_before_gate2_score_exports",
+  "selection_subjects": [1, 3, 5],
+  "untouched_subjects": [2, 4, 6, 7, 8, 9, 10],
+  "members": [
+    "atm_iv",
+    "ge100",
+    "iv33",
+    "tsconv_bigg",
+    "atm_vith"
+  ],
+  "member_count": 5,
+  "base_scores": "independently L2-normalized EEG/image embeddings followed by 200x200 cosine",
+  "query_local_transform": {
+    "center": "subtract the mean of each query's 200 candidate scores, independently per member",
+    "scale": "divide by the standard deviation of the same 200 scores, independently per member",
+    "power": "sign(z) * abs(z) ** 1.25"
+  },
+  "fusion": "uniform arithmetic mean after the query-local transform",
+  "uses_other_test_queries": false,
+  "uses_scored_fold_labels_at_inference": false,
+  "top1_by_subject": [57.5, 55.5, 38.0, 37.5, 48.0, 42.0, 43.0, 35.5, 50.0, 63.0],
+  "selection_fold_mean_top1": 47.8333333333,
+  "untouched_fold_mean_top1": 46.6428571429,
+  "all_fold_mean_top1": 47.0,
+  "nested_lofo_adaptive_mean_top1": 46.5,
+  "scorer": "ensemble_experiments/test_selected/final_ensemble_audit.py"
+}

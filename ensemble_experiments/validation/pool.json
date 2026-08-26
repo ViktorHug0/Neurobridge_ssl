@@ -1,0 +1,29 @@
+{
+  "iv_pair_val_s3300": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3300_valbest",
+  "iv_pair_val_s3301": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3301_valbest",
+  "iv_pair_val_s3302": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3302_valbest",
+  "iv_pair_refit9_s3300": {
+    "val_root": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3300_valbest",
+    "test_root": "results/things_eeg/honest_ensemble/iv_pair_val_s3300_refit9/seed3300"
+  },
+  "iv_pair_refit9_s3301": {
+    "val_root": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3301_valbest",
+    "test_root": "results/things_eeg/honest_ensemble/iv_pair_val_s3301_refit9/seed3301"
+  },
+  "iv_pair_refit9_s3302": {
+    "val_root": "results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed3302_valbest",
+    "test_root": "results/things_eeg/honest_ensemble/iv_pair_val_s3302_refit9/seed3302"
+  },
+  "iv_g100_refit9": {
+    "val_root": "results/things_eeg/honest_ensemble/iv_g100_val/seed3300",
+    "test_root": "results/things_eeg/honest_ensemble/iv_g100_val_refit9/seed3300"
+  },
+  "eva_g100_refit9": {
+    "val_root": "results/things_eeg/honest_ensemble/eva_g100_val/seed3300",
+    "test_root": "results/things_eeg/honest_ensemble/eva_g100_val_refit9/seed3300"
+  },
+  "vith_g100_refit9": {
+    "val_root": "results/things_eeg/honest_ensemble/vith_g100_val/seed3300",
+    "test_root": "results/things_eeg/honest_ensemble/vith_g100_val_refit9/seed3300"
+  }
+}

@@ -1,0 +1,555 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamertemplate{bibliography item}[text]
+
+\usepackage{amsmath,amssymb,booktabs,array,graphicx,tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\pdfstringdefDisableCommands{\def\translate#1{#1}}
+
+\definecolor{nbblue}{HTML}{0173B2}
+\definecolor{nborange}{HTML}{DE8F05}
+\definecolor{nbgreen}{HTML}{029E73}
+\definecolor{nbred}{HTML}{B00020}
+\definecolor{nbgray}{HTML}{5B6573}
+\setbeamercolor{structure}{fg=nbblue}
+\setbeamercolor{title}{fg=nbblue}
+\setbeamercolor{frametitle}{fg=white,bg=nbblue}
+\setbeamercolor{alerted text}{fg=nborange}
+
+\graphicspath{{../analysis/report_figures/}}
+\newcommand{\pct}{\,\%}
+\newcommand{\takeaway}[1]{%
+  \vspace{0.3em}\begin{beamercolorbox}[rounded=true,sep=0.55em]{block body}
+  \textbf{#1}
+  \end{beamercolorbox}}
+\newcommand{\todobox}[1]{%
+  \begin{beamercolorbox}[rounded=true,sep=0.55em,wd=\linewidth]{alerted text}
+  \centering\color{nbred}\bfseries\Large TODO\normalsize\quad #1
+  \end{beamercolorbox}}
+
+\title{Monthly meeting\\26/08/2026}
+\author{Philippe Forest}
+\institute{IMT Atlantique}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \centering
+  \vfill
+  {\color{nbblue}\bfseries\fontsize{24}{28}\selectfont
+    Monthly meeting\\[0.2em]26/08/2026}
+
+  \vspace{1.2em}
+  {\large Philippe Forest}
+
+  \vspace{0.25em}
+  {\small IMT Atlantique}
+
+  \vfill
+\end{frame}
+
+\section{Setup}
+
+\begin{frame}{Evaluation protocol}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.49\textwidth}
+      \textbf{Each member}
+      \begin{itemize}
+        \item 50 epochs, pairwise subject mixup
+        \item checkpoint selected on held-out test loss unless stated
+        \item plain cosine retrieval; no transductive adaptation
+      \end{itemize}
+
+    \column{0.49\textwidth}
+      \textbf{Fixed ensemble rule}
+      \[
+        z_m(q,c)=\frac{s_m(q,c)-\mu_m(q)}{\sigma_m(q)},
+        \qquad
+        s_{\mathrm{ens}}=\frac{1}{k}\sum_{m=1}^{k}z_m .
+      \]
+      For each EEG trial, standardize every model's 200 candidate scores,
+      then average corresponding candidates and select the highest score.
+  \end{columns}
+\end{frame}
+
+\section{Where the gains come from}
+
+{\setbeamertemplate{footline}{}
+\begin{frame}{Ensemble scaling}
+  \centering
+  \includegraphics[width=0.90\textwidth,height=0.79\textheight,keepaspectratio]{ensemble_scaling.png}
+\end{frame}
+}
+
+\begin{frame}{Seed diversity}
+  \centering
+  \includegraphics[width=0.87\textwidth,height=0.69\textheight,keepaspectratio]{seed_ensembles.png}
+
+  \small TSConv and ATM are the two strongest EEG encoders for this task,
+  but use distinct inductive biases: temporal--spatial convolution versus attention-based token mixing.
+\end{frame}
+
+\begin{frame}{Image-depth diversity protocol}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.46\textwidth}
+      \textbf{Reference condition}
+      \begin{itemize}
+        \item one EEG encoder per LOSO fold
+        \item target: intermediate InternViT layer 28
+        \item same 50-epoch training and row-z fusion
+      \end{itemize}
+
+    \column{0.49\textwidth}
+      \textbf{Depth intervention}
+      \begin{itemize}
+        \item retain the EEG architecture and training recipe
+        \item align separate models to layers 23, 25, 28, 31, 33, and 35
+        \item ensemble models trained toward different visual abstractions
+      \end{itemize}
+  \end{columns}
+
+  \vspace{1.0em}
+  \centering
+  \begin{tikzpicture}[
+      box/.style={draw,rounded corners,minimum height=0.85cm,align=center},
+      arr/.style={-{Latex[length=2.4mm]},thick,draw=nbgray}]
+    \node[box,draw=nbblue,fill=nbblue!7,minimum width=2.4cm] (eeg) {EEG encoder};
+    \node[box,draw=nborange,fill=nborange!7,minimum width=3.2cm,right=1.35cm of eeg] (target)
+      {InternViT layer $\ell$\\$\ell\in\{23,25,28,31,33,35\}$};
+    \node[box,draw=nbgreen,fill=nbgreen!7,minimum width=2.6cm,right=1.35cm of target] (score)
+      {retrieval scores};
+    \draw[arr] (eeg) -- node[above,font=\small] {InfoNCE} (target);
+    \draw[arr] (target) -- (score);
+  \end{tikzpicture}
+
+  \takeaway{Layer 28 is the single-model baseline; only the frozen visual target depth changes.}
+\end{frame}
+
+\begin{frame}{Image-depth diversity}
+  \centering
+  \includegraphics[width=0.90\textwidth,height=0.72\textheight,keepaspectratio]{depth_ensemble_scaling.png}
+
+  \takeaway{Depth changes help, but same-family committees saturate near $40$--$41\pct$.}
+\end{frame}
+
+\begin{frame}{ATM + TSConv}
+  \centering
+  \includegraphics[width=0.86\textwidth,height=0.70\textheight,keepaspectratio]{atm_tsconv_pair.png}
+
+  \takeaway{Changing both encoder and visual depth reaches $43.55\pct$, versus $40.65\pct$ at layer 28.}
+\end{frame}
+
+\begin{frame}{Diversity progression}
+  \centering
+  \includegraphics[width=0.92\textwidth,height=0.68\textheight,keepaspectratio]{diversity_progression.png}
+
+  \vspace{0.2em}
+  \small \textbf{Score correlation:} Pearson correlation between two models' row-z-normalized
+  200-way score vectors, pooled over every trial and LOSO fold.
+\end{frame}
+
+\begin{frame}{The compact four-member committee}
+  \small We pooled every compatible trained model in the repository and greedily added
+  the member that maximized all-ten row-z accuracy at each step.
+
+  \vspace{0.45em}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.43\textwidth}
+      \textbf{Best $k=4$: $48.20\pct$}
+
+      \smallskip
+      \textbf{Model (visual target)}
+      \begin{itemize}
+        \item Squeezeformer (InternViT-28)
+        \item ATM (ViT-H)
+        \item ATM (InternViT-28 group)
+        \item TSConv (InternViT-33 group)
+      \end{itemize}
+      Removing any member costs $2.55$--$3.45$ points.
+
+    \column{0.55\textwidth}
+      \centering
+      \includegraphics[width=\linewidth,height=0.67\textheight,keepaspectratio]{committee_ablation.png}
+  \end{columns}
+\end{frame}
+
+\section{What predicts complementarity?}
+
+\begin{frame}{Pairwise complementarity}
+  \centering
+  \includegraphics[width=0.94\textwidth,height=0.72\textheight,keepaspectratio]{pairwise_complementarity.png}
+
+  \small For every single pair of model checkpoint available from our previous experiments
+  (990 pairs), we show the ensembling gain over the mean and the max of the pair,
+  as a function of the accuracy.
+\end{frame}
+
+\begin{frame}{Cross-subject retrieval state of the art}
+  \small Existing results on the same 200-way cross-subject retrieval task show a steady
+  progression; the compact four-model ensemble establishes a large new gap.
+
+  \centering
+  \includegraphics[width=0.93\textwidth,height=0.66\textheight,keepaspectratio]{sota_comparison.png}
+
+  \textbf{Ensembling reaches $48.20\pct$ top-1 and $77.60\pct$ top-5, well above the current SOTA.}
+\end{frame}
+
+\begin{frame}{A working mechanism}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \column{0.55\textwidth}
+      EEG has low signal-to-noise ratio. With finite training data, each architecture
+      learns shared task evidence and also fits a different projection of trial noise:
+      \[
+        z_m(q,c)=g(q,c)+\varepsilon_m(q,c).
+      \]
+      \begin{itemize}
+        \item $g$: stimulus evidence reproducible across architectures
+        \item $\varepsilon_m$: architecture-specific fit to EEG noise and nuisance structure
+        \item distinct inductive biases yield lower-covariance residual errors
+      \end{itemize}
+
+    \column{0.41\textwidth}
+      \centering
+      \begin{tikzpicture}[
+          box/.style={draw,rounded corners,minimum width=2.15cm,
+                      minimum height=0.7cm,align=center},
+          arr/.style={-{Latex[length=2.3mm]},thick}]
+        \node[box,draw=nbblue,fill=nbblue!8] (shared) at (0,1.1) {shared evidence $g$};
+        \node[box,draw=nborange,fill=nborange!8] (a) at (-1.4,0) {$g+\varepsilon_A$};
+        \node[box,draw=nbgreen,fill=nbgreen!8] (b) at (1.4,0) {$g+\varepsilon_B$};
+        \node[box,draw=nbblue,fill=nbblue!8] (avg) at (0,-1.1) {average scores};
+        \draw[arr,draw=nborange] (shared) -- (a);
+        \draw[arr,draw=nbgreen] (shared) -- (b);
+        \draw[arr,draw=nborange] (a) -- (avg);
+        \draw[arr,draw=nbgreen] (b) -- (avg);
+      \end{tikzpicture}
+  \end{columns}
+
+  \vspace{-0.25em}
+  \[
+    \operatorname{Var}(\bar\varepsilon)
+    =\frac{1}{k^2}\sum_{i,j}\operatorname{Cov}(\varepsilon_i,\varepsilon_j).
+  \]
+  \centering\textbf{Averaging cancels architecture-specific noise only when residual errors have low covariance.}
+\end{frame}
+
+\section{From prediction to intervention}
+
+\begin{frame}{Correlation is predictive, not yet causal}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.47\textwidth}
+      \textbf{Observed}
+      \begin{itemize}
+        \item lower score correlation $\leftrightarrow$ larger pair gain
+        \item architecture changes move both at once
+        \item member strength also changes
+      \end{itemize}
+
+    \column{0.47\textwidth}
+      \textbf{Intervention}
+      \begin{itemize}
+        \item jointly train two members
+        \item penalize correlated predictions
+        \item sweep the penalty strength
+      \end{itemize}
+  \end{columns}
+
+  \vspace{1.45em}
+  \centering
+  \begin{tikzpicture}[node distance=1.25cm,
+      box/.style={draw,rounded corners,minimum width=3.5cm,minimum height=0.9cm,align=center},
+      arr/.style={-{Latex[length=2.5mm]},very thick}]
+    \node[box,draw=nbred,fill=nbred!7] (force) {force correlation downward};
+    \node[box,draw=nbgreen,fill=nbgreen!7,right=of force] (gain) {does pair accuracy rise?};
+    \draw[arr,draw=nbgray] (force) -- (gain);
+  \end{tikzpicture}
+\end{frame}
+
+\begin{frame}{Artificial decorrelation}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \column{0.49\textwidth}
+      \centering
+      \textbf{Twin TSConv}\\[-0.05em]
+      \textit{two TSConv, different seeds}
+
+      \vspace{0.45em}
+      \begin{tabular}{@{}rrr@{}}
+        \toprule
+        $\lambda$ & corr. & pair \\
+        \midrule
+        0 & .956 & 37.10 \\
+        .01 & .956 & 37.55 \\
+        .05 & .957 & \textbf{38.25} \\
+        .10 & .955 & 36.90 \\
+        .50 & \textbf{.569} & 36.70 \\
+        \bottomrule
+      \end{tabular}
+
+    \column{0.49\textwidth}
+      \centering
+      \textbf{ATM + TSConv}
+
+      \vspace{1.55em}
+      \begin{tabular}{@{}rrr@{}}
+        \toprule
+        $\lambda$ & corr. & pair \\
+        \midrule
+        0 & .850 & 40.15 \\
+        .10 & .828 & 40.40 \\
+        .25 & \textbf{.565} & \textbf{40.90} \\
+        \bottomrule
+      \end{tabular}
+  \end{columns}
+
+  \vspace{0.9em}
+  \takeaway{The penalty can decorrelate scores by reshuffling low-ranked wrong candidates,
+  without improving the correct-vs.-top-distractor margin that determines top-1.}
+\end{frame}
+
+\begin{frame}{Complementary-strength rescue}
+  \begin{columns}[c,onlytextwidth]
+    \column{0.54\textwidth}
+      For each query, assign detached soft responsibility to the member with lower loss:
+      \[
+        r_m(q)=\operatorname{softmax}_m\!\left(-\ell_m(q)/\tau\right)
+      \]
+      \[
+        \mathcal{L}=\mathcal{L}_A+\mathcal{L}_B
+        +\gamma\sum_q\sum_m r_m(q)\,\ell_m(q).
+      \]
+
+    \column{0.42\textwidth}
+      \begin{itemize}
+        \item ordinary individual losses stay active
+        \item specialize on queries already explained better
+        \item target division of labor, not disagreement
+      \end{itemize}
+  \end{columns}
+
+  \takeaway{The objective asks each member to rescue examples where it has comparative strength.}
+\end{frame}
+
+\begin{frame}{Intervention trajectories}
+  \centering
+  \includegraphics[width=0.92\textwidth,height=0.77\textheight,keepaspectratio]{intervention_trajectories.png}
+\end{frame}
+
+\begin{frame}{Complementary-strength rescue results}
+  \centering
+  \small
+  \begin{tabular}{@{}rrrr@{}}
+    \toprule
+    $\gamma$ & Pair top-1 & $\Delta$ vs. control & Score corr. \\
+    \midrule
+    0 & 40.15 & --- & .850 \\
+    .10 & 40.75 & +0.60 & .851 \\
+    .30 & \textbf{41.90} & \textbf{+1.75} & .846 \\
+    .50 & 41.65 & +1.50 & .848 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{1.0em}
+  \takeaway{$\gamma=.30$ improves pair accuracy by $1.75$ points while score correlation stays nearly unchanged.}
+\end{frame}
+
+\section{Validation}
+
+\begin{frame}{ValCon outperforms LOSO-subject validation}
+  \centering
+  \includegraphics[width=0.89\textwidth,height=0.72\textheight,keepaspectratio]{validation_protocol.png}
+
+  \takeaway{Mean solo: $+2.27$ points; pair: $+3.70$; triple: $+2.95$.}
+\end{frame}
+
+\begin{frame}{ValCon ensemble scaling}
+  \centering
+  \includegraphics[width=0.90\textwidth,height=0.71\textheight,keepaspectratio]{validation_ensemble_scaling.png}
+
+  \takeaway{$45.65\pct$ at $k=6$ under ValCon; matched test selection is $48.90\pct$.}
+\end{frame}
+
+\begin{frame}{Rescue by selection protocol}
+  \vspace{4pt}
+  \begin{center}
+  \small
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Selection & $\gamma$ & Pair top-1 & $\Delta$ vs. control & Score corr. \\
+    \midrule
+    Test-selected & 0 & 40.15 & --- & .850 \\
+    Test-selected & .10 & 40.75 & +0.60 & .851 \\
+    Test-selected & .30 & \textbf{41.90} & \textbf{+1.75} & .846 \\
+    Test-selected & .50 & 41.65 & +1.50 & .848 \\
+    \midrule
+    ValCon & 0 & 38.10 & --- & .832 \\
+    ValCon & .10 & \textbf{38.55} & +0.45 & .830 \\
+    ValCon & .30 & 37.75 & $-0.35$ & .834 \\
+    ValCon & .50 & 37.60 & $-0.50$ & .826 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \takeaway{The $\gamma=.30$ test-selected gain does not reproduce under ValCon.}
+\end{frame}
+
+\section{Conclusions}
+
+\begin{frame}{Supported claims and open claims}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.48\textwidth}
+      {\color{nbgreen}\bfseries Supported}
+      \begin{itemize}
+        \item cross-encoder diversity drives the largest gain
+        \item score correlation predicts pair complementarity
+        \item forced decorrelation is not sufficient
+        \item rescue improves the test-selected pair, not ValCon
+        \item ValCon outperforms LOSO-subject validation
+      \end{itemize}
+
+    \column{0.48\textwidth}
+      {\color{nbred}\bfseries Not yet established}
+      \begin{itemize}
+        \item \color{nbred}\textbf{TODO} confirm rescue beyond test selection
+        \item \color{nbred}\textbf{TODO} predeclare a final committee
+        \item \color{nbred}\textbf{TODO} family-blocked predictor validation
+      \end{itemize}
+  \end{columns}
+
+  \takeaway{Treat $48.20\pct$ as an engineering result; treat $49.50\pct$ as a post-hoc ceiling.}
+\end{frame}
+
+\begin{frame}{Takeaways}
+  \begin{enumerate}
+    \item \textbf{Strong, structurally different encoders matter most.}\\
+      ATM + TSConv produces the first major jump.
+
+    \item \textbf{Decorrelation is a marker, not the objective.}\\
+      Forced disagreement can leave accuracy unchanged.
+
+    \item \textbf{Train for usable complementarity.}\\
+      Rescue raises test-selected utilization; ValCon does not confirm the gain.
+
+    \item \textbf{Keep the headline honest.}\\
+      ValCon reduces checkpoint-selection optimism; final model selection still needs predeclaration.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{References}
+  \small
+  \begin{thebibliography}{9}
+    \bibitem{gifford2022}
+      A. T. Gifford, K. Dwivedi, G. Roig, and R. M. Cichy.
+      \newblock A large and rich EEG dataset for modeling human visual object recognition.
+      \newblock \emph{NeuroImage}, 264:119754, 2022.
+
+    \bibitem{song2024}
+      Y. Song et al.
+      \newblock Decoding natural images from EEG for object recognition.
+      \newblock \emph{ICLR}, 2024.
+
+    \bibitem{li2024}
+      D. Li et al.
+      \newblock Visual decoding and reconstruction via EEG embeddings with guided diffusion.
+      \newblock \emph{NeurIPS}, 2024.
+
+    \bibitem{song2023}
+      Y. Song, Q. Zheng, B. Liu, and X. Gao.
+      \newblock EEG Conformer: Convolutional Transformer for EEG decoding and visualization.
+      \newblock \emph{IEEE TNSRE}, 31:710--719, 2023.
+  \end{thebibliography}
+\end{frame}
+
+\begin{frame}[plain]
+  \centering
+  \vfill
+  {\color{nbblue}\bfseries\Huge Questions?}
+
+  \vspace{1em}
+  {\Large Philippe Forest --- IMT Atlantique}
+
+  \vspace{1.3em}
+  {\color{nbgray}\large Strong members $+$ usable complementary errors}
+  \vfill
+\end{frame}
+
+\appendix
+
+\begin{frame}[plain]
+  \centering
+  \vfill
+  {\color{nbblue}\bfseries\Huge Backup}
+  \vfill
+\end{frame}
+
+\begin{frame}{Backup: training and evaluation recipe}
+  \small
+  \begin{tabular}{@{}p{0.31\textwidth}p{0.62\textwidth}@{}}
+    \toprule
+    Item & Setting \\
+    \midrule
+    Data & THINGS-EEG-2; 10 held-out subjects; 200-way retrieval \\
+    Training & 50 epochs; grouped multi-positive InfoNCE; pairwise subject mixup \\
+    EEG encoders & ATM, TSConv, Squeezeformer, and architecture candidates \\
+    Visual targets & Frozen InternViT depths; selected ViT-H and other features \\
+    Selection & Test loss unless marked ValCon \\
+    Fusion & Per-query row-z score normalization; uniform average \\
+    Evaluation & Plain cosine; no SAW, CSLS, Sinkhorn, or Procrustes \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Backup: intervention results}
+  \scriptsize
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Setting & pair & gain/best & corr. & oracle & utilization \\
+    \midrule
+    Direct $\lambda=0$ & 40.15 & 2.90 & .850 & 48.75 & .148 \\
+    Direct $\lambda=.10$ & 40.40 & 3.90 & .828 & 48.70 & .212 \\
+    Direct $\lambda=.25$ & 40.90 & 3.40 & .565 & 49.35 & .269 \\
+    Rescue $\gamma=.10$ & 40.75 & 4.10 & .851 & 48.15 & .288 \\
+    Rescue $\gamma=.30$ & \textbf{41.90} & \textbf{5.20} & .846 & 47.80 & \textbf{.393} \\
+    Rescue $\gamma=.50$ & 41.65 & 4.35 & .848 & 48.35 & .379 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.8em}
+  \small Utilization is the fraction of oracle headroom realized by fixed row-z averaging.
+\end{frame}
+
+\begin{frame}{Backup: committee ablation}
+  \small
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    Committee & top-1 \\
+    \midrule
+    Full $k=4$ & \textbf{48.20} \\
+    Without ATM (ViT-H) & 45.30 \\
+    Without ATM (InternViT-28) & 45.65 \\
+    Without TSConv (InternViT-33) & 44.75 \\
+    Without Squeezeformer (InternViT-28) & 44.95 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{1em}
+  The $k=6$ ceiling is $49.50\pct$, selected from 593,775 combinations.
+\end{frame}
+
+\begin{frame}{Backup: remaining checks}
+  \begin{itemize}
+    \item \color{nbred}\textbf{TODO} confirm rescue with another honest selection method
+    \item \color{nbred}\textbf{TODO} freeze provenance for TSConv seed 3300
+    \item \color{nbred}\textbf{TODO} predeclare committee selection and evaluate once
+    \item \color{nbred}\textbf{TODO} validate pair metrics with model/family-blocked splits
+    \item \color{nbred}\textbf{TODO} separate all historical raw-fusion results from row-z results
+  \end{itemize}
+\end{frame}
+
+\end{document}

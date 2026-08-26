@@ -1,0 +1,47 @@
+{
+  "protocol_version": 2,
+  "protocol_name": "single_pooled_all10_router",
+  "members": [
+    "atm_iv",
+    "iv33",
+    "atm_vith_group_e75",
+    "bigg27_group_e75",
+    "iv_vith_dino_aux025_group_e75"
+  ],
+  "score_transform": {
+    "name": "row_z_signed_power",
+    "power": 1.25,
+    "epsilon": 1e-06
+  },
+  "router": {
+    "hidden_dim": 16,
+    "epochs": 300,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 0.001,
+    "uniform_floor": 0.5,
+    "uniform_kl_lambda": 0.02,
+    "cross_entropy_weight": 0.25,
+    "hard_negative_weight": 1.0,
+    "hard_negative_margin": 0.1,
+    "hard_negative_temperature": 0.1,
+    "fusion_temperature": 1.0,
+    "feature_temperature": 1.0,
+    "seed": 3300
+  },
+  "subjects": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "data_contract": {
+    "dump_root": "results/things_eeg/synthetic_subjects/ensemble_screen/dumps",
+    "dump_pattern": "{member}-sub{subject:02d}.npz",
+    "fit_subjects": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "report_subjects": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  },
+  "inference_constraints": {
+    "uses_subject_id_feature": false,
+    "uses_subject_specific_parameters": false,
+    "uses_other_queries_at_inference": false,
+    "member_pool_changes_by_subject": false,
+    "scoring_rule_changes_by_subject": false,
+    "fitted_model_changes_by_subject": false
+  }
+}

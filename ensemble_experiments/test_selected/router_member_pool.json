@@ -1,0 +1,7 @@
+{
+  "atm_iv": "results/things_eeg/inter-subjects/eeg_encoder_sweep_20260426-184949/ATM_seed3300",
+  "ge100": "results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300",
+  "atm_vith_group_e75": "results/things_eeg/ensemble50_testselected/atm_vith_group_e75/seed3300",
+  "iv33_group_e75": "results/things_eeg/ensemble50_testselected/iv33_group_e75/seed3300",
+  "dino16_group_e75": "results/things_eeg/ensemble50_testselected/dino16_group_e75/seed3300"
+}

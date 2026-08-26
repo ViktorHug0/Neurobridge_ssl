@@ -1,0 +1,35 @@
+{
+  "protocol_version": 1,
+  "members": [
+    "atm_iv",
+    "ge100",
+    "atm_vith_group_e75",
+    "iv33_group_e75",
+    "dino16_group_e75"
+  ],
+  "score_transform": {
+    "name": "row_z_signed_power",
+    "power": 1.25,
+    "epsilon": 1e-06
+  },
+  "router": {
+    "hidden_dim": 16,
+    "epochs": 200,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 0.001,
+    "uniform_floor": 0.25,
+    "uniform_kl_lambda": 0.02,
+    "fusion_temperature": 1.0,
+    "feature_temperature": 1.0,
+    "seed": 3300
+  },
+  "outer_subjects": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "inference_constraints": {
+    "uses_subject_id_feature": false,
+    "uses_other_test_queries": false,
+    "uses_target_labels": false,
+    "member_pool_changes_by_subject": false,
+    "hyperparameters_change_by_subject": false
+  }
+}

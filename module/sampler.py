@@ -56,13 +56,28 @@ class GroupedImageBatchSampler(BatchSampler):
 
         for _ in range(self.num_passes):
             if self.images_per_concept > 1:
-                concepts = list(self.concept_keys)
-                rng.shuffle(concepts)
                 shuffled_keys = []
-                for concept in concepts:
-                    keys = list(self.concept_keys[concept])
+                # Visit every image exactly once per pass, but keep small chunks from a
+                # concept adjacent so they coexist in a batch. The former implementation
+                # selected only ``keys[:images_per_concept]`` and silently discarded the
+                # remaining training images for that epoch.
+                per_concept = {}
+                for concept, concept_keys in self.concept_keys.items():
+                    keys = list(concept_keys)
                     rng.shuffle(keys)
-                    shuffled_keys.extend(keys[:self.images_per_concept])
+                    per_concept[concept] = [
+                        keys[start : start + self.images_per_concept]
+                        for start in range(0, len(keys), self.images_per_concept)
+                    ]
+                max_chunks = max(len(chunks) for chunks in per_concept.values())
+                for chunk_index in range(max_chunks):
+                    concepts = [
+                        concept for concept, chunks in per_concept.items()
+                        if chunk_index < len(chunks)
+                    ]
+                    rng.shuffle(concepts)
+                    for concept in concepts:
+                        shuffled_keys.extend(per_concept[concept][chunk_index])
             else:
                 shuffled_keys = list(self.group_keys)
                 rng.shuffle(shuffled_keys)
