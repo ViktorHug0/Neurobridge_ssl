@@ -246,13 +246,25 @@ From [`technical_overview.md`](technical_overview.md) — **critical for correct
 |--------|----------------|------------|
 | Compact inter-subject training | ~25–32% | e.g. `featdim_128`, no heavy TTA |
 | Mixup / training regularization | mid-30s | e.g. `mixup_*` summaries |
-| **Transductive SATTC** on 200 test pairs | **~71%** | SAW + CSLS + Sinkhorn + iterative Procrustes on **full** test fold |
+| **Transductive SATTC / SAGE-TTA** on 200 test pairs | see below | SAW + CSLS + Sinkhorn + iterative Procrustes on **full** test fold |
 | Split-test transfer | ~49% → ~59% | Fit adaptation on half of test, apply to other half |
+| Score ensembling (inductive) | ~44% honest | nested-LOFO member selection; see `ensemble_experiments/` |
+
+**Which transductive number to quote.** The `~71%` that appears throughout
+[`technical_overview.md`](technical_overview.md) is the **April 2026** sweep figure and appears
+nowhere in the paper. Current numbers:
+
+| Number | What it is |
+|---|---|
+| **77.2** | paper headline — ATM encoder after SAGE-TTA (TSConv 68.5, EEGConformer 65.0) |
+| **68.30** | TSConv + SubjectMix + TTA under *blind* hyperparameter selection — the honest, no-leak figure |
+| 72.75 | same, with test-oracle hyperparameters (upper bound, not quotable) |
+| 67.30 | same, joint-argmax LOSO CV — pessimistic, overfits a flat axis |
 
 **Caveats for agents writing docs or papers:**
 
 1. Many runs use `--select_best_on test` (checkpoint picked on held-out test subject) — others use `--val_subject_id`. State which protocol a number used.
-2. ~71% is **transductive** (uses all 200 unlabeled test pairs), not plain inductive retrieval.
+2. Every transductive number is **transductive** (uses all 200 unlabeled test pairs jointly), not plain inductive retrieval, and assumes a closed known candidate pool.
 3. `results/` and `data/` are local/NAS paths — may be missing on a fresh clone.
 
 Example result roots on this machine:
@@ -278,7 +290,7 @@ Three facts that follow, and that change how you plan work:
 
 1. **The SATTC/SAGE paper track has no checkpoints and never did.** The 70 `sattc_*` and 5 `tta_*`
    sessions (31,150 runs) were trained without `--save_weights`. So `evaluate.py` cannot reproduce
-   the ~71% headline from disk — that number exists only in `result.csv`, and re-deriving it means
+   the ~71%/68.3 headline from disk — those numbers exist only in `result.csv`, and re-deriving it means
    retraining. This predates the cleanup.
 2. **The ensemble line replays from score dumps, not weights.**
    `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` holds 2,010 npz (1.2 GB) = 235 arms
