@@ -15,6 +15,8 @@ EEG_DATA_DIR=${EEG_DATA_DIR:-/nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Prepro
 IMAGE_FEATURE_DIR=${IMAGE_FEATURE_DIR:-$REPO_ROOT/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit}
 DEVICE=${DEVICE:-cuda:0}
 NW=${NW:-6}
+MODEL_SEED=${MODEL_SEED:-3300}
+WEIGHT_DELTA=${WEIGHT_DELTA:-0.3}
 
 target_tag=$(printf '%02d' "$TARGET")
 fold_root="$RESULT_ROOT/target-$target_tag/cohort-$COHORT"
@@ -25,7 +27,19 @@ read -ra train_ids <<< "$(
     --print-group "$TARGET" "$COHORT"
 )"
 
-echo "[cohort] mode=$GROUP_MODE target=$TARGET cohort=$COHORT train=${train_ids[*]}"
+extra_train_args=()
+weight_label=uniform
+if [ "$GROUP_MODE" = "soft_weighted" ]; then
+  read -ra train_weights <<< "$(
+    python -m ensemble_experiments.analyze_subject_cohort_bagging \
+      --print-weights "$TARGET" "$COHORT" \
+      --weight-delta "$WEIGHT_DELTA"
+  )"
+  extra_train_args+=(--train_subject_weights "${train_weights[@]}")
+  weight_label=${train_weights[*]}
+fi
+
+echo "[cohort] mode=$GROUP_MODE target=$TARGET cohort=$COHORT seed=$MODEL_SEED train=${train_ids[*]} weights=$weight_label"
 python train.py \
   --batch_size 1024 \
   --num_workers "$NW" \
@@ -48,13 +62,14 @@ python train.py \
   --eeg_backbone_dim 1024 \
   --data_average \
   --save_weights \
-  --seed 3300 \
+  --seed "$MODEL_SEED" \
   --multi_positive_loss \
   --grouped_batch_sampler \
   --samples_per_image 9 \
   --subject_mixup_mode raw_eeg \
   --mixup_type pairwise \
-  --subject_mixup_alpha 0.5
+  --subject_mixup_alpha 0.5 \
+  "${extra_train_args[@]}"
 
 mapfile -t run_dirs < <(
   find "$fold_root" -mindepth 1 -maxdepth 1 -type d -name '*-model' \

@@ -53,7 +53,7 @@ class ContrastiveLoss(nn.Module):
         return eeg_feature, image_feature, text_feature
 
     @staticmethod
-    def _multi_positive_cross_entropy(logits, positive_mask):
+    def _multi_positive_cross_entropy(logits, positive_mask, row_weights=None):
         valid_rows = positive_mask.any(dim=1)
         if not torch.any(valid_rows):
             return logits.new_tensor(0.0)
@@ -65,9 +65,15 @@ class ContrastiveLoss(nn.Module):
         positive_log_probs = torch.where(positives, log_probs[valid_rows], torch.zeros_like(log_probs[valid_rows]))
         
         loss_per_row = -positive_log_probs.sum(dim=1) / positives.sum(dim=1).clamp_min(1)
-        return loss_per_row.mean()
+        if row_weights is None:
+            return loss_per_row.mean()
+        weights = row_weights[valid_rows].to(dtype=loss_per_row.dtype)
+        return (loss_per_row * weights).sum() / weights.sum().clamp_min(1e-8)
 
-    def multi_positive_pair_loss(self, query_feature, key_feature, positive_mask, key_is_text=False, query_scale=None):
+    def multi_positive_pair_loss(
+        self, query_feature, key_feature, positive_mask, key_is_text=False,
+        query_scale=None, sample_weights=None,
+    ):
         if self.eeg_l2norm:
             query_feature = F.normalize(query_feature, p=2, dim=1)
         if key_is_text:
@@ -81,8 +87,12 @@ class ContrastiveLoss(nn.Module):
             logits_qk = logits * query_scale.unsqueeze(1)
         else:
             logits_qk = logits
-        loss_qk = self._multi_positive_cross_entropy(logits_qk, positive_mask)
-        loss_kq = self._multi_positive_cross_entropy(logits.T, positive_mask.T)
+        loss_qk = self._multi_positive_cross_entropy(
+            logits_qk, positive_mask, sample_weights
+        )
+        loss_kq = self._multi_positive_cross_entropy(
+            logits.T, positive_mask.T, sample_weights
+        )
         return (loss_qk + loss_kq) / 2
 
     def multi_positive_row_losses(self, query_feature, key_feature, positive_mask):

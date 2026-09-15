@@ -299,7 +299,14 @@ class EEGPreImageDataset(Dataset):
             )
             eeg_cache_path = _eeg_cache_path(eeg_data_dir, eeg_cache_key)
             if os.path.isfile(eeg_cache_path):
-                eeg_data = np.load(eeg_cache_path)
+                # Processed LOSO caches are large (~1 GB per averaged subject) and
+                # read-only in the main training path. Memory mapping lets several
+                # independent models colocated on one GPU share the same page-cache
+                # pages instead of each holding a private ~9 GB copy. Materialize a
+                # writable array only for options that mutate the cached samples.
+                eeg_data = np.load(eeg_cache_path, mmap_mode="r")
+                if self.frozen_eeg_prior or subject_ea_align:
+                    eeg_data = np.array(eeg_data, copy=True)
             else:
                 eeg_container = _load_eeg_container(eeg_data_path)
                 if isinstance(eeg_container, dict):

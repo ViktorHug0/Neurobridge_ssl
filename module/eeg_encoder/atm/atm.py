@@ -8,19 +8,27 @@ from .subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
 from .subject_layers.Embed import DataEmbedding
 
 class Config:
-    def __init__(self, channels_num):
+    def __init__(
+        self,
+        channels_num,
+        d_model=250,
+        n_heads=4,
+        e_layers=1,
+        d_ff=256,
+        dropout=0.25,
+    ):
         self.task_name = 'classification'  # Example task name
         self.seq_len = 250                 # Sequence length
         self.pred_len = 250                # Prediction length
         self.output_attention = False      # Whether to output attention weights
-        self.d_model = 250                 # Model dimension
+        self.d_model = d_model             # Model dimension
         self.embed = 'timeF'               # Time encoding method
         self.freq = 'h'                    # Time frequency
-        self.dropout = 0.25                # Dropout rate
+        self.dropout = dropout             # Dropout rate
         self.factor = 1                    # Attention scaling factor
-        self.n_heads = 4                   # Number of attention heads
-        self.e_layers = 1                  # Number of encoder layers
-        self.d_ff = 256                    # Feedforward network dimension
+        self.n_heads = n_heads             # Number of attention heads
+        self.e_layers = e_layers           # Number of encoder layers
+        self.d_ff = d_ff                   # Feedforward network dimension
         self.activation = 'gelu'           # Activation function
         self.enc_in = channels_num         # Encoder input dimension (example value)
 
@@ -63,22 +71,32 @@ class iTransformer(nn.Module):
 
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40, configs=None):
+    def __init__(
+        self,
+        configs=None,
+        temporal_filters=40,
+        temporal_kernel=25,
+        pool_kernel=51,
+        pool_stride=5,
+        spatial_filters=40,
+        projection_filters=40,
+        dropout=0.5,
+    ):
         super().__init__()
         # Revised from ShallowNet
         self.tsconv = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), stride=(1, 1)),
-            nn.AvgPool2d((1, 51), (1, 5)),
-            nn.BatchNorm2d(40),
+            nn.Conv2d(1, temporal_filters, (1, temporal_kernel), stride=(1, 1)),
+            nn.AvgPool2d((1, pool_kernel), (1, pool_stride)),
+            nn.BatchNorm2d(temporal_filters),
             nn.ELU(),
-            nn.Conv2d(40, 40, (configs.enc_in, 1), stride=(1, 1)),
-            nn.BatchNorm2d(40),
+            nn.Conv2d(temporal_filters, spatial_filters, (configs.enc_in, 1), stride=(1, 1)),
+            nn.BatchNorm2d(spatial_filters),
             nn.ELU(),
-            nn.Dropout(0.5),
+            nn.Dropout(dropout),
         )
 
         self.projection = nn.Sequential(
-            nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1)),  
+            nn.Conv2d(spatial_filters, projection_filters, (1, 1), stride=(1, 1)),
             Rearrange('b e (h) (w) -> b (h w) e'),
         )
 
@@ -115,9 +133,9 @@ class FlattenHead(nn.Sequential):
 
 
 class Enc_eeg(nn.Sequential):
-    def __init__(self, emb_size=40, configs=None):
+    def __init__(self, configs=None, **patch_kwargs):
         super().__init__(
-            PatchEmbedding(emb_size, configs),
+            PatchEmbedding(configs=configs, **patch_kwargs),
             FlattenHead()
         )
 
@@ -134,18 +152,56 @@ class Proj_eeg(nn.Sequential):
             nn.LayerNorm(proj_dim),
         )
         
-class ATMS(nn.Module):    
-    def __init__(self, channels_num=63, feature_dim=1024, eeg_sample_points=250):
+class ATMS(nn.Module):
+    def __init__(
+        self,
+        channels_num=63,
+        feature_dim=1024,
+        eeg_sample_points=250,
+        d_model=250,
+        n_heads=4,
+        e_layers=1,
+        d_ff=256,
+        attention_dropout=0.25,
+        temporal_filters=40,
+        temporal_kernel=25,
+        pool_kernel=51,
+        pool_stride=5,
+        spatial_filters=40,
+        projection_filters=40,
+        conv_dropout=0.5,
+    ):
         super(ATMS, self).__init__()
+        if d_model <= 0 or d_ff <= 0 or e_layers <= 0 or n_heads <= 0:
+            raise ValueError("ATM dimensions, layer count, and head count must be positive")
+        conv_width = d_model - temporal_kernel + 1
+        pooled_width = (conv_width - pool_kernel) // pool_stride + 1
+        if pooled_width <= 0:
+            raise ValueError(
+                "ATM d_model is too short for the requested temporal convolution and pool"
+            )
         subjects_num=2
-        default_config = Config(channels_num)
+        default_config = Config(
+            channels_num,
+            d_model=d_model,
+            n_heads=n_heads,
+            e_layers=e_layers,
+            d_ff=d_ff,
+            dropout=attention_dropout,
+        )
         self.encoder = iTransformer(default_config)   
         self.subject_wise_linear = nn.ModuleList([nn.Linear(default_config.d_model, eeg_sample_points) for _ in range(subjects_num)])
-        self.enc_eeg = Enc_eeg(configs=default_config)
-        if eeg_sample_points == 200:
-            embedding_dim = 1040
-        elif eeg_sample_points == 250:
-            embedding_dim = 1440
+        self.enc_eeg = Enc_eeg(
+            configs=default_config,
+            temporal_filters=temporal_filters,
+            temporal_kernel=temporal_kernel,
+            pool_kernel=pool_kernel,
+            pool_stride=pool_stride,
+            spatial_filters=spatial_filters,
+            projection_filters=projection_filters,
+            dropout=conv_dropout,
+        )
+        embedding_dim = pooled_width * projection_filters
         self.proj_eeg = Proj_eeg(embedding_dim=embedding_dim, proj_dim=feature_dim) # 此处修改feature dimension
         # self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         # self.loss_func = ClipLoss()       

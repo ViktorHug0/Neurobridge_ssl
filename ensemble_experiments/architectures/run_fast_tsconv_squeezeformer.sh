@@ -35,7 +35,7 @@ for held in $(seq "$FOLD_START" "$FOLD_END"); do
     --batch_size 1024 --num_workers "${NW:-6}" \
     --learning_rate 3e-4 --num_epochs 50 \
     --output_name "sub-$tag" --output_dir "$OUTPUT_DIR" \
-    --eeg_encoder_type OrthoFastTSConvSqueezeformer \
+    --eeg_encoder_type FastTSConvSqueezeformer \
     --train_subject_ids "${train_ids[@]}" --test_subject_ids "$held" \
     --image_feature_dir "$IMAGE_FEATURE_DIR" \
     --eeg_data_dir "$EEG_DATA_DIR" \

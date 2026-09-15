@@ -22,6 +22,7 @@ from module.util import (
     topk,
 )
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
+from module.inductive_covariance import InductiveQueryCovarianceAlign
 
 
 def _zero_padded_time_shift(features, shifts):
@@ -278,7 +279,7 @@ def _forward_feature(args, modules, eeg_backbone_batch):
 
 def _encode_dataset_features(
     eval_args, modules, model, img_projector, device, subject_ids, average,
-    latency_template=None, latency_max_shift=0, eeg_tta_shifts=None,
+    latency_template=None, latency_max_shift=0, eeg_tta_shifts=None, train=False,
 ):
     dataset = EEGPreImageDataset(
         subject_ids,
@@ -292,7 +293,7 @@ def _encode_dataset_features(
         average,
         False,
         None,
-        False,
+        train,
         _to_bool(getattr(eval_args, "image_test_aug", False)),
         _to_bool(getattr(eval_args, "eeg_test_aug", False)),
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
@@ -405,6 +406,7 @@ def main():
     parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
     parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded features + labels here (for caption_eval.py)")
+    parser.add_argument("--dump_split", type=str, default="test", choices=["test", "training"], help="with --dump_npz: dump the training split (rep-averaged, one row per image) instead of the test split, then exit")
     parser.add_argument("--feature_dim", type=int, default=None)
     parser.add_argument(
         "--test_data_average",
@@ -476,6 +478,25 @@ def main():
     image_feature_dim = test_dataset.image_features.shape[-1]
     backbone_feature_dim = getattr(eval_args, "eeg_backbone_dim", 0) or image_feature_dim
 
+    if _to_bool(getattr(eval_args, "inductive_covariance_align", False)):
+        covariance_state = checkpoint.get("inductive_covariance_state_dict")
+        if covariance_state is None:
+            raise KeyError("checkpoint is missing inductive_covariance_state_dict")
+        # Constructor values are replaced immediately by the serialized frozen priors.
+        placeholder = {0: torch.eye(channels_num, device=device)}
+        covariance_aligner = InductiveQueryCovarianceAlign(
+            placeholder,
+            alpha=float(eval_args.inductive_covariance_alpha),
+            shrinkage=float(eval_args.inductive_covariance_shrinkage),
+        ).to(device)
+        # The source lookup size is fold-dependent, so load buffers explicitly.
+        covariance_aligner.global_reference = covariance_state["global_reference"].to(device)
+        covariance_aligner.source_reference_lookup = covariance_state[
+            "source_reference_lookup"
+        ].to(device)
+        covariance_aligner.known_source = covariance_state["known_source"].to(device)
+        eval_args._inductive_covariance_aligner = covariance_aligner
+
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
     projector_activation = getattr(eval_args, "projector_activation", "none")
     projector_topk = getattr(eval_args, "projector_topk", 512)
@@ -537,6 +558,23 @@ def main():
                     f"template array with shape {latency_template.shape}"
                 )
             latency_template = latency_template[fold_index]
+
+    if args.dump_split == "training":
+        assert args.dump_npz, "--dump_split training needs --dump_npz"
+        eeg, img, subj, obj, idx, _ = _encode_dataset_features(
+            eval_args, modules, model, img_projector, device,
+            [eval_args.test_subject_id], average=True, train=True,
+        )
+        # the bridge's targets are in stimulus-walk order (sorted concepts x sorted files);
+        # object-major/image-minor only matches that if the rows come out strictly increasing
+        key = obj.astype(np.int64) * (int(idx.max()) + 1) + idx
+        assert (np.diff(key) > 0).all(), "dump rows are not in stimulus-walk order"
+        os.makedirs(os.path.dirname(os.path.abspath(args.dump_npz)), exist_ok=True)
+        np.savez(args.dump_npz, eeg=eeg, image=img, subject=subj, object=obj, image_idx=idx)
+        cos = float((eeg / np.linalg.norm(eeg, axis=1, keepdims=True) *
+                     img / np.linalg.norm(img, axis=1, keepdims=True)).sum(1).mean())
+        print(f"wrote {args.dump_npz} {eeg.shape}  mean cos(eeg, image) = {cos:.4f}")
+        return
 
     eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
         eval_args,

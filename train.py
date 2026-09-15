@@ -41,6 +41,10 @@ from module.util import (
     retrieve_all,
     sinkhorn_normalize,
 )
+from module.inductive_covariance import (
+    InductiveQueryCovarianceAlign,
+    estimate_source_covariances,
+)
 from module.projector import *
 from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
@@ -87,7 +91,15 @@ def build_image_positive_mask(object_indices, image_indices, concept_positives=F
     return same_object & same_image
 
 
-def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature, positive_mask, use_multi_positive):
+def _compute_cross_modal_loss_impl(
+    criterion,
+    eeg_feature,
+    image_feature,
+    text_feature,
+    positive_mask,
+    use_multi_positive,
+    sample_weights=None,
+):
     eeg_confidence = None
     if isinstance(eeg_feature, dict):
         eeg_confidence = eeg_feature.get('confidence')
@@ -98,6 +110,7 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
             image_feature,
             positive_mask,
             query_scale=eeg_confidence,
+            sample_weights=sample_weights,
         )
         if criterion.beta != 1.0:
             loss_contrastive_te = criterion.multi_positive_pair_loss(
@@ -106,6 +119,7 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
                 positive_mask,
                 key_is_text=True,
                 query_scale=eeg_confidence,
+                sample_weights=sample_weights,
             )
             loss_contrastive = criterion.beta * loss_contrastive_ie + (1 - criterion.beta) * loss_contrastive_te
         else:
@@ -121,6 +135,41 @@ def compute_cross_modal_loss(criterion, eeg_feature, image_feature, text_feature
         return loss_contrastive
 
     return criterion(eeg_feature, image_feature, text_feature, eeg_confidence=eeg_confidence)
+
+
+def compute_cross_modal_loss(
+    criterion,
+    eeg_feature,
+    image_feature,
+    text_feature,
+    positive_mask,
+    use_multi_positive,
+    sample_weights=None,
+):
+    """Run contrastive geometry in FP32 even when encoder AMP is active."""
+    if not torch.is_autocast_enabled('cuda'):
+        return _compute_cross_modal_loss_impl(
+            criterion, eeg_feature, image_feature, text_feature,
+            positive_mask, use_multi_positive, sample_weights,
+        )
+
+    if isinstance(eeg_feature, dict):
+        eeg_feature = dict(eeg_feature)
+        eeg_feature['feature'] = eeg_feature['feature'].float()
+        if eeg_feature.get('confidence') is not None:
+            eeg_feature['confidence'] = eeg_feature['confidence'].float()
+    else:
+        eeg_feature = eeg_feature.float()
+    with torch.autocast(device_type='cuda', enabled=False):
+        return _compute_cross_modal_loss_impl(
+            criterion,
+            eeg_feature,
+            image_feature.float(),
+            text_feature.float(),
+            positive_mask,
+            use_multi_positive,
+            sample_weights,
+        )
 
 
 def compute_subject_mixup_regularization(mixed_eeg_feature, original_eeg_feature, partner_indices, mixed_mask):
@@ -227,7 +276,23 @@ def _smooth_lambda_over_time(lam, n_time):
 
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
     if args.eeg_encoder_type == 'ATM':
-        return ATMS(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+        return ATMS(
+            feature_dim=feature_dim,
+            eeg_sample_points=eeg_sample_points,
+            channels_num=channels_num,
+            d_model=getattr(args, 'atm_d_model', 250),
+            n_heads=getattr(args, 'atm_n_heads', 4),
+            e_layers=getattr(args, 'atm_e_layers', 1),
+            d_ff=getattr(args, 'atm_d_ff', 256),
+            attention_dropout=getattr(args, 'atm_attention_dropout', 0.25),
+            temporal_filters=getattr(args, 'atm_temporal_filters', 40),
+            temporal_kernel=getattr(args, 'atm_temporal_kernel', 25),
+            pool_kernel=getattr(args, 'atm_pool_kernel', 51),
+            pool_stride=getattr(args, 'atm_pool_stride', 5),
+            spatial_filters=getattr(args, 'atm_spatial_filters', 40),
+            projection_filters=getattr(args, 'atm_projection_filters', 40),
+            conv_dropout=getattr(args, 'atm_conv_dropout', 0.5),
+        )
     if args.eeg_encoder_type == 'EEGNet':
         return EEGNet(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGProject':
@@ -277,9 +342,14 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
         return EEGTransformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGConformer':
         return EEGConformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
-    if args.eeg_encoder_type.startswith('Ortho'):
-        from ensemble_experiments.architectures.ortho_encoders import build_ortho_encoder
-        return build_ortho_encoder(args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num)
+    from ensemble_experiments.architectures.ortho_encoders import (
+        build_architecture_encoder,
+        is_architecture_encoder,
+    )
+    if is_architecture_encoder(args.eeg_encoder_type):
+        return build_architecture_encoder(
+            args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num
+        )
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
 
 
@@ -368,6 +438,9 @@ def compute_alignment_sparsity_stats(features):
 
 
 def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
+    covariance_aligner = getattr(args, '_inductive_covariance_aligner', None)
+    if covariance_aligner is not None:
+        eeg_batch = covariance_aligner(eeg_batch, subject_id_batch)
     if getattr(args, 'eeg_instance_norm', False):
         # Per-trial, per-channel standardization. Uses only the trial itself, so it applies
         # identically at train and test time (no test-set statistics -> still pure zero-shot).
@@ -883,6 +956,10 @@ def collect_trainable_parameters(modules):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', default='cuda:0', type=str, help='training device')
+    parser.add_argument(
+        '--amp_dtype', default='none', choices=['none', 'bfloat16', 'float16'],
+        help='automatic mixed precision for model/projector activations; contrastive loss stays FP32',
+    )
     parser.add_argument('--num_epochs', default=50, type=int, help='number of epochs')
     parser.add_argument('--batch_size', default=1024, type=int, help='batch size')
     parser.add_argument('--learning_rate', default=1e-4, type=float)
@@ -894,6 +971,10 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='./result', type=str)
     parser.add_argument('--output_name', default=None, type=str)
     parser.add_argument('--train_subject_ids', default=[8], nargs='+', type=int)
+    parser.add_argument(
+        '--train_subject_weights', default=None, nargs='+', type=float,
+        help='positive loss weights aligned with --train_subject_ids; normalized to mean one',
+    )
     parser.add_argument('--test_subject_ids', default=[8], nargs='+', type=int)
     parser.add_argument('--data_average', action='store_true')
     parser.add_argument('--data_random', action='store_true')
@@ -932,6 +1013,11 @@ if __name__ == '__main__':
     parser.add_argument('--bootstrap_repetition_average', action='store_true', help='resample each source subject`s repeated measurements with replacement before cross-subject augmentation; requires un-averaged training data')
     parser.add_argument('--bootstrap_repetition_count', default=4, type=int, help='number of within-subject repetitions in each bootstrap average')
     parser.add_argument('--subject_ea_align', action='store_true', help='rebuttal arm: per-subject Euclidean Alignment (channel-covariance whitening) of raw EEG at load, applied to train/val/test')
+    parser.add_argument('--inductive_covariance_align', action='store_true', help='source-only covariance prior blended with each query covariance independently before the EEG encoder')
+    parser.add_argument('--inductive_covariance_alpha', default=0.4, type=float, help='single-query covariance weight for --inductive_covariance_align')
+    parser.add_argument('--inductive_covariance_shrinkage', default=0.25, type=float, help='identity shrinkage after source/query covariance blending')
+    parser.add_argument('--inductive_covariance_ref_trials', default=2048, type=int, help='deterministic training trials sampled per source covariance estimate')
+    parser.add_argument('--inductive_covariance_reference_cache', default='', type=str, help='optional fold-specific cache for source covariance estimates')
     parser.add_argument('--cross_subject_average', action='store_true', help='train on synthetic per-image trials, each the mean of a random-size (Beta-drawn) random subset of cross-subject raw recordings')
     parser.add_argument('--xavg_beta_a', default=1.0, type=float, help='Beta(a,b) shape a for the k distribution in --cross_subject_average (a<b skews to fewer recordings)')
     parser.add_argument('--xavg_beta_b', default=1.0, type=float, help='Beta(a,b) shape b for the k distribution in --cross_subject_average')
@@ -1094,6 +1180,18 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
     parser.add_argument('--tsconv_subject_bn_max_id', default=0, type=int, help='use source-person TSConv BatchNorm paths plus population path 0 (0 disables)')
     parser.add_argument('--tsconv_no_conv_bias', action='store_true', help='disable convolution biases in TSConv_parameterizable')
+    parser.add_argument('--atm_d_model', default=250, type=int, help='ATM channel-token hidden dimension')
+    parser.add_argument('--atm_n_heads', default=4, type=int, help='ATM attention head count')
+    parser.add_argument('--atm_e_layers', default=1, type=int, help='ATM attention layer count')
+    parser.add_argument('--atm_d_ff', default=256, type=int, help='ATM feed-forward hidden dimension')
+    parser.add_argument('--atm_attention_dropout', default=0.25, type=float, help='ATM attention-stack dropout')
+    parser.add_argument('--atm_temporal_filters', default=40, type=int, help='ATM readout temporal filter count')
+    parser.add_argument('--atm_temporal_kernel', default=25, type=int, help='ATM readout temporal kernel width')
+    parser.add_argument('--atm_pool_kernel', default=51, type=int, help='ATM readout pooling kernel width')
+    parser.add_argument('--atm_pool_stride', default=5, type=int, help='ATM readout pooling stride')
+    parser.add_argument('--atm_spatial_filters', default=40, type=int, help='ATM readout spatial filter count')
+    parser.add_argument('--atm_projection_filters', default=40, type=int, help='ATM readout projection filter count')
+    parser.add_argument('--atm_conv_dropout', default=0.5, type=float, help='ATM convolutional readout dropout')
     parser.add_argument('--subject_adapter_rank', default=0, type=int, help='rank of learned source-person FiLM random effects at the temporal TSConv block (0 disables)')
     parser.add_argument('--subject_adapter_max_id', default=32, type=int, help='largest subject ID addressable by the source-person adapter; ID 0 is the population path')
     parser.add_argument('--subject_adapter_scale', default=0.1, type=float, help='residual scale of channelwise subject FiLM effects')
@@ -1395,10 +1493,43 @@ if __name__ == '__main__':
         log(f'{key:22} {val}')
 
     if args.val_subject_id is not None and args.val_subject_id in args.train_subject_ids:
+        if args.train_subject_weights is not None:
+            args.train_subject_weights = [
+                weight
+                for subject, weight in zip(
+                    args.train_subject_ids, args.train_subject_weights
+                )
+                if subject != args.val_subject_id
+            ]
         args.train_subject_ids = [sid for sid in args.train_subject_ids if sid != args.val_subject_id]
         log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
         if len(args.train_subject_ids) == 0:
             raise ValueError("After removing val_subject_id, train_subject_ids is empty.")
+    if args.train_subject_weights is not None:
+        if not args.multi_positive_loss:
+            raise ValueError(
+                '--train_subject_weights currently requires --multi_positive_loss.'
+            )
+        if len(args.train_subject_weights) != len(args.train_subject_ids):
+            raise ValueError(
+                '--train_subject_weights must have one value per train subject.'
+            )
+        if any(weight <= 0 for weight in args.train_subject_weights):
+            raise ValueError('--train_subject_weights must all be positive.')
+        mean_subject_weight = float(np.mean(args.train_subject_weights))
+        args.train_subject_weights = [
+            float(weight) / mean_subject_weight
+            for weight in args.train_subject_weights
+        ]
+        log(
+            'Train subject loss weights: '
+            + ', '.join(
+                f's{subject}={weight:.3f}'
+                for subject, weight in zip(
+                    args.train_subject_ids, args.train_subject_weights
+                )
+            )
+        )
     if args.mixup_type == 'coherent_group' and args.samples_per_image < len(args.train_subject_ids):
         raise ValueError(
             '--mixup_type coherent_group requires samples_per_image >= the number of '
@@ -1410,6 +1541,32 @@ if __name__ == '__main__':
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     log(f'Using device: {device}')
+    amp_enabled = args.amp_dtype != 'none'
+    if amp_enabled and device.type != 'cuda':
+        raise ValueError('--amp_dtype requires a CUDA device')
+    amp_dtype = {
+        'none': torch.float32,
+        'bfloat16': torch.bfloat16,
+        'float16': torch.float16,
+    }[args.amp_dtype]
+    if amp_enabled:
+        torch.set_autocast_dtype('cuda', amp_dtype)
+        torch.set_autocast_enabled('cuda', True)
+    log(
+        f"Automatic mixed precision: {args.amp_dtype} "
+        "(contrastive features/logits forced to float32)"
+    )
+    train_subject_weight_lookup = None
+    if args.train_subject_weights is not None:
+        train_subject_weight_lookup = torch.ones(
+            max(args.train_subject_ids) + 1,
+            dtype=torch.float32,
+            device=device,
+        )
+        for subject, weight in zip(
+            args.train_subject_ids, args.train_subject_weights
+        ):
+            train_subject_weight_lookup[subject] = weight
     log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
     log(
         'Subject-coherent temporal MixStyle: '
@@ -1485,6 +1642,55 @@ if __name__ == '__main__':
         bootstrap_repetition_count=args.bootstrap_repetition_count,
         subject_ea_align=args.subject_ea_align,
     )
+
+    if args.inductive_covariance_align:
+        if args.subject_ea_align:
+            raise ValueError(
+                '--inductive_covariance_align is incompatible with --subject_ea_align'
+            )
+        if (
+            args.inductive_covariance_reference_cache
+            and os.path.isfile(args.inductive_covariance_reference_cache)
+        ):
+            cached = torch.load(
+                args.inductive_covariance_reference_cache,
+                map_location=device,
+                weights_only=True,
+            )
+            source_covariances = {
+                int(subject): covariance.to(device)
+                for subject, covariance in cached.items()
+            }
+        else:
+            source_covariances = estimate_source_covariances(
+                train_dataset.eeg_data_list,
+                args.train_subject_ids,
+                device,
+                max_trials_per_subject=args.inductive_covariance_ref_trials,
+            )
+            if args.inductive_covariance_reference_cache:
+                os.makedirs(
+                    os.path.dirname(args.inductive_covariance_reference_cache),
+                    exist_ok=True,
+                )
+                torch.save(
+                    {
+                        subject: covariance.cpu()
+                        for subject, covariance in source_covariances.items()
+                    },
+                    args.inductive_covariance_reference_cache,
+                )
+        args._inductive_covariance_aligner = InductiveQueryCovarianceAlign(
+            source_covariances,
+            alpha=args.inductive_covariance_alpha,
+            shrinkage=args.inductive_covariance_shrinkage,
+        ).to(device)
+        log(
+            'Inductive covariance alignment: source-only leave-one-source-out train '
+            f'prior, all-source unseen prior, alpha={args.inductive_covariance_alpha}, '
+            f'shrinkage={args.inductive_covariance_shrinkage}, '
+            f'reference_trials={args.inductive_covariance_ref_trials}'
+        )
 
     eeg_sample_points = train_dataset.num_sample_points
     target_dims = getattr(
@@ -1723,6 +1929,8 @@ if __name__ == '__main__':
         'tsconv_domain_bn_boundary',
         'subject_adapter_rank', 'subject_adapter_max_id', 'subject_adapter_scale',
         'subject_adapter_inferred',
+        'inductive_covariance_align', 'inductive_covariance_alpha',
+        'inductive_covariance_shrinkage', 'inductive_covariance_ref_trials',
         'eval_mode', 'sattc_saw_shrink', 'sattc_saw_diag', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink', 'sattc_cw_diag',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
@@ -1966,6 +2174,11 @@ if __name__ == '__main__':
         betas=(0.9, 0.999),
         weight_decay=args.weight_decay,
     )
+    grad_scaler = torch.amp.GradScaler(
+        'cuda', enabled=(args.amp_dtype == 'float16')
+    )
+    if device.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats(device)
 
     scheduler = None
     if args.lr_scheduler == 'cosine':
@@ -2018,6 +2231,10 @@ if __name__ == '__main__':
             checkpoint['eeg_confidence_head_state_dict'] = eeg_confidence_head.state_dict()
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
+        if args.inductive_covariance_align:
+            checkpoint['inductive_covariance_state_dict'] = (
+                args._inductive_covariance_aligner.state_dict()
+            )
         return checkpoint
 
     def maybe_apply_train_saw(eeg_feature_batch, image_feature_proj, subject_id_batch):
@@ -2132,8 +2349,8 @@ if __name__ == '__main__':
                     args.multi_positive_loss
                 )
                 total_loss_local += loss.item()
-                eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
-                image_feature_list.append(image_feature_proj.cpu().numpy())
+                eeg_feature_list.append(eeg_feature_batch.float().cpu().numpy())
+                image_feature_list.append(image_feature_proj.float().cpu().numpy())
                 subjects.append(subject_id_batch.cpu().numpy())
                 object_indices.append(object_idx_batch.cpu().numpy())
                 image_indices.append(image_idx_batch.cpu().numpy())
@@ -2445,6 +2662,14 @@ if __name__ == '__main__':
                     backbone_subject_id_batch = torch.where(
                         synthetic_mask, virtual_ids, subject_id_batch
                     )
+                if args.inductive_covariance_align:
+                    # A cross-subject mixture has no single owner. Give it the
+                    # same all-source prior used by a genuinely unseen subject.
+                    backbone_subject_id_batch = torch.where(
+                        synthetic_mask,
+                        torch.full_like(subject_id_batch, -1),
+                        subject_id_batch,
+                    )
                 reconstruction_eligible_mask = ~synthetic_mask
                 if args.subject_mixup_rows_per_image > 0:
                     keep = select_rows_per_exact_image(
@@ -2665,7 +2890,12 @@ if __name__ == '__main__':
                 image_feature_for_loss,
                 text_feature_proj,
                 positive_mask,
-                args.multi_positive_loss
+                args.multi_positive_loss,
+                sample_weights=(
+                    train_subject_weight_lookup[subject_id_batch]
+                    if train_subject_weight_lookup is not None
+                    else None
+                ),
             )
             loss = loss + cl_loss
             total_cl_loss += cl_loss.item()
@@ -2731,8 +2961,9 @@ if __name__ == '__main__':
                 total_subject_adapt_loss += subject_adapt_loss.item()
                 total_subject_adapt_subjects += valid_subjects
 
-            loss.backward()
-            optimizer.step()
+            grad_scaler.scale(loss).backward()
+            grad_scaler.step(optimizer)
+            grad_scaler.update()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(dataloader)
@@ -3003,6 +3234,11 @@ if __name__ == '__main__':
         'best test loss': f'{best_test_loss:.3f}',
         'best epoch': best_test_epoch,
     }
+    if device.type == 'cuda':
+        result_dict.update({
+            'peak cuda allocated gb': f'{torch.cuda.max_memory_allocated(device) / 2**30:.3f}',
+            'peak cuda reserved gb': f'{torch.cuda.max_memory_reserved(device) / 2**30:.3f}',
+        })
     if args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS and best_test_sparsity:
         result_dict.update({
             'eeg_l0_mean': f"{best_test_sparsity['eeg_l0_mean']:.3f}",

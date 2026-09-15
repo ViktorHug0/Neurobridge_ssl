@@ -26,7 +26,28 @@ def groups_for_target(target: int, group_mode: str) -> list[list[int]]:
     if group_mode == "overlap6":
         sources = set(range(1, 11)) - {target}
         return [sorted(sources - set(excluded)) for excluded in triplets]
+    if group_mode == "soft_weighted":
+        sources = sorted(set(range(1, 11)) - {target})
+        return [sources, sources, sources]
     raise ValueError(f"unsupported group mode: {group_mode}")
+
+
+def soft_subject_weights(target: int, arm: int, delta: float) -> dict[int, float]:
+    """Balanced cyclic weights over the same triplets used by hard bagging."""
+    if arm not in (0, 1, 2):
+        raise ValueError("arm must be 0, 1, or 2")
+    if not 0.0 <= delta < 1.0:
+        raise ValueError("weight delta must satisfy 0 <= delta < 1")
+    rotations = (
+        (1.0 + delta, 1.0, 1.0 - delta),
+        (1.0 - delta, 1.0 + delta, 1.0),
+        (1.0, 1.0 - delta, 1.0 + delta),
+    )
+    return {
+        subject: rotations[arm][group]
+        for group, subjects in enumerate(cohorts_for_target(target))
+        for subject in subjects
+    }
 
 
 def row_z(scores: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -56,8 +77,12 @@ def main() -> None:
         default="results/things_eeg/subject_cohort_bagging/testselected_triplets",
     )
     parser.add_argument("--print-group", type=int, nargs=2, metavar=("TARGET", "COHORT"))
+    parser.add_argument("--print-weights", type=int, nargs=2, metavar=("TARGET", "ARM"))
+    parser.add_argument("--weight-delta", type=float, default=0.3)
     parser.add_argument(
-        "--group-mode", choices=["triplet", "overlap6"], default="triplet"
+        "--group-mode",
+        choices=["triplet", "overlap6", "soft_weighted"],
+        default="triplet",
     )
     parser.add_argument("--require-complete", action="store_true")
     args = parser.parse_args()
@@ -65,6 +90,12 @@ def main() -> None:
     if args.print_group is not None:
         target, cohort = args.print_group
         print(" ".join(map(str, groups_for_target(target, args.group_mode)[cohort])))
+        return
+    if args.print_weights is not None:
+        target, arm = args.print_weights
+        weights = soft_subject_weights(target, arm, args.weight_delta)
+        subjects = groups_for_target(target, "soft_weighted")[arm]
+        print(" ".join(str(weights[subject]) for subject in subjects))
         return
 
     root = Path(args.result_root)

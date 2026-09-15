@@ -22,16 +22,16 @@ source .venv/bin/activate
 FEAT="$PWD/data/things_eeg/image_feature"
 
 case "$SLURM_ARRAY_TASK_ID" in
-  0) ARM=sqf_bigg_valcon   ENCODER=OrthoFastTSConvSqueezeformer TARGET=ViT-bigG-14_layer27_mean MODE=valcon ;;
-  1) ARM=sqf_vith_valcon   ENCODER=OrthoFastTSConvSqueezeformer TARGET=ViT-H-14_layer10_mean MODE=valcon ;;
-  2) ARM=multi_eva_valcon  ENCODER=OrthoMultiScaleTSMixer TARGET=EVA02-E-14_layer35_mean MODE=valcon ;;
-  3) ARM=multi_vith_valcon ENCODER=OrthoMultiScaleTSMixer TARGET=ViT-H-14_layer10_mean MODE=valcon ;;
-  4) ARM=sqf_iv28_valcon   ENCODER=OrthoFastTSConvSqueezeformer TARGET=InternViT-6B_layer28_mean_8bit MODE=valcon ;;
-  5) ARM=multi_iv28_valcon ENCODER=OrthoMultiScaleTSMixer TARGET=InternViT-6B_layer28_mean_8bit MODE=valcon ;;
-  6) ARM=sqf_bigg          ENCODER=OrthoFastTSConvSqueezeformer TARGET=ViT-bigG-14_layer27_mean MODE=test ;;
-  7) ARM=sqf_vith          ENCODER=OrthoFastTSConvSqueezeformer TARGET=ViT-H-14_layer10_mean MODE=test ;;
-  8) ARM=multi_eva         ENCODER=OrthoMultiScaleTSMixer TARGET=EVA02-E-14_layer35_mean MODE=test ;;
-  9) ARM=multi_vith        ENCODER=OrthoMultiScaleTSMixer TARGET=ViT-H-14_layer10_mean MODE=test ;;
+  0) ARM=sqf_bigg_valcon   ENCODER=FastTSConvSqueezeformer TARGET=ViT-bigG-14_layer27_mean MODE=valcon ;;
+  1) ARM=sqf_vith_valcon   ENCODER=FastTSConvSqueezeformer TARGET=ViT-H-14_layer10_mean MODE=valcon ;;
+  2) ARM=multi_eva_valcon  ENCODER=MultiScaleTSMixer TARGET=EVA02-E-14_layer35_mean MODE=valcon ;;
+  3) ARM=multi_vith_valcon ENCODER=MultiScaleTSMixer TARGET=ViT-H-14_layer10_mean MODE=valcon ;;
+  4) ARM=sqf_iv28_valcon   ENCODER=FastTSConvSqueezeformer TARGET=InternViT-6B_layer28_mean_8bit MODE=valcon ;;
+  5) ARM=multi_iv28_valcon ENCODER=MultiScaleTSMixer TARGET=InternViT-6B_layer28_mean_8bit MODE=valcon ;;
+  6) ARM=sqf_bigg          ENCODER=FastTSConvSqueezeformer TARGET=ViT-bigG-14_layer27_mean MODE=test ;;
+  7) ARM=sqf_vith          ENCODER=FastTSConvSqueezeformer TARGET=ViT-H-14_layer10_mean MODE=test ;;
+  8) ARM=multi_eva         ENCODER=MultiScaleTSMixer TARGET=EVA02-E-14_layer35_mean MODE=test ;;
+  9) ARM=multi_vith        ENCODER=MultiScaleTSMixer TARGET=ViT-H-14_layer10_mean MODE=test ;;
 esac
 export ARM ENCODER IMAGE_FEATURE_DIR="$FEAT/$TARGET" NW=6
 

@@ -23,6 +23,10 @@ from ensemble_experiments.decorrelated_models.losses import (
     negative_score_correlation_loss,
     row_z,
     soft_multiple_choice_rescue_loss,
+    stochastic_deployed_ensemble_contrastive_loss,
+)
+from ensemble_experiments.decorrelated_models.stochastic_views import (
+    stochastic_member_view,
 )
 from module.dataset import EEGPreImageDataset
 from module.eeg_encoder.atm.atm import ATMS
@@ -172,6 +176,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-b", type=int, default=3301)
     parser.add_argument("--train-rng-seed", type=int, default=7330)
     parser.add_argument("--mixup-alpha", type=float, default=0.5)
+    parser.add_argument(
+        "--member-spectral-gain-sd",
+        type=float,
+        default=0.0,
+        help="Train-only smooth log-spectral gain SD, drawn independently per member.",
+    )
+    parser.add_argument(
+        "--member-spectral-control-points",
+        type=int,
+        default=8,
+    )
+    parser.add_argument(
+        "--member-channel-drop-prob",
+        type=float,
+        default=0.0,
+        help="Train-only independent per-trial/channel dropout probability.",
+    )
+    parser.add_argument(
+        "--member-keep-prob",
+        type=float,
+        default=1.0,
+        help="Per-query probability that each branch participates in ensemble loss.",
+    )
     parser.add_argument(
         "--freeze-member",
         choices=["none", "a", "b"],
@@ -515,6 +542,18 @@ def main() -> None:
         raise ValueError("ValCon requires 0 < val-concept-ratio < 1")
     if args.decorrelation_start_epoch < 1 or args.rescue_start_epoch < 1:
         raise ValueError("auxiliary-loss start epochs must be positive")
+    if args.member_spectral_gain_sd < 0:
+        raise ValueError("member-spectral-gain-sd must be non-negative")
+    if args.member_spectral_control_points < 2:
+        raise ValueError("member-spectral-control-points must be at least 2")
+    if not 0 <= args.member_channel_drop_prob < 1:
+        raise ValueError("member-channel-drop-prob must be in [0, 1)")
+    if not 0 < args.member_keep_prob <= 1:
+        raise ValueError("member-keep-prob must be in (0, 1]")
+    if args.member_keep_prob < 1 and args.fusion_loss_mode != "deployed_unique":
+        raise ValueError(
+            "stochastic member participation requires --fusion-loss-mode deployed_unique"
+        )
     if args.held_subject in args.train_subject_ids:
         raise ValueError("held subject cannot appear in train-subject-ids")
     if (args.freeze_member == "none") != (args.frozen_checkpoint is None):
@@ -559,6 +598,7 @@ def main() -> None:
     logger.info(
         "arm=%s held=%02d selection=%s lambda=%.4g beta=%.4g gamma=%.4g rescue_tau=%.4g "
         "encoders=(%s,%s) freeze=%s frozen_epoch=%d fusion_mode=%s "
+        "member_view=(spec_sd=%.3g,ctrl=%d,cdrop=%.3g,keep=%.3g) "
         "branch_params=(%.2fM, %.2fM)",
         args.arm,
         args.held_subject,
@@ -572,6 +612,10 @@ def main() -> None:
         args.freeze_member,
         frozen_epoch,
         args.fusion_loss_mode,
+        args.member_spectral_gain_sd,
+        args.member_spectral_control_points,
+        args.member_channel_drop_prob,
+        args.member_keep_prob,
         sum(p.numel() for p in branch_a.parameters()) / 1e6,
         sum(p.numel() for p in branch_b.parameters()) / 1e6,
     )
@@ -598,7 +642,7 @@ def main() -> None:
         active_gamma = args.gamma_rescue if epoch >= args.rescue_start_epoch else 0.0
         totals = {"loss": 0.0, "a": 0.0, "b": 0.0, "ensemble": 0.0,
                   "diversity": 0.0, "negative_corr": 0.0, "rescue": 0.0,
-                  "rescue_max_weight": 0.0}
+                  "rescue_max_weight": 0.0, "member_participation": 0.0}
         for batch in train_loader:
             eeg = batch[0].to(device, non_blocking=True)
             image = batch[1].to(device, non_blocking=True)
@@ -613,18 +657,30 @@ def main() -> None:
                 alpha=args.mixup_alpha,
                 mixup_type="pairwise",
             )
+            eeg_a = stochastic_member_view(
+                eeg,
+                args.member_spectral_gain_sd,
+                args.member_spectral_control_points,
+                args.member_channel_drop_prob,
+            )
+            eeg_b = stochastic_member_view(
+                eeg,
+                args.member_spectral_gain_sd,
+                args.member_spectral_control_points,
+                args.member_channel_drop_prob,
+            )
             positive_mask = build_image_positive_mask(object_indices, image_indices)
             if args.freeze_member == "a":
                 with torch.no_grad():
-                    feature_a, target_a = branch_a.features(eeg, image, subject)
-                feature_b, target_b = branch_b.features(eeg, image, subject)
+                    feature_a, target_a = branch_a.features(eeg_a, image, subject)
+                feature_b, target_b = branch_b.features(eeg_b, image, subject)
             elif args.freeze_member == "b":
-                feature_a, target_a = branch_a.features(eeg, image, subject)
+                feature_a, target_a = branch_a.features(eeg_a, image, subject)
                 with torch.no_grad():
-                    feature_b, target_b = branch_b.features(eeg, image, subject)
+                    feature_b, target_b = branch_b.features(eeg_b, image, subject)
             else:
-                feature_a, target_a = branch_a.features(eeg, image, subject)
-                feature_b, target_b = branch_b.features(eeg, image, subject)
+                feature_a, target_a = branch_a.features(eeg_a, image, subject)
+                feature_b, target_b = branch_b.features(eeg_b, image, subject)
             individual_a = branch_a.individual_loss(feature_a, target_a, positive_mask)
             individual_b = branch_b.individual_loss(feature_b, target_b, positive_mask)
             row_losses_a = branch_a.individual_row_losses(
@@ -638,7 +694,18 @@ def main() -> None:
             )
             scores_a = branch_a.cosine_scores(feature_a, target_a)
             scores_b = branch_b.cosine_scores(feature_b, target_b)
-            if args.fusion_loss_mode == "deployed_unique":
+            if args.member_keep_prob < 1:
+                ensemble_loss, _, member_participation = (
+                    stochastic_deployed_ensemble_contrastive_loss(
+                        scores_a,
+                        scores_b,
+                        positive_mask,
+                        object_indices,
+                        image_indices,
+                        args.member_keep_prob,
+                    )
+                )
+            elif args.fusion_loss_mode == "deployed_unique":
                 ensemble_loss, _ = deployed_ensemble_contrastive_loss(
                     scores_a,
                     scores_b,
@@ -646,10 +713,12 @@ def main() -> None:
                     object_indices,
                     image_indices,
                 )
+                member_participation = scores_a.new_tensor(1.0)
             else:
                 ensemble_loss, _ = ensemble_contrastive_loss(
                     scores_a, scores_b, positive_mask
                 )
+                member_participation = scores_a.new_tensor(1.0)
             diversity_loss, negative_corr = negative_score_correlation_loss(
                 scores_a,
                 scores_b,
@@ -682,6 +751,7 @@ def main() -> None:
             totals["rescue_max_weight"] += float(
                 rescue_responsibilities.max(dim=1).values.mean().item()
             )
+            totals["member_participation"] += float(member_participation.item())
 
         batches = len(train_loader)
         test_metrics, _ = evaluate(
@@ -786,7 +856,8 @@ def main() -> None:
                 torch.save(checkpoint(branch_b, epoch, test_metrics), path_b_testctl)
         logger.info(
             "epoch=%02d lambda=%.4g gamma=%.4g train=%.4f ind=(%.4f,%.4f) "
-            "ens=%.4f rescue=%.4f rescue_w=%.3f div=%.4f negcorr=%.4f "
+            "ens=%.4f participation=%.3f rescue=%.4f rescue_w=%.3f "
+            "div=%.4f negcorr=%.4f "
             "test_solo=(%.2f,%.2f) pair=%.2f corr=%.4f",
             epoch,
             active_lambda,
@@ -795,6 +866,7 @@ def main() -> None:
             row["train_a"],
             row["train_b"],
             row["train_ensemble"],
+            row["train_member_participation"],
             row["train_rescue"],
             row["train_rescue_max_weight"],
             row["train_diversity"],
@@ -838,6 +910,10 @@ def main() -> None:
         "frozen_checkpoint": args.frozen_checkpoint or "",
         "frozen_checkpoint_epoch": frozen_epoch,
         "fusion_loss_mode": args.fusion_loss_mode,
+        "member_spectral_gain_sd": args.member_spectral_gain_sd,
+        "member_spectral_control_points": args.member_spectral_control_points,
+        "member_channel_drop_prob": args.member_channel_drop_prob,
+        "member_keep_prob": args.member_keep_prob,
         "rescue_temperature": args.rescue_temperature,
         "selection_protocol": args.selection_protocol,
         "val_concept_ratio": (

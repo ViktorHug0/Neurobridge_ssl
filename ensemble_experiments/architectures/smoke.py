@@ -1,4 +1,4 @@
-"""Shape/param/speed self-check for the orthogonal encoders.
+"""Shape/parameter/speed self-check for maintained architecture encoders.
 
 Run: .venv/bin/python ensemble_experiments/architectures/smoke.py [--cuda] [ENCODER ...]
 Asserts every encoder maps (B, 63, 250) -> (B, 1024) with finite grads.
@@ -7,7 +7,10 @@ import sys, time
 import torch
 
 sys.path.insert(0, '/nasbrain/p20fores/Neurobridge_SSL')
-from ensemble_experiments.architectures.ortho_encoders import _REGISTRY, build_ortho_encoder
+from ensemble_experiments.architectures.ortho_encoders import (
+    _REGISTRY,
+    build_architecture_encoder,
+)
 
 BB, C, T = 1024, 63, 250
 
@@ -24,7 +27,7 @@ def main():
     x = torch.randn(B, C, T, device=dev)
     print(f"{'encoder':16s} {'params':>10s} {'ms/step':>9s}")
     for name in names:
-        m = build_ortho_encoder(name, BB, T, C).to(dev)
+        m = build_architecture_encoder(name, BB, T, C).to(dev)
         y = m(x)
         assert y.shape == (B, BB), f"{name}: {tuple(y.shape)}"
         y.square().mean().backward()

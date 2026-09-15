@@ -86,47 +86,14 @@
     \draw[arr] (qwen) -- (ref);
   \end{tikzpicture}
 
-  \takeaway{The ``ground truth'' is another model's description. Every group on this dataset
-  invents its own, which is why published caption scores are not comparable.}
-\end{frame}
-
-\begin{frame}{One decoder, three ways in}
-  \small
-  BLIP-2 typically reads an image through 32 learned query tokens produced by its Q-Former;
-  those 32 tokens are the only thing the language model ever sees of the image.
-
-  \vspace{0.7em}
-  \begin{center}
-  \begin{tikzpicture}[
-      box/.style={draw,rounded corners,minimum height=0.85cm,align=center,font=\small},
-      arr/.style={-{Latex[length=2.4mm]},thick,draw=nbgray}]
-    \node[box,draw=nbblue,fill=nbblue!7,minimum width=2.5cm] (in) {32 $\times$ 768\\query tokens};
-    \node[box,draw=nbgray,fill=nbgray!7,minimum width=2.6cm,right=1.0cm of in] (proj)
-      {linear projection\\$768\to2560$};
-    \node[box,draw=nbgreen,fill=nbgreen!7,minimum width=2.7cm,right=1.0cm of proj] (opt)
-      {frozen OPT-2.7b};
-    \node[box,draw=nbgray,fill=nbgray!7,minimum width=2.0cm,right=1.7cm of opt] (txt) {caption};
-    \draw[arr] (in) -- (proj);
-    \draw[arr] (proj) -- (opt);
-    \draw[arr] (opt) -- node[above=3pt,font=\scriptsize] {3 beams} (txt);
-  \end{tikzpicture}
-  \end{center}
-
-  \vspace{0.7em}
-  Two routes below replace the Q-Former with a \textbf{bridge}: a single linear layer
-  $\mathbb{R}^{D}\!\to\!\mathbb{R}^{32\times768}$ trained to reproduce the query tokens BLIP-2
-  would have produced, with loss $\mathrm{MSE} + 0.1\cdot\mathrm{CE}$, the cross-entropy taken on
-  the reference caption through the frozen language model.
-
-  \takeaway{The captioner is never fine-tuned. We only change what we hand it.}
 \end{frame}
 
 \section{Three pipelines}
 
 \begin{frame}{Route 1 --- Render and caption}
   \small
-  Reconstruct the picture first, then describe it with an ordinary image captioner.
-  The direct pipeline, no new training required.
+  We reconstruct the picture first, then describe it with an ordinary image captioner.
+  This is the direct pipeline, with no training required on our part.
 
   \vspace{0.55em}
   \centering
@@ -151,18 +118,49 @@
   \vspace{0.55em}
   \begin{itemize}
     \item \textbf{Encoder.} ENIGMA, the current state of the art for EEG-to-image on this dataset.
-          It outputs a 1024-d CLIP-alignedembedding for each EEG sample.
+          It outputs a 1024-d CLIP-aligned embedding for each EEG sample.
     \item \textbf{Generator.} The predicted embedding enters SDXL-Turbo with IP-Adapter to replace the real image embedding.
-          We use four denoising steps and no guidance. Output is $256\times256$.
+          We use four denoising steps and no additional guidance. Output is $256\times256$.
     \item \textbf{Captioner.} BLIP-2 reads the generated picture and outputs a caption.
   \end{itemize}
 
   \takeaway{A lossy step: the reconstruction loses detail, and the captioner can only describe whatever survived.}
 \end{frame}
 
-\begin{frame}{Route 2 --- Error-matched bridge}
+
+\begin{frame}{The Q-Former}
   \small
-  Skip the picture. Learn to map the predicted embedding straight onto BLIP-2's query tokens.
+  BLIP-2 typically reads an image through 32 learned query tokens produced by its Q-Former;
+  those 32 tokens are the only thing the language model ever sees of the image.
+
+  \vspace{0.7em}
+  \begin{center}
+  \begin{tikzpicture}[
+      box/.style={draw,rounded corners,minimum height=0.85cm,align=center,font=\small},
+      arr/.style={-{Latex[length=2.4mm]},thick,draw=nbgray}]
+    \node[box,draw=nbblue,fill=nbblue!7,minimum width=2.5cm] (in) {32 $\times$ 768\\query tokens};
+    \node[box,draw=nbgray,fill=nbgray!7,minimum width=2.6cm,right=1.0cm of in] (proj)
+      {linear projection\\$768\to2560$};
+    \node[box,draw=nbgreen,fill=nbgreen!7,minimum width=2.7cm,right=1.0cm of proj] (opt)
+      {frozen OPT-2.7b};
+    \node[box,draw=nbgray,fill=nbgray!7,minimum width=2.0cm,right=1.7cm of opt] (txt) {caption};
+    \draw[arr] (in) -- (proj);
+    \draw[arr] (proj) -- (opt);
+    \draw[arr] (opt) -- node[above=3pt,font=\scriptsize] {3 beams} (txt);
+  \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.7em}
+  We replace the Q-Former with a \textbf{bridge}: a single linear layer
+  $\mathbb{R}^{D}\!\to\!\mathbb{R}^{32\times768}$ trained to reproduce the query tokens BLIP-2
+  would have produced, with loss $\mathrm{MSE} + 0.1\cdot\mathrm{CE}$, the cross-entropy taken on
+  the reference caption through the frozen language model.
+
+\end{frame}
+
+\begin{frame}{Bridge 1 --- Error-matched bridge}
+  \small
+  Key idea: We skip the picture. Instead, we learn to map the predicted embedding straight onto BLIP-2's query tokens.
 
   \vspace{0.55em}
   \centering
@@ -186,22 +184,22 @@
 
   \vspace{0.55em}
   \begin{itemize}
-    \item \textbf{The training set is the point.} The bridge is fitted on ENIGMA's \emph{own
+    \item \textbf{Calibrating the bridge on ENIGMA's own predictions.} The bridge is fitted on ENIGMA's \emph{own
           predictions} for the 16{,}540 training images, not on real image embeddings. It therefore
-          sees the actual shape of the encoder's errors rather than clean vectors.
-    \item \textbf{Correcting for optimism.} ENIGMA's cosine to the true embedding is $0.531$ on
+          sees the distribution of the encoder's errors rather than clean image vectors.
+    \item \textbf{Correcting for optimism.} The cosine between ENIGMA's predicted embedding and the true embedding is $0.531$ on
           the training split but $0.360$ at test, because the training predictions are in-sample.
           We add isotropic noise of $\sigma=1.08$, since
-          $0.531/\sqrt{1+1.08^{2}}=0.360$, so the bridge trains at the error level it will meet.
+          $0.531/\sqrt{1+1.08^{2}}=0.360$, so the bridge trains at the error level it will meet at test.
   \end{itemize}
 
-  \takeaway{Train the decoder on the distribution it will actually be given, rather than on
+  \takeaway{Train the bridge on the distribution it will actually be given, rather than on
   clean data it will never see again.}
 \end{frame}
 
-\begin{frame}{Route 3 --- Reconstruction-tuned bridge}
+\begin{frame}{Bridge 2 --- Reconstruction-tuned bridge}
   \small
-  Same bridge idea, but our own encoder and our own embedding space, and the noise is simulated
+  Same bridge idea, but our own encoder (no ENIGMA anymore) and our own embedding space, and the noise is simulated
   rather than measured.
 
   \vspace{0.55em}
@@ -226,31 +224,26 @@
 
   \vspace{0.55em}
   \begin{itemize}
-    \item \textbf{Encoder.} Ours, aligned to InternViT-6B layer 28 rather than a final CLIP layer.
+    \item \textbf{Encoder.} We use our best encoder (in term of retrieval performance), aligned to InternViT-6B layer 28 rather than a final CLIP layer.
           The loss is $0.3\cdot\mathrm{InfoNCE}+0.7\cdot\mathrm{MSE}$ on unnormalised features:
-          far more weight on reconstruction than we normally use for retrieval. Best of twelve
-          variants screened.
+          The additional MSE term is the one that helps with reconstruction. It was swept over twelve variants.
     \item \textbf{Bridge training.} Fitted on \emph{real} images pushed through the encoder's own
           image projector into the 512-d space, then corrupted with $\sigma=2.12$, chosen from the
           measured EEG-image cosine of $0.426$.
   \end{itemize}
 
-  \takeaway{Routes 2 and 3 answer the same train-test mismatch two ways: one trains on the real
-  errors, the other on a Gaussian imitation calibrated to the same cosine.}
 \end{frame}
 
 \section{Evaluation}
 
-\begin{frame}{Metrics, and the control they are reported against}
+\begin{frame}{Metrics choice}
   \small
-  Two of these never look at a reference caption, which matters because our references are
-  themselves machine-written.
+  Metric choice was particularly sensitive and noisy. Still unsure which to chose.
 
   \vspace{0.45em}
   \begin{itemize}
     \item \textbf{Identification.} Encode the caption with CLIP's text encoder and retrieve the
-          true image among the 200 test images. Chance is $0.5\pct$. Hedging cannot help:
-          a vague sentence retrieves nothing in particular.
+          true image among the 200 test images. Chance is $0.5\pct$.
     \item \textbf{WUP.} Best Wu--Palmer similarity in WordNet between a noun in the caption and
           the target concept, so a near miss scores above an unrelated word.
     \item \textbf{CIDEr.} tf-idf weighted $n$-gram agreement with the five references, which
@@ -264,8 +257,6 @@
   concepts, over 1000 permutations. This holds length, vocabulary and style exactly fixed and
   destroys only the pairing.
 
-  \takeaway{Report the margin over the null, never the raw score. A cautious captioner can raise
-  its raw number without decoding anything.}
 \end{frame}
 
 \section{Results}
@@ -290,14 +281,13 @@
   \end{center}
 
   \vspace{0.5em}
-  \small The ceiling is the same bridge fed a real image embedding instead of an EEG one.
-  It separates what the decoder cannot do from what the EEG cannot supply.
-
+  \small The ceiling is the same bridge fed a real image embedding instead of an EEG one, i.e. a bridge that would be given the true image embedding at test.
+  We can see it comes very close to the reference, so the bridge is not the limiting factor. 
   \takeaway{Every route beats its null on every metric, so all three carry real stimulus
   information. None of them approaches the ceiling.}
 \end{frame}
 
-\begin{frame}{The metrics disagree, and that is the finding}
+\begin{frame}{Metrics disagreement}
   \small
   \begin{columns}[T,onlytextwidth]
     \column{0.48\textwidth}
@@ -317,16 +307,6 @@
               concept naming
       \end{itemize}
   \end{columns}
-
-  \vspace{0.8em}
-  The bridges were trained with a cross-entropy term on the reference captions, so they learn the
-  reference vocabulary and phrasing. That lifts every overlap-based score without necessarily
-  adding information about the stimulus. Identification is immune, and under identification the
-  three routes are indistinguishable at $n=200$.
-
-  \takeaway{Captions that read better are not captions that identify better. With 200 test
-  concepts we cannot resolve differences of a few points, so the next step is more subjects,
-  not more decoder variants.}
 \end{frame}
 
 \end{document}

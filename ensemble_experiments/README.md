@@ -14,6 +14,8 @@ analysis, and report in the repository.
 | `ensemble_results_report.md` | Concise report-ready summary of the ensemble findings |
 | `presentation/` | Beamer source for the ensemble-results presentation; generated build products are ignored |
 | `subject_*bagging.sbatch` | Disjoint-triplet and overlapping-six source-cohort ensemble controls |
+| `balanced_subject_bagging.sbatch` | Eight-member balanced 7-of-9 source-subject bagging inspired by the mental-imagery study |
+| `retrieval_fusion.py` | Shared query-local score fusion rules and ensemble diagnostics |
 
 All commands assume the repository root as the working directory and the project virtual
 environment is active.

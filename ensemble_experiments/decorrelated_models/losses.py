@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 
 
 def row_z(scores: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -74,6 +75,43 @@ def deployed_ensemble_contrastive_loss(
     unique_positives = positive_mask[:, columns]
     fused = 0.5 * (row_z(unique_a) + row_z(unique_b))
     return multi_positive_cross_entropy(fused, unique_positives), fused
+
+
+def stochastic_deployed_ensemble_contrastive_loss(
+    scores_a: torch.Tensor,
+    scores_b: torch.Tensor,
+    positive_mask: torch.Tensor,
+    object_indices: torch.Tensor,
+    image_indices: torch.Tensor,
+    member_keep_probability: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Deployed fusion with a random active member subset for every query.
+
+    Both members remain eligible for every source subject. The stochastic mask
+    changes across batches and queries, so it does not permanently exclude any
+    subject or example from either member. At least one member is always active.
+    """
+    if not 0 < member_keep_probability <= 1:
+        raise ValueError("member_keep_probability must be in (0, 1]")
+
+    columns = first_unique_image_columns(object_indices, image_indices)
+    member_scores = torch.stack(
+        (row_z(scores_a[:, columns]), row_z(scores_b[:, columns])), dim=1
+    )
+    keep = torch.rand(
+        scores_a.shape[0], 2, device=scores_a.device
+    ) < member_keep_probability
+    empty = ~keep.any(dim=1)
+    if torch.any(empty):
+        chosen = torch.randint(2, (int(empty.sum().item()),), device=scores_a.device)
+        keep[empty] = F.one_hot(chosen, num_classes=2).bool()
+    weights = keep.to(member_scores.dtype)
+    fused = (member_scores * weights[:, :, None]).sum(dim=1) / weights.sum(
+        dim=1, keepdim=True
+    )
+    unique_positives = positive_mask[:, columns]
+    participation = weights.mean()
+    return multi_positive_cross_entropy(fused, unique_positives), fused, participation
 
 
 def first_unique_image_columns(

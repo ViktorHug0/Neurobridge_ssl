@@ -10,6 +10,10 @@ from ensemble_experiments.decorrelated_models.losses import (
     first_unique_image_columns,
     negative_score_correlation_loss,
     soft_multiple_choice_rescue_loss,
+    stochastic_deployed_ensemble_contrastive_loss,
+)
+from ensemble_experiments.decorrelated_models.stochastic_views import (
+    stochastic_member_view,
 )
 from ensemble_experiments.decorrelated_models.train_twins import TwinTSConvBranch
 
@@ -48,6 +52,32 @@ def test_losses() -> None:
     assert not responsibilities.requires_grad
     rescue.backward()
     assert row_a.grad is not None and row_b.grad is not None
+
+    scores_a = torch.randn(8, 8, requires_grad=True)
+    scores_b = torch.randn(8, 8, requires_grad=True)
+    objects = torch.arange(4).repeat_interleave(2)
+    images = torch.zeros(8, dtype=torch.long)
+    positives = objects[:, None].eq(objects[None, :])
+    torch.manual_seed(11)
+    stochastic, fused, participation = stochastic_deployed_ensemble_contrastive_loss(
+        scores_a, scores_b, positives, objects, images, 0.75
+    )
+    assert fused.shape == (8, 4)
+    assert 0.5 <= participation <= 1.0
+    stochastic.backward()
+    assert scores_a.grad is not None and scores_b.grad is not None
+
+
+def test_stochastic_views() -> None:
+    torch.manual_seed(7)
+    eeg = torch.randn(12, 8, 100)
+    first = stochastic_member_view(eeg, 0.5, 8, 0.1)
+    second = stochastic_member_view(eeg, 0.5, 8, 0.1)
+    assert first.shape == eeg.shape and second.shape == eeg.shape
+    assert torch.isfinite(first).all() and torch.isfinite(second).all()
+    assert not torch.equal(first, second)
+    unchanged = stochastic_member_view(eeg, 0.0, 8, 0.0)
+    assert unchanged.data_ptr() == eeg.data_ptr()
 
 
 def test_branch_wiring() -> None:
@@ -88,5 +118,6 @@ def test_branch_wiring() -> None:
 
 if __name__ == "__main__":
     test_losses()
+    test_stochastic_views()
     test_branch_wiring()
     print("decorrelated twin-model smoke checks passed")
