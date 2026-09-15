@@ -342,6 +342,18 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
         return EEGTransformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
     if args.eeg_encoder_type == 'EEGConformer':
         return EEGConformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    from module.eeg_encoder.foundation import (
+        build_foundation_encoder,
+        is_foundation_encoder,
+    )
+    if is_foundation_encoder(args.eeg_encoder_type):
+        return build_foundation_encoder(
+            args.eeg_encoder_type,
+            feature_dim,
+            channels_num,
+            pretrained=not getattr(args, 'fm_no_pretrained', False),
+            resample=getattr(args, 'fm_resample', 'resample'),
+        )
     from ensemble_experiments.architectures.ortho_encoders import (
         build_architecture_encoder,
         is_architecture_encoder,
@@ -967,6 +979,16 @@ if __name__ == '__main__':
     parser.add_argument('--lr_scheduler', default='none', choices=['none', 'cosine'], help='optional warmup+cosine LR schedule (per epoch); AVDE full-FT uses cosine')
     parser.add_argument('--warmup_epochs', default=0, type=int, help='linear LR warmup epochs when --lr_scheduler cosine')
     parser.add_argument('--min_lr', default=1e-6, type=float, help='cosine floor LR')
+    parser.add_argument(
+        '--fm_resample', default='resample', choices=['resample', 'crop'],
+        help='how --eeg_encoder_type LaBraM/CBraMod reduces a 250-sample epoch to the 200 samples '
+             'the foundation model consumes: resample the same one-second window to 200 Hz '
+             '(default), or crop the first 200 samples',
+    )
+    parser.add_argument(
+        '--fm_no_pretrained', action='store_true',
+        help='build LaBraM/CBraMod from scratch instead of the public checkpoint (control arm)',
+    )
     parser.add_argument('--num_workers', default=0, type=int, help='number of dataloader workers')
     parser.add_argument('--output_dir', default='./result', type=str)
     parser.add_argument('--output_name', default=None, type=str)

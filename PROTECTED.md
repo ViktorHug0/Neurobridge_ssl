@@ -46,20 +46,36 @@ Also protected inside otherwise-cleared `inter-subjects/`:
 | `evaluate.py`, `train.py`, `compute_avg_results.py` | entrypoints |
 | `neurips_author_response_period/` (19 files) | paper.tex, answers.tex, reviews, deployment case, NSD report |
 
-## ⚠ Already lost — the FM experiment's code
+## The FM experiment's code — lost, then rebuilt (2026-09-15)
 
-These were **never committed** (`scripts/` is in `.gitignore`) and are gone from disk with no git
-history. The vxam-Q1 LaBraM result (2×2: nomix 27.05→49.95, mix 31.85→63.10) is no longer
-reproducible from code:
+These three files were **never committed** (`scripts/` was in `.gitignore`) and vanished from disk
+with no git history, leaving the vxam-Q1 LaBraM result without a code path:
 
 - `module/eeg_encoder/foundation.py` — LaBraM/CBraMod encoder wrapper
 - `scripts/things_eeg/inter-subject-foundation.sh` — training driver
 - `scripts/things_eeg/tta_rebuttal/run_fm_tta.py` — TTA driver
 
-**Recoverable:** all 24 checkpoints and `train_config.json` survive, and the configs record the full
-recipe (`eeg_encoder_type=LaBraM|CBraMod`, alpha 0.8 CLIP+MSE, lr 2e-3→1e-5 cosine, wd 0.05, 50ep,
-warmup 5, `subject_mixup_mode=raw_eeg` alpha 0.5). Rewriting the encoder wrapper against those
-configs would restore reproducibility.
+**Rebuilt and verified.** The first two are restored; the third is unnecessary (`evaluate.py` with
+the published SATTC flags does FM TTA). The architecture was not guessed — the surviving
+`model_state_dict` pins it exactly (221 params, zero shape mismatches against
+`Labram(n_times=200, n_chans=63, n_outputs=0, patch_size=200)` plus `head` Linear(200, 1024); CBraMod
+the same with `return_encoder_output=True`), and the recipe came from `train_config.json`
+(alpha 0.8 CLIP+MSE, lr 2e-3→1e-5 cosine, wd 0.05, 50 ep, warmup 5, `subject_mixup_mode=raw_eeg`
+α=0.5). `evaluate.py` now reproduces **all four arms exactly** on sub-01:
+
+| arm | recorded | replay |
+|---|---|---|
+| LaBraM_mix | 30.00 / 59.50 | 30.00 / 59.50 |
+| LaBraM_nomix | 25.50 / 57.00 | 25.50 / 57.00 |
+| CBraMod_mix | 11.50 / 30.50 | 11.50 / 30.50 |
+| CBraMod_nomix | 8.50 / 28.00 | 8.50 / 28.00 |
+
+LaBraM_mix also reproduces on sub-02 (41.50/74.50) and sub-10 (44.50/78.00).
+
+The one thing the weights could not determine was how a 250-sample epoch became the 200 the models
+consume; `--fm_resample resample` (250 Hz → 200 Hz over the same one-second window) reproduces the
+numbers, while `crop` gives 3.0 instead of 30.0. Objective and full-FT decision follow AVDE
+(Du/Dai et al. 2026, `papers/shallow_alignment.md`) and Liu et al. ICLR 2026 respectively.
 
 **Lesson:** `.gitignore` excludes `scripts/`, `results/`, `data/`, `output/`, `slides/`, `graphs/`.
 Only 35 of ~180 files in `scripts/` are tracked (they predate the ignore rule). Everything else there

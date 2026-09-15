@@ -16,7 +16,10 @@
 #   e.g.  run_smooth_paperbase.sh 3300 1 2 3 4 5 6 7 8 9 10
 set -eu
 REPO=/nasbrain/p20fores/Neurobridge_SSL
-WT=${SMOOTH_WORKTREE:-/tmp/claude-265679/-nasbrain-p20fores-Neurobridge-SSL/30cba1df-50fa-429a-9a82-5280b1e83b08/scratchpad/apr_code}
+# Stable sibling worktree already checked out at $COMMIT. The previous default pointed into a
+# per-session /tmp scratch path that no longer exists, so every run rebuilt the worktree (or
+# failed outright). apr_code_aug is taken by resswap.sbatch; apr_code_mixup by the mixup driver.
+WT=${SMOOTH_WORKTREE:-/nasbrain/p20fores/apr_code_3644141}
 COMMIT=3644141
 
 if [ ! -f "$WT/train.py" ]; then

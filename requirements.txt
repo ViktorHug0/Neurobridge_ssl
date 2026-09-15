@@ -10,9 +10,21 @@ pyarrow==23.0.1
 matplotlib==3.10.0
 seaborn==0.13.2
 tqdm==4.67.1
-mne==1.9.0
+# mne 1.9 calls scipy.special.sph_harm, removed in scipy 1.17 -> `import mne.transforms` raised
+# ImportError, which broke preprocess_eeg.py and any braindecode import. 1.10+ uses sph_harm_y.
+mne==1.13.2
 einops==0.8.1
 reformer-pytorch==1.4.4
 scikit-learn==1.6.1
 transformers==4.49.0
 opencv-python==4.11.0.86
+
+# EEG foundation-model encoders (--eeg_encoder_type LaBraM|CBraMod, see
+# module/eeg_encoder/foundation.py). braindecode's package __init__ eagerly imports its BIDS
+# datasets, so mne-bids and wfdb are required even though we only use braindecode.models; the
+# two attention packages are pulled in by its EEGPT/CBraMod definitions.
+braindecode==1.6.1
+mne-bids==0.19.0
+wfdb==4.3.1
+linear_attention_transformer==0.19.1
+rotary_embedding_torch==0.9.1

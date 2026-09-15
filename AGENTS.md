@@ -337,20 +337,38 @@ Strong default: **InternViT-6B layer 28**, mean pool, 8-bit (`InternViT-6B_layer
 - [`fuse_feature.py`](fuse_feature.py), [`analysis/`](analysis/) — ancillary
 - README: “older utilities for augmentation and feature extraction are not the main path”
 
+## EEG foundation-model encoders (LaBraM / CBraMod)
+
+`--eeg_encoder_type LaBraM` or `CBraMod` full-fine-tunes a pretrained EEG foundation model in place
+of TSConv ([`module/eeg_encoder/foundation.py`](module/eeg_encoder/foundation.py), driver
+[`inter-subject-foundation.sh`](scripts/things_eeg/inter-subject-foundation.sh)). This answers
+reviewer vxam-Q1; recorded results are in `results/things_eeg/foundation/` +
+`labram_2x2_summary.csv` (plain / SAGE-TTA: nomix 27.05 -> 49.95, mix 31.85 -> 63.10).
+
+Pretrained weights come from the Hub ids `braindecode/labram-pretrained` and
+`braindecode/cbramod-pretrained`, already in `/nasbrain/p20fores/.cache/huggingface`. Export
+`HF_HOME` to that path (the driver does it for you).
+
+Two details that are easy to get wrong:
+
+- The models consume **200 samples**, not our 250. `--fm_resample resample` (default) treats both
+  as the same one-second window and interpolates 250 Hz -> 200 Hz. `crop` is also implemented and
+  is **wrong** — it collapses sub-01 from 30.0 to 3.0 top-1.
+- LaBraM needs `ch_names` for a 63-channel subset, otherwise it demands its full 128-channel
+  canonical order. The wrapper passes `THINGS_EEG2_CH_NAMES`; all 63 map case-insensitively.
+
+Reconstructed 2026-09-15 after the original was lost (see [`PROTECTED.md`](PROTECTED.md)) and
+verified against the surviving checkpoints — `evaluate.py` reproduces all four arms exactly on
+sub-01: LaBraM_mix 30.00/59.50, LaBraM_nomix 25.50/57.00, CBraMod_mix 11.50/30.50,
+CBraMod_nomix 8.50/28.00. There is no separate FM TTA driver: `evaluate.py` with the published
+SATTC flags covers it.
+
 ## Known gaps
 
-- **The FM (LaBraM/CBraMod) experiment has no code.** `module/eeg_encoder/foundation.py`,
-  `scripts/things_eeg/inter-subject-foundation.sh` and
-  `scripts/things_eeg/tta_rebuttal/run_fm_tta.py` were lost while `scripts/` was gitignored, and
-  `git log --all` has no history for them. The results survive
-  (`results/things_eeg/foundation/`, `labram_2x2_summary.csv`, 24 checkpoints) and each
-  `train_config.json` records the full recipe, so the encoder wrapper is rewritable. See
-  [`PROTECTED.md`](PROTECTED.md).
-- `scripts/things_eeg/run_smooth_paperbase.sh` and `run_smooth_kernel_sweep.sh` default
-  `SMOOTH_WORKTREE` to a scratch path from a long-dead session; set that env var explicitly or they
-  will not run.
 - There is no test suite. The six root `test_*.py` self-checks were deleted 2026-09-15 (recoverable
-  from git history if needed).
+  from git history if needed). `pytest` is not installed.
+- `run_smooth_kernel_sweep.sh` requires `run_smooth_paperbase.sh` to have run first: the latter
+  creates the `$SMOOTH_WORKTREE` worktree and patches `SMOOTH_K` into its `train.py`.
 
 ---
 

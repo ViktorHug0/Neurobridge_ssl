@@ -17,7 +17,8 @@
 # Usage:  KERNELS="3 5 7" SUBJECTS="1 2 3 4 5 6 7 8 9 10" ./run_smooth_kernel_sweep.sh
 set -eu
 REPO=/nasbrain/p20fores/Neurobridge_SSL
-WT=${SMOOTH_WORKTREE:-/tmp/claude-265679/-nasbrain-p20fores-Neurobridge-SSL/30cba1df-50fa-429a-9a82-5280b1e83b08/scratchpad/apr_code}
+# Must match run_smooth_paperbase.sh, which creates and patches this worktree.
+WT=${SMOOTH_WORKTREE:-/nasbrain/p20fores/apr_code_3644141}
 KERNELS=${KERNELS:-"3 5 7"}
 SUBJECTS=${SUBJECTS:-"1 2 3 4 5 6 7 8 9 10"}
 P=${SMOOTH_P:-1.0}
