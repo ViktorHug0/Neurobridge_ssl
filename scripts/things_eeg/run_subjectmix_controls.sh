@@ -14,7 +14,7 @@
 #   e.g.  run_subjectmix_controls.sh base_no_aug 1 2 3 4 5
 #         run_subjectmix_controls.sh within_subject_mix 5 6 7 8 9 10
 set -eu
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 
 ARM=$1; shift
 R=./results/things_eeg/subjectmix_rebuttal/$ARM/seed3300

@@ -11,7 +11,9 @@ analysis, and report in the repository.
 | `synthetic_subjects/` | Earlier seed, repetition, shrunk-model, layer-target, and meta-subject ensemble utilities |
 | `analysis/` | Current row-z roster sweeps, evidence audit, generated JSON tables, and technical narrative |
 | `legacy/scratch_claude/` | Superseded exploratory searches and their small historical artifacts, retained pending deletion review |
-| `ensemble_results_report.md` | Concise report-ready summary of the ensemble findings |
+| `ENSEMBLE_RECAP.md` | Inventory of runs, measurements and file locations (status 2026-09-07) |
+| `analysis/ensemble_results_analysis_20260823.md` | The argument for score ensembling as the strongest inductive path |
+| `recaps/` | Dated progress recaps (`RECAP_20260911.md`, `RECAP_20260914.md`) |
 | `presentation/` | Beamer source for the ensemble-results presentation; generated build products are ignored |
 | `subject_*bagging.sbatch` | Disjoint-triplet and overlapping-six source-cohort ensemble controls |
 | `balanced_subject_bagging.sbatch` | Eight-member balanced 7-of-9 source-subject bagging inspired by the mental-imagery study |

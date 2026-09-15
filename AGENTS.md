@@ -29,7 +29,10 @@ source .venv/bin/activate
 ```
 
 - Dependencies: [`requirements.txt`](requirements.txt) (PyTorch 2.6 + CUDA 12.6, `open_clip_torch`, `transformers`, `mne`, etc.).
+- `source .venv/bin/activate` can resolve to a different venv on this machine — prefer calling
+  **`.venv/bin/python`** directly. `pytest` is **not** installed.
 - **Do not commit** `data/`, `results/`, `*.pth` (see [`.gitignore`](.gitignore)).
+  `scripts/` **is** tracked as of 2026-09-15 — it used to be gitignored, and work was lost that way.
 - Workspace rules: [`.cursor/rules/guidelines.mdc`](.cursor/rules/guidelines.mdc) — prefer **small, surgical diffs** and **verify** changes.
 
 ---
@@ -50,7 +53,7 @@ source .venv/bin/activate
 | [`module/projector.py`](module/projector.py) | `direct` / `linear` / `mlp` projectors |
 | [`module/eeg_encoder/model.py`](module/eeg_encoder/model.py) | TSConv, EEGNet, EEGConformer, … |
 | [`module/eeg_encoder/atm/`](module/eeg_encoder/atm/) | ATMS encoder |
-| [`scripts/things_eeg/`](scripts/things_eeg/) | Bash sweeps + Python experiment drivers (~48 `.sh` files) |
+| [`scripts/things_eeg/`](scripts/things_eeg/) | Bash sweeps + Python experiment drivers (47 `.sh`, 87 files at top level) |
 | [`scripts/things_meg/`](scripts/things_meg/) | MEG analogues |
 | [`data/`](data/) | Image features, etc. (gitignored; large) |
 | [`results/`](results/) | Experiment outputs (gitignored) |
@@ -260,6 +263,37 @@ Example result roots on this machine:
 
 ---
 
+## Checkpoints: what still exists (read before assuming a `.pth` is there)
+
+A weight cleanup in September 2026 removed 227 GB of checkpoints. **`.pth` only** was deleted —
+every `result.csv`, `train_config.json`, `train.log`, `training_metrics.png`, tfevents and
+`*summary*.csv` was kept, so all 48,567 run records are intact and every published number is still
+readable. `results/` is now ~169 GB with 3,690 `.pth`.
+
+**[`PROTECTED.md`](PROTECTED.md) is the authority on what must not be deleted** — every path backing
+a SAGE-paper (NeurIPS sub 28770) or rebuttal claim, plus the live experimental heads. Read it before
+deleting anything under `results/`.
+
+Three facts that follow, and that change how you plan work:
+
+1. **The SATTC/SAGE paper track has no checkpoints and never did.** The 70 `sattc_*` and 5 `tta_*`
+   sessions (31,150 runs) were trained without `--save_weights`. So `evaluate.py` cannot reproduce
+   the ~71% headline from disk — that number exists only in `result.csv`, and re-deriving it means
+   retraining. This predates the cleanup.
+2. **The ensemble line replays from score dumps, not weights.**
+   `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` holds 2,010 npz (1.2 GB) = 235 arms
+   × 10 folds, and each dump carries the **raw 200×128 EEG and image embeddings** (plus
+   `subject`/`object`/`image_idx`), not just score matrices. Any metric, normalization,
+   CSLS/Sinkhorn/Procrustes or new fusion rule is computable for all 235 arms with no checkpoint.
+   Weights are needed only to run an arm on new EEG, add folds/seeds, or dump source-subject scores
+   for the learned router (only `atm_iv` and `ge100` have `source_dumps`).
+3. **Most ablation sweeps are now weight-free** (`eeg_encoder_architecture_sweep_*`,
+   `projector_only_bb*`, `tsconv_dropout_sweep_*`, `goal25*`, `multihead`, `mixup_*`,
+   `multipos_loss_sweep`, `holdout_probe_*`). Their numbers are in `result.csv`; re-running
+   `evaluate.py` on them is not possible.
+
+---
+
 ## Scripts cheat sheet
 
 | Script | Purpose |
@@ -272,7 +306,7 @@ Example result roots on this machine:
 | [`plot_confidence_sweep.py`](scripts/things_eeg/sparse_clip/plot_confidence_sweep.py) | Confidence sweep figure (accuracy, L0, test/train active coverage) |
 | [`inter-subject-mixup.sh`](scripts/things_eeg/inter-subject-mixup.sh) | Cross-subject mixup |
 | [`projector_size_sweep.sh`](scripts/things_eeg/projector_size_sweep.sh) | Alignment dim sweep |
-| [`projector_only_sweep_backbone*.sh`](scripts/things_eeg/projector_only_sweep_backbone64.sh) | Fixed `--eeg_backbone_dim`, sweep `--feature_dim` × seeds |
+| [`projector_only_sweep_backbone512.sh`](scripts/things_eeg/projector_only_sweep_backbone512.sh) | Fixed `--eeg_backbone_dim`, sweep `--feature_dim` × seeds |
 | [`multipos_loss_sweep.sh`](scripts/things_eeg/multipos_loss_sweep.sh) | Multi-positive ablations |
 | [`progressive_sattc_candidate_sweep.py`](scripts/things_eeg/progressive_sattc_candidate_sweep.py) | SATTC hyperparameter / sample-count sweeps |
 | [`session_split_transfer_experiment.py`](scripts/things_eeg/session_split_transfer_experiment.py) | Disjoint half-fold transfer |
@@ -302,6 +336,21 @@ Strong default: **InternViT-6B layer 28**, mean pool, 8-bit (`InternViT-6B_layer
 - [`module/image_augmentation.py`](module/image_augmentation.py), [`module/eeg_augmentation.py`](module/eeg_augmentation.py) — used for aug feature paths, not mainline
 - [`fuse_feature.py`](fuse_feature.py), [`analysis/`](analysis/) — ancillary
 - README: “older utilities for augmentation and feature extraction are not the main path”
+
+## Known gaps
+
+- **The FM (LaBraM/CBraMod) experiment has no code.** `module/eeg_encoder/foundation.py`,
+  `scripts/things_eeg/inter-subject-foundation.sh` and
+  `scripts/things_eeg/tta_rebuttal/run_fm_tta.py` were lost while `scripts/` was gitignored, and
+  `git log --all` has no history for them. The results survive
+  (`results/things_eeg/foundation/`, `labram_2x2_summary.csv`, 24 checkpoints) and each
+  `train_config.json` records the full recipe, so the encoder wrapper is rewritable. See
+  [`PROTECTED.md`](PROTECTED.md).
+- `scripts/things_eeg/run_smooth_paperbase.sh` and `run_smooth_kernel_sweep.sh` default
+  `SMOOTH_WORKTREE` to a scratch path from a long-dead session; set that env var explicitly or they
+  will not run.
+- There is no test suite. The six root `test_*.py` self-checks were deleted 2026-09-15 (recoverable
+  from git history if needed).
 
 ---
 
@@ -341,4 +390,6 @@ python compute_avg_results.py --result_dir RESULTS/SESSION/featdim_64 --output_n
 
 ---
 
-*Last updated from repo state: May 2026. Update this file when default paths, main recipes, or entrypoints change materially.*
+*Last updated from repo state: 15 September 2026 (weight cleanup, `scripts/` un-gitignored, root
+drivers moved into `scripts/things_eeg/`). Update this file when default paths, main recipes, or
+entrypoints change materially.*

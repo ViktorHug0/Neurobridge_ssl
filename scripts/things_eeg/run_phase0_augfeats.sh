@@ -2,7 +2,7 @@
 # Phase 0: extract the 4 Neurobridge image augmentations as final ViT-H/14 features, then
 # average them into one aug feature dir (matches Neurobridge CPA: average of augmented views).
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 
 ROOT=data/things_eeg/image_feature
