@@ -1,0 +1,32 @@
+nohup: les entrées sont ignorées
+[honest_tta_selection] 200 configs x 8 subjects
+[honest_tta_selection] subject=03
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:11<00:00, 11.54s/it]Subjects: 100%|██████████| 1/1 [00:11<00:00, 11.54s/it]
+[honest_tta_selection] subject=04
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.89s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.89s/it]
+[honest_tta_selection] subject=05
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.23s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.23s/it]
+[honest_tta_selection] subject=06
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.27s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.27s/it]
+[honest_tta_selection] subject=07
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.28s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.28s/it]
+[honest_tta_selection] subject=08
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:12<00:00, 12.93s/it]Subjects: 100%|██████████| 1/1 [00:12<00:00, 12.93s/it]
+[honest_tta_selection] subject=09
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.22s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.22s/it]
+[honest_tta_selection] subject=10
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.34s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.34s/it]
+
+=== TTA hyperparameter selection protocols (test top-1, LOSO mean) ===
+                 top1_mean  top1_std  top5_mean  n_subjects  gap_to_oracle
+protocol                                                                  
+oracle_test          70.31     12.09      85.94           8           0.00
+paper_default        65.75     13.13      84.69           8          -4.56
+loso_fold_cv         63.44     14.03      82.62           8          -6.88
+val_subject          62.21     13.40      83.29           7          -8.10
+mutual_nn            57.38     16.52      80.31           8         -12.94
+kappa_agreement      55.19     15.19      77.69           8         -15.12
+hubness_uniform      53.19     13.95      77.06           8         -17.12
+plan_sharpness       52.75     13.82      77.44           8         -17.56
+
+Saved results to: /nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/tta_rebuttal/honest_tta_selection_20260726-125152

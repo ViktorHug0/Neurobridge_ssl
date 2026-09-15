@@ -1,0 +1,17 @@
+=== [15:14:54] LaBraM nomix folds 1-5 ===
+[LaBraM / nomix] folds: 1 2 3 4 5  ->  ./results/things_eeg/foundation/LaBraM_nomix_seed3300
+=== fold test=1 train=[ 2 3 4 5 6 7 8 9 10] ===
+Traceback (most recent call last):
+  File "/nasbrain/p20fores/Neurobridge_SSL/train.py", line 12, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'
+Script Error
+=== [15:14:55] LaBraM mix folds 1-5 ===
+[LaBraM / mix] folds: 1 2 3 4 5  ->  ./results/things_eeg/foundation/LaBraM_mix_seed3300
+=== fold test=1 train=[ 2 3 4 5 6 7 8 9 10] ===
+Traceback (most recent call last):
+  File "/nasbrain/p20fores/Neurobridge_SSL/train.py", line 12, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'
+Script Error
+=== [15:14:55] LaBraM 1-5 DONE ===

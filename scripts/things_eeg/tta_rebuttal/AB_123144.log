@@ -1,0 +1,102 @@
+=== [12:31:44] Exp A subjects 5-10 ===
+[calibrate_then_deploy] subject=05
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]
+[calibrate_then_deploy] subject=06
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]
+[calibrate_then_deploy] subject=07
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]
+[calibrate_then_deploy] subject=08
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.87s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.87s/it]
+[calibrate_then_deploy] subject=09
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.79s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.79s/it]
+[calibrate_then_deploy] subject=10
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.81s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.81s/it]
+
+=== Calibrate-then-deploy: 40 calibration reps / 40 held-out reps ===
+ fit_reps  eval_reps  menu_size                  method  top1_mean  top1_std  top5_mean  top5_std
+       40         40         10   calibrated_batch_csls  97.777778  6.467617  99.444444  2.357023
+       40         40         10      calibrated_percall  97.222222  6.691132  99.444444  2.357023
+       40         40         10    calibration_insample  97.777778  6.467617  99.444444  2.357023
+       40         40         10 fresh_tta_on_eval_block  93.888889 15.769997  99.444444  2.357023
+       40         40         10     no_adapt_batch_csls  86.111111 14.608172 100.000000  0.000000
+       40         40         10        no_adapt_percall  75.000000 15.434873  99.444444  2.357023
+       40         40         25   calibrated_batch_csls  83.555556 13.434907  92.888889  7.202033
+       40         40         25      calibrated_percall  82.444444 13.382263  92.222222  7.696871
+       40         40         25    calibration_insample  83.111111 13.826185  92.222222  8.055364
+       40         40         25 fresh_tta_on_eval_block  82.000000 12.058680  90.888889  6.258067
+       40         40         25     no_adapt_batch_csls  72.444444 11.632724  97.555556  2.791209
+       40         40         25        no_adapt_percall  64.888889  9.851180  95.111111  4.013051
+       40         40         50   calibrated_batch_csls  72.555556 14.088887  89.000000  7.300282
+       40         40         50      calibrated_percall  72.222222 13.475710  86.555556  8.197720
+       40         40         50    calibration_insample  73.111111 13.961666  88.666667  8.345481
+       40         40         50 fresh_tta_on_eval_block  73.666667 11.787331  89.222222  7.199310
+       40         40         50     no_adapt_batch_csls  63.333333 11.881771  92.333333  5.749680
+       40         40         50        no_adapt_percall  55.111111 10.133746  88.666667  7.129062
+       40         40        100   calibrated_batch_csls  62.444444 12.528660  82.777778  8.292843
+       40         40        100      calibrated_percall  60.500000 11.582187  80.611111  8.711986
+       40         40        100    calibration_insample  62.722222 13.176653  82.555556  8.952306
+       40         40        100 fresh_tta_on_eval_block  60.000000 11.575837  81.444444  8.318811
+       40         40        100     no_adapt_batch_csls  47.611111  9.726488  81.666667  6.534974
+       40         40        100        no_adapt_percall  41.222222  8.755204  75.722222  7.069450
+       40         40        200   calibrated_batch_csls  54.722222 11.168788  78.444444  8.509318
+       40         40        200      calibrated_percall  50.194444 11.500817  74.194444  8.960926
+       40         40        200    calibration_insample  55.916667 11.593926  77.138889  8.727586
+       40         40        200 fresh_tta_on_eval_block  54.361111 11.780849  77.166667  9.900980
+       40         40        200     no_adapt_batch_csls  37.388889  6.672057  70.750000  7.119257
+       40         40        200        no_adapt_percall  31.194444  6.124058  63.777778  7.507295
+
+Saved results to: /nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/tta_rebuttal/calibrate_then_deploy_20260726-123158
+=== [13:15:53] Exp B many_to_one full 1-10 ===
+[many_to_one] subject=01
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]
+[many_to_one] subject=02
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.60s/it]
+[many_to_one] subject=03
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.54s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.54s/it]
+[many_to_one] subject=04
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.75s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.75s/it]
+[many_to_one] subject=05
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.58s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.58s/it]
+[many_to_one] subject=06
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:03<00:00,  3.71s/it]Subjects: 100%|██████████| 1/1 [00:03<00:00,  3.71s/it]
+[many_to_one] subject=07
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:04<00:00,  4.19s/it]Subjects: 100%|██████████| 1/1 [00:04<00:00,  4.19s/it]
+[many_to_one] subject=08
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.30s/it]Subjects: 100%|██████████| 1/1 [00:10<00:00, 10.30s/it]
+[many_to_one] subject=09
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]
+[many_to_one] subject=10
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.57s/it]
+
+=== Many-to-one (R queries per candidate) ===
+ num_blocks  reps_per_query        scope       method  col_mass  top1_mean  top1_std  top5_mean  top5_std
+          1              80   all_blocks     full_tta       1.0  68.300000 12.488339  86.050000  8.267458
+          1              80   all_blocks plain_cosine       1.0  35.900000  8.490766  68.950000  7.029924
+          1              80   all_blocks     saw_csls       1.0  41.000000  7.712507  73.250000  6.895463
+          1              80 single_block     full_tta       1.0  68.300000 12.488339  86.050000  8.267458
+          1              80 single_block plain_cosine       1.0  35.900000  8.490766  68.950000  7.029924
+          1              80 single_block     saw_csls       1.0  41.000000  7.712507  73.250000  6.895463
+          2              40   all_blocks     full_tta       1.0  62.891667 10.526175  82.750000  7.944039
+          2              40   all_blocks     full_tta       2.0  62.891667 10.526175  82.741667  7.944713
+          2              40   all_blocks plain_cosine       1.0  32.383333  7.176570  64.825000  7.050358
+          2              40   all_blocks     saw_csls       1.0  35.150000  6.252792  67.175000  6.932293
+          2              40 single_block     full_tta       1.0  55.200000 11.236179  77.750000  8.513428
+          2              40 single_block plain_cosine       1.0  32.500000  6.923224  64.866667  7.009763
+          2              40 single_block     saw_csls       1.0  36.483333  6.813378  68.000000  6.998768
+          4              20   all_blocks     full_tta       1.0  50.370833  8.997814  74.483333  7.680496
+          4              20   all_blocks     full_tta       4.0  50.370833  8.997814  74.483333  7.680496
+          4              20   all_blocks plain_cosine       1.0  26.925000  5.965381  58.666667  7.082742
+          4              20   all_blocks     saw_csls       1.0  27.625000  5.214783  59.050000  6.220759
+          4              20 single_block     full_tta       1.0  39.183333  9.765777  63.533333  9.024806
+          4              20 single_block plain_cosine       1.0  26.850000  7.087081  58.616667  6.816161
+          4              20 single_block     saw_csls       1.0  28.916667  6.151932  60.516667  6.726791
+          8              10   all_blocks     full_tta       1.0  33.416667  8.425995  59.452083  8.162574
+          8              10   all_blocks     full_tta       8.0  33.416667  8.425995  59.452083  8.162574
+          8              10   all_blocks plain_cosine       1.0  20.554167  4.617122  48.743750  7.204998
+          8              10   all_blocks     saw_csls       1.0  20.402083  3.893369  47.658333  6.147604
+          8              10 single_block     full_tta       1.0  25.533333  6.332638  46.900000  5.858092
+          8              10 single_block plain_cosine       1.0  21.016667  5.487420  49.350000  7.782773
+          8              10 single_block     saw_csls       1.0  21.483333  5.492131  48.750000  6.976253
+
+Saved results to: /nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/tta_rebuttal/many_to_one_20260726-131606
+=== [13:26:58] A+B DONE ===

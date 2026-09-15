@@ -1,0 +1,7 @@
+=== [12:12:35] Exp A subjects 5-10 ===
+[calibrate_then_deploy] subject=05
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.64s/it]Subjects: 100%|██████████| 1/1 [00:01<00:00,  1.64s/it]
+[calibrate_then_deploy] subject=06
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.79s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.79s/it]
+[calibrate_then_deploy] subject=07
+Subjects:   0%|          | 0/1 [00:00<?, ?it/s]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.80s/it]Subjects: 100%|██████████| 1/1 [00:09<00:00,  9.80s/it]
