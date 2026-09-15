@@ -15,7 +15,8 @@ kept everywhere, so all recorded numbers stay readable even where weights are go
 | `results/things_eeg/subjectmix_rebuttal/` | 245 / 15.6 | vxam SubjectMix justification; `smooth_kernel_sweep/` = smoothing controls |
 | `results/things_eeg/intra-subjects/` | 101 / 7.8 | intra-vs-inter bars; `TTA/` holds the 85.2 inductive intra bar |
 | `results/things_eeg/foundation/` | 24 / 2.5 | vxam-Q1 LaBraM + CBraMod full-FT 2×2 (`labram_2x2_summary.csv`) |
-| `results/alljoined/` | 112 / 4.4 | 6S7i-Q3 subject variability (n=6, CV 0.179→0.379) |
+| `results/alljoined/` | 112 / 4.4 | **paper dataset 2 of 3** (AllJoined-1.6M, appendix `alljoined-meg-results`); also 6S7i-Q3 subject variability (n=6, CV 0.179→0.379) |
+| `results/things_meg/` | 30 / 1.9 | **paper dataset 3 of 3** (THINGS-MEG, 4 subjects/271 ch; appendix `alljoined-meg-results`) — the "generalizes across recording modalities" claim rests on this |
 | `results/things_eeg/tta_rebuttal/` | 0 / 0 | Exp A/B, honest TTA selection, open-gallery, partial coverage (+ablations), streaming refit, alpha sweeps |
 | `results/things_eeg/nsd_sage/` | 0 / 0 | `nsd_sage_technical_report.md`; SAGE→fMRI transfer |
 | `results/things_eeg/inter-subjects/sattc_*`, `tta_*` | 0 / 0 | **the entire SATTC paper track — 75 sessions, 31,150 runs, already weightless** (ran without `--save_weights`) |
@@ -32,6 +33,16 @@ Also protected inside otherwise-cleared `inter-subjects/`:
 - `eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup` — `tsconv_bigg`
 - `eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup` — `tsconv_eva`
 - `tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed330{0,1,2}_valbest` — live ValCon/gate pool roots (`validation/pool.json`, `gate_pool.json`); `honest_ensemble` refits point here as `val_root`
+
+### Raw/preprocessed data — protected results, re-derivable inputs
+
+`data/things_meg/` (47 GB) and `data/alljoined_final/` (9.7 GB) are **inputs**, not records. The
+paper's numbers live in `results/things_meg/` and `results/alljoined/`, which are protected above.
+The inputs are needed only to re-train, and are re-obtainable: `scripts/things_meg/download_meg.sh`
+/ `scripts/alljoined/`, plus the paper's appendix documents the exact preprocessing (MEG: 0–1000 ms
+epochs, 0.1–100 Hz band-pass, downsample to 200 Hz, baseline correction, repetition averaging,
+float16). Deleting them costs a re-download and re-preprocess, not a result — but do it as a
+deliberate decision, not as cleanup.
 
 ## Scripts — protected
 
