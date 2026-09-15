@@ -9,11 +9,17 @@ and no longer drives the ordering.
 - **The bridge is not the bottleneck.** A linear map reaches cwBLEU 29.38 against BLIP-2's own
   29.82, so at most 0.44 is available to any increase in bridge capacity. Every remaining gap is
   upstream, in the embedding.
-- **Retrieval accuracy does not predict caption quality.** Job 47607: an 81.00 top-1 intra-subject
-  encoder gave cwBLEU 6.51, against a fixed-caption floor of 5.38 and a shuffle control of 5.15.
-  ENIGMA, at 22.50 top-1, gives 7.09. That run was handicapped twice (no noise augmentation, and it
-  predates the decoding fix), so it is suggestive rather than settled, but the direction matches the
-  fMRI literature.
+- **~~Retrieval accuracy does not predict caption quality.~~ RETRACTED — see E2 below.** The
+  original reading came from job 47607, where an 81.00 top-1 intra-subject encoder gave cwBLEU 6.51
+  against ENIGMA's 7.09 at 22.50 top-1. That 6.51 run was handicapped twice (no noise augmentation,
+  and it predates the decoding fix), and **rerunning the same encoder under modern settings
+  (job 49558, `e2_base`, sigma 2.71) gives 8.59 — above ENIGMA, not below.** The comparison was a
+  handicapped arm against a modern one, and the direction was an artifact of that, not a property of
+  the encoders. What survives is weaker and symmetric: the two encoders are 3.6x apart on top-1 yet
+  near-identical on every diagnostic a bridge consumes (cos 0.346 vs 0.360, rank ratio 0.36 vs 0.40),
+  and the end-to-end difference is not significant (+1.50 [-0.27, +3.12], p = 0.093). So **neither
+  top-1 nor cosine has been shown to separate them.** Always confirm two arms share the augmentation
+  *and* the decoding config before attributing a difference to the model.
 - **The cost asymmetry decides the strategy.** An intra-subject encoder trains in **2.5 minutes**
   (`train.log`, 50 epochs, 17 occipital channels, batch 1024). A bridge takes **2 hours**, almost
   all of it the cross-entropy term backpropagating through the frozen OPT-2.7b. Generation is 2 min
@@ -71,9 +77,14 @@ rank falls monotonically long before that (95.3 -> 89.1 -> 84.0 -> 72.5 as alpha
 so the confound is present throughout. Encoders are therefore ranked by `caption_ridge.py` against
 the **fixed** cached Q-Former targets, which depend on no encoder.
 
-Rank on `cos_qf`, not R2. The two disagree, and cos_qf reproduces the one ordering with ground
-truth: ENIGMA scored cwBLEU 7.09 against base's 6.51, and cos_qf puts ENIGMA ahead (0.271 vs 0.238)
-while R2 inverts it (0.0077 vs 0.0560). R2 is scale-sensitive and the spaces differ in width.
+Rank on `cos_qf`, not R2 — **but the evidence for this has been withdrawn.** The argument was that
+cos_qf reproduced the one ordering with ground truth (ENIGMA 7.09 against base's 6.51, cos_qf
+putting ENIGMA ahead at 0.271 vs 0.238 while R2 inverted it at 0.0077 vs 0.0560). That ordering does
+not survive the E2 rerun: base scores 8.59, i.e. *ahead* of ENIGMA, so cos_qf now gets this pair
+**wrong** and R2 gets it right. R2 remains scale-sensitive across spaces of different width, so the
+practical rule is narrower than it looks: **do not compare cos_qf across spaces of different width
+either.** The within-space ranking test is still open — no proxy is currently validated for
+cross-space use.
 
 | encoder | cos_qf | cos(proj) | top-1 | note |
 |---|---|---|---|---|
@@ -171,14 +182,15 @@ the corrected rerun of job 47607: both defects that handicapped it are now fixed
 predicts 24576 values from half as many inputs. If E0 shows a low effective rank, that is the
 binding constraint and not the width.
 
-**Status: running, job 49558**, queued behind E1. Two arms under identical modern settings, base
-(sigma 2.71) and mse03 (sigma 2.12), because base's old 6.51 predates both the noise augmentation
-and the decoding fix and so cannot calibrate the screen. The ridge proxy has exactly one clean
-anchor to cwBLEU today; these two add a second.
+**Status: DONE, job 49558.** Two arms under identical modern settings, base (sigma 2.71) and mse03
+(sigma 2.12), because base's old 6.51 predates both the noise augmentation and the decoding fix and
+so could not calibrate the screen.
 
-**Success.** Beats 7.09, or clears its own permutation null by a margin comparable to ENIGMA's.
-**Kill.** Lands at 6.51 again, which would establish the earlier result was the encoder rather than
-the two defects, and make E4 the only remaining direction.
+**Outcome: Success, and it overturns the headline bullet above.** `e2_base` — the same 81.00 top-1
+encoder as job 47607 — scores **8.59**, beating ENIGMA's 7.09 rather than landing back at 6.51. So
+the two defects, not the encoder, produced the original gap. The difference over ENIGMA is +1.50
+[-0.27, +3.12], p = 0.093, so base is not established as *better* either; the honest statement is
+that the two are indistinguishable end to end. E4 is therefore not forced.
 
 ---
 

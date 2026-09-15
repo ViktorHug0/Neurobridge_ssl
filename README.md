@@ -103,6 +103,25 @@ Dead ends, so they are not retried: **top-k** collapses (down to 0.5–23% as k 
 
 **Two caveats.** The sparsity is relative to width, so 113 active dims is not cheaper than the dense `feature_dim 64` model, which is also more accurate: this is an interpretability result, not a compute result. And the winner has only been run on 5 subjects — the 10-fold confirmation is still outstanding. Drivers in `scripts/things_eeg/sparse_clip/`.
 
+## Image reconstruction and captioning
+
+A separate within-subject track: instead of retrieving from a fixed candidate set, generate the stimulus. Code in `reconstruction_experiments/`, findings in `reconstruction_experiments/experiments.md` and `reconstruction_experiments/next_experiments.md`.
+
+**ENIGMA reproduced.** The published ENIGMA tree runs on our THINGS-EEG-2 after four fixes (none of which change the method — nothing runs without them). On sub-01 all six reconstruction metrics land **within ~2pp** of the paper. Retrieval does not: Top-1 22.50 against a published 27.60. That gap is probably a cohort artifact — the published figure is very likely a 10-subject average and we have only sub-01 — but it is unresolved, so don't quote either as a clean comparison.
+
+**Captioning is limited by the EEG, not the bridge.** A linear bridge from the *real* image embedding to BLIP-2 Q-Former tokens reaches cwBLEU 29.38 against BLIP-2's own 29.82, so at most **0.44** is available to any increase in bridge capacity — every remaining gap is upstream in the embedding. Feeding EEG instead:
+
+| route | cwBLEU |
+|---|---|
+| ceiling: real image through the same bridge | 29.38 |
+| **best EEG arm** (generative bridge fit on predictions, sigma 1.08) | **10.06** |
+| retrieval from the ENIGMA embedding | 8.61 |
+| render an image first, then caption it (SDXL → BLIP-2) | 5.40 |
+
+Rendering pixels and captioning them is the worst route, and at +0.02 over a fixed-caption control (p = 0.996) it does not clear the floor at all. Noise-matched training — fitting the bridge on predictions *with* the decoding loss — is what moves the EEG arm; neither factor acts alone.
+
+**Two methodological traps recorded here.** cwBLEU's fixed-caption floor is gameable (a degenerate arm reaches 16.94), so score against the **permutation null**, not the floor. And a claim that retrieval accuracy does not predict caption quality has been **retracted**: the 6.51-vs-7.09 gap came from comparing a handicapped arm (no noise augmentation, pre-decoding-fix) against a modern one; the rerun gives 8.59. Neither top-1 nor cosine has been shown to separate those encoders.
+
 ---
 
 ## Running things
@@ -121,6 +140,8 @@ If you just want the main pieces, start here:
 - `module/util.py` — SAW, CSLS, Sinkhorn, soft Procrustes, retrieval
 - `module/eeg_encoder/model.py` — TSConv, EEGNet, EEGConformer, …
 - `module/eeg_encoder/foundation.py` — LaBraM / CBraMod full fine-tuning
+- `ensemble_experiments/retrieval_fusion.py` — score-fusion rules
+- `reconstruction_experiments/` — reconstruction + captioning (`reconstruction_experiments/reconstruct_eval.py`, `reconstruction_experiments/caption_bridge.py`)
 
 Main THINGS-EEG sweeps:
 

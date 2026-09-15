@@ -1,6 +1,28 @@
 # Technical Overview of the THINGS-EEG-2 Inter-Subject Pipeline
 
-This document summarizes the main ideas implemented in this repository in a paper-facing way. The goal is to explain the technical logic of the experiments, how the different pieces fit together, and how the system moves from a strong inter-subject baseline in the mid-30% range to roughly 71% top-1 accuracy with transductive test-time adaptation on the 200-way THINGS-EEG-2 benchmark.
+> **Status: the method sections below are current; the headline numbers are not.**
+> Written 19 April 2026, annotated 15 September 2026. The *mechanism* explanations — SAW, CSLS,
+> Sinkhorn, soft Procrustes, the multi-positive objective, the identity probes — are still accurate
+> and are the reason to read this file. Three things have changed since:
+>
+> 1. **The `~71%` figure used throughout is the April sweep number and appears nowhere in the paper.**
+>    The paper reports **77.2** (ATM after SAGE-TTA; TSConv 68.5, EEGConformer 65.0), and the
+>    author-response audit established **68.30** as the honest, no-leak figure for TSConv+SubjectMix
+>    +TTA under blind hyperparameter selection. The 71%-era configurations were the argmax of a grid
+>    scored on the held-out *test* subject, so they are selection-optimistic. See the
+>    "Which transductive number to quote" table in [`AGENTS.md`](AGENTS.md).
+> 2. **Four result families post-date this document entirely** and are summarised in
+>    [`README.md`](README.md): the author-response experiments (honest selection, foundation-model
+>    transfer, the measured failure modes), score ensembling, Sparse CLIP, and image
+>    reconstruction/captioning.
+> 3. **Two evidence files cited below no longer exist.** The sessions
+>    `inter-subjects/20260413-143447_session_seed2099` and `inter-subjects/mixup_20260329-225009`
+>    were removed during the September cleanup, so the `25.8`/`32.4` and `35.5`/`35.9` figures below
+>    are no longer checkable at those paths. Comparable mixup summaries survive under
+>    `inter-subjects/mixup_20260324-172439/` and `mixup_20260331-190741/`. Before deleting anything
+>    else under `results/`, read [`PROTECTED.md`](PROTECTED.md).
+
+This document summarizes the main ideas implemented in this repository in a paper-facing way. The goal is to explain the technical logic of the experiments, how the different pieces fit together, and how the system moves from a strong inter-subject baseline in the mid-30% range to a much higher top-1 accuracy with transductive test-time adaptation on the 200-way THINGS-EEG-2 benchmark.
 
 The main story is simple:
 
@@ -35,7 +57,7 @@ This run reports:
 - final-epoch average top-1 accuracy of `25.8`
 - best-epoch average top-1 accuracy of `32.4`
 
-This is already a strong inter-subject base model and serves as the source model for the later 71% test-time adaptation sweeps.
+This is already a strong inter-subject base model and serves as the source model for the later test-time adaptation sweeps.
 
 ### Historical mid-30% runs
 
@@ -50,13 +72,25 @@ That run contains seed-level averages whose best top-1 values include:
 
 These are the clearest repository results supporting the claim that the training-side inter-subject decoder can be pushed into the mid-30% range.
 
-### Full transductive test-time adaptation around 71%
+### Full transductive test-time adaptation (April: ~71%; published: 77.2 / honest 68.30)
 
-The strongest 200-way adaptation results appear in:
+The April 2026 adaptation sweep appears in:
 
 - `results/things_eeg/inter-subjects/sattc_final_ablation_20260414-155005/sattc_sweep_summary.csv`
 
 Several parameter settings reach about `71.0` to `71.2` top-1 on average across subjects. These numbers are not produced by additional supervised learning. They come from taking a trained inter-subject decoder and adapting its test-time query geometry using the unlabeled structure of the full 200 paired test items for the held-out subject. This is therefore a transductive closed-set adaptation result, not a standard inductive test-time evaluation.
+
+**Two corrections to this section (September 2026).** First, those settings were selected by scoring
+a grid on the held-out *test* subject, and the checkpoint was also `--select_best_on test`, so
+`~71` is a selection-optimistic figure rather than a clean result. The author-response audit
+re-selected without touching test — freeze the three empirically flat axes (shrink 0.94, Procrustes
+steps 16, power 1.2) at their cross-fold marginal optima and LOSO-select only `tau`, which picks
+0.10 on every fold — and recovered **68.30 with zero leak inflation**, against a test-oracle upper
+bound of 72.75. Joint-argmax cross-validation gives 67.30 and is *pessimistic*, because it overfits
+the flat steps axis. Second, the published headline is **77.2**, which is the **ATM** encoder after
+calibration, not TSConv: the architecture ranking inverts between the inductive and transductive
+regimes. Quote 77.2 as the paper headline and 68.30 as the honest TSConv figure; do not quote
+`~71` at all.
 
 ### Transfer to unseen test samples
 
@@ -217,7 +251,7 @@ That means the paper should be careful not to present every reported number as i
 
 This does not change how the adaptation mechanisms work, but it does matter for how the experiments should be framed.
 
-## Transductive test-time adaptation: why the 71% result is so much higher
+## Transductive test-time adaptation: why the transductive result is so much higher
 
 The central insight behind the 71% numbers is that the 200-way test problem contains a large amount of unlabeled structure. At test time, the model is not facing isolated EEG samples. It is facing a full set of 200 EEG queries and 200 candidate images that are known to form a one-to-one matching problem.
 
@@ -338,7 +372,7 @@ The training stage learns a representation that is already reasonably transferab
 This explains the dramatic gap between:
 
 - a strong but imperfect inter-subject baseline in the low-to-mid 30s;
-- a fully adapted 200-way retrieval system around 71%.
+- a fully adapted 200-way retrieval system around 71% in the April sweep — published 77.2, honest 68.30 (see the status note at the top).
 
 The improvement is so large because the two stages solve different parts of the problem:
 
@@ -409,7 +443,7 @@ A concise and faithful way to describe the repository is the following.
 
 First, the system builds a shared EEG-image representation using a strong frozen visual target space, a temporal-spatial EEG encoder, and a deliberately compact alignment dimension. Training is organized so that several subjects viewing the same exact image appear together, which makes multi-positive cross-subject learning possible and improves inter-subject robustness. Additional training regularization, including same-stimulus cross-subject mixing, can push the inter-subject baseline into the mid-30% range.
 
-Second, the system treats the held-out subject's 200-way test fold not as 200 isolated queries, but as a structured unlabeled set. It whitens the held-out subject's EEG features via ZCA with shrinkage covariance, corrects hubness via CSLS, imposes soft one-to-one matching structure via Sinkhorn normalization, and repeatedly fits an orthogonal rotation from the soft-assignment-weighted Procrustes problem between the EEG and image spaces. This raises average top-1 accuracy to about 71%.
+Second, the system treats the held-out subject's 200-way test fold not as 200 isolated queries, but as a structured unlabeled set. It whitens the held-out subject's EEG features via ZCA with shrinkage covariance, corrects hubness via CSLS, imposes soft one-to-one matching structure via Sinkhorn normalization, and repeatedly fits an orthogonal rotation from the soft-assignment-weighted Procrustes problem between the EEG and image spaces. This raises average top-1 accuracy to about 71% in the April sweep; the published figure is 77.2 and the honest blind figure 68.30.
 
 Third, the split-test transfer experiments show that the learned orthogonal correction is not purely tied to the particular samples used to estimate it. When transferred cautiously through blending with the identity, it improves performance on unseen samples from the same held-out subject by about 10 absolute points.
 
