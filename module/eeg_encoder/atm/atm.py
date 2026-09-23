@@ -16,9 +16,10 @@ class Config:
         e_layers=1,
         d_ff=256,
         dropout=0.25,
+        seq_len=250,
     ):
         self.task_name = 'classification'  # Example task name
-        self.seq_len = 250                 # Sequence length
+        self.seq_len = seq_len             # Sequence length (= EEG samples per epoch)
         self.pred_len = 250                # Prediction length
         self.output_attention = False      # Whether to output attention weights
         self.d_model = d_model             # Model dimension
@@ -170,10 +171,14 @@ class ATMS(nn.Module):
         spatial_filters=40,
         projection_filters=40,
         conv_dropout=0.5,
+        subject_token=True,
+        backbone_dim=0,
     ):
         super(ATMS, self).__init__()
-        if d_model <= 0 or d_ff <= 0 or e_layers <= 0 or n_heads <= 0:
-            raise ValueError("ATM dimensions, layer count, and head count must be positive")
+        # e_layers == 0 keeps the per-channel temporal embedding and the conv readout but drops
+        # the channel transformer (attention + FFN): the "ATM without attention" ablation.
+        if d_model <= 0 or d_ff <= 0 or e_layers < 0 or n_heads <= 0:
+            raise ValueError("ATM dimensions and head count must be positive, layer count >= 0")
         conv_width = d_model - temporal_kernel + 1
         pooled_width = (conv_width - pool_kernel) // pool_stride + 1
         if pooled_width <= 0:
@@ -188,8 +193,18 @@ class ATMS(nn.Module):
             e_layers=e_layers,
             d_ff=d_ff,
             dropout=attention_dropout,
+            # The iTransformer value embedding is Linear(seq_len, d_model) over each channel's
+            # time series, so seq_len must be the actual epoch length. It was pinned at 250,
+            # which crashes on any other sampling rate; 250-sample runs are unaffected.
+            seq_len=eeg_sample_points,
         )
-        self.encoder = iTransformer(default_config)   
+        # The subject token is prepended, then enc_out[:, :enc_in] keeps it plus the first 62
+        # channels, so O2's own token never reaches the conv readout (it leaks in only through
+        # attention: 5x less output sensitivity than with the token dropped). Its table is also indexed 0-9 while
+        # subject ids are 1-10, so training only ever saw the shared fallback token. The
+        # Codabench grader calls predict(X) with no subject ids anyway; subject_token=False
+        # drops the token and keeps all 63 channels.
+        self.encoder = iTransformer(default_config, num_subjects=10 if subject_token else None)
         self.subject_wise_linear = nn.ModuleList([nn.Linear(default_config.d_model, eeg_sample_points) for _ in range(subjects_num)])
         self.enc_eeg = Enc_eeg(
             configs=default_config,
@@ -202,7 +217,12 @@ class ATMS(nn.Module):
             dropout=conv_dropout,
         )
         embedding_dim = pooled_width * projection_filters
-        self.proj_eeg = Proj_eeg(embedding_dim=embedding_dim, proj_dim=feature_dim) # 此处修改feature dimension
+        # backbone_dim > 0 mirrors TSConv_parameterizable's trunk: the residual head runs at
+        # backbone_dim and a final Linear maps to feature_dim (the grader's 1536-D space).
+        trunk_dim = backbone_dim or feature_dim
+        self.proj_eeg = Proj_eeg(embedding_dim=embedding_dim, proj_dim=trunk_dim)
+        if trunk_dim != feature_dim:
+            self.proj_eeg.append(nn.Linear(trunk_dim, feature_dim))
         # self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         # self.loss_func = ClipLoss()       
          

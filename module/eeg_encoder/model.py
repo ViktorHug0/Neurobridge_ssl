@@ -212,6 +212,7 @@ class TSConv_parameterizable(nn.Module):
         feature_dim=1024,
         eeg_sample_points=250,
         channels_num=63,
+        backbone_dim=0,
         temporal_filters=40,
         temporal_kernel=25,
         pool_kernel=51,
@@ -234,6 +235,7 @@ class TSConv_parameterizable(nn.Module):
         subject_adapter_inferred=False,
         mutual_reconstruction_hidden=0,
         cohort_reconstruction_hidden=0,
+        power_branch=False,
     ):
         super().__init__()
 
@@ -349,20 +351,41 @@ class TSConv_parameterizable(nn.Module):
             )
             self.cohort_reconstruction_shape = (channels_num, eeg_sample_points)
         self.projection = nn.Conv2d(spatial_filters, projection_filters, (1, 1), stride=(1, 1), bias=conv_bias)
+        # ShallowConvNet's band-power path (temporal -> spatial -> BN -> square -> mean-pool ->
+        # log) on its own filters: power survives the single-trial latency jitter that smears
+        # the phase-locked waveform the ELU path reads. Concatenated before the trunk.
+        self.power_branch = nn.Sequential(
+            nn.Conv2d(1, temporal_filters, (1, temporal_kernel), bias=conv_bias),
+            nn.Conv2d(temporal_filters, spatial_filters, (channels_num, 1), bias=False),
+            nn.BatchNorm2d(spatial_filters),
+        ) if power_branch else None
+        self.power_pool = nn.AvgPool2d((1, pool_kernel), (1, pool_stride))
+        self.power_dropout = nn.Dropout(dropout)
 
         with torch.no_grad():
             dummy = torch.zeros(1, 1, channels_num, eeg_sample_points)
             embedding_dim = self.projection(self.tsconv(dummy)).view(1, -1).shape[1]
+            if self.power_branch is not None:
+                embedding_dim += self._power_features(dummy).shape[1]
 
+        # backbone_dim narrows the residual trunk and adds a separate trunk->output map, which is
+        # how NeuralBench's Track1TSConv is built (backbone_dim 1024 -> Linear(1024, 1536)).
+        # 0 keeps this repo's original geometry: one trunk at feature_dim, no extra layer.
+        trunk_dim = backbone_dim or feature_dim
         self.proj_eeg = nn.Sequential(
-            nn.Linear(embedding_dim, feature_dim),
+            nn.Linear(embedding_dim, trunk_dim),
             ResidualAdd(nn.Sequential(
                 nn.GELU(),
-                nn.Linear(feature_dim, feature_dim),
+                nn.Linear(trunk_dim, trunk_dim),
                 nn.Dropout(head_dropout),
             )),
-            nn.LayerNorm(feature_dim),
+            nn.LayerNorm(trunk_dim),
+            nn.Identity() if trunk_dim == feature_dim else nn.Linear(trunk_dim, feature_dim),
         )
+
+    def _power_features(self, x):
+        power = self.power_pool(self.power_branch(x).square())
+        return self.power_dropout(power.clamp_min(1e-6).log().flatten(1))
 
     @staticmethod
     def _apply_layers(layers, features, subject_ids):
@@ -451,6 +474,8 @@ class TSConv_parameterizable(nn.Module):
         x_spat = self._apply_layers(self.tsconv[4:], x_temp, subject_ids)
         x_proj = self.projection(x_spat)
         x_flat = x_proj.view(x_proj.size(0), -1)
+        if self.power_branch is not None:
+            x_flat = torch.cat([x_flat, self._power_features(x)], dim=1)
         x_out = self.proj_eeg(x_flat)
         if return_intermediate:
             return {

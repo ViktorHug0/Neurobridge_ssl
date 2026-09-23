@@ -215,8 +215,40 @@ def compute_retrieval_scores(eeg_features, image_features, subject_ids=None, eva
     )
 
 
-def retrieve_all(eeg_features, image_features, subject_ids=None, eval_mode='plain_cosine', sattc_params=None):
-    """Score all EEG-image pairs and return (top5_hits, top1_hits, total)."""
-    scores, targets = compute_retrieval_scores(eeg_features, image_features, subject_ids, eval_mode, sattc_params)
-    count_5, count_1 = topk(scores, 5, target_indices=targets)
+# Row block for retrieve_all. The score matrix is n_queries x n_queries and topk() argsorts it
+# twice as int64, so the full-matrix path costs ~17.5 + 35 + 35 GB at the 66,160 queries of an
+# un-averaged validation split -- the ~94 GB that OOM-killed those runs. Counts need one block at
+# a time, and argsort is per row, so the result is unchanged.
+_RETRIEVAL_BLOCK = 1024
+
+
+def retrieve_all(eeg_features, image_features, subject_ids=None, eval_mode='plain_cosine',
+                 sattc_params=None, target_indices=None):
+    """Score all EEG-image pairs and return (top5_hits, top1_hits, total).
+
+    `target_indices[i]` is the row of `image_features` that query i should retrieve; it defaults
+    to i, which assumes one candidate per query. Pass it to rank against a deduplicated gallery.
+    """
+    sattc_params = sattc_params or {}
+    if target_indices is not None:
+        target_indices = np.asarray(target_indices, dtype=np.int64)
+    if eval_mode in {'csls', 'saw_csls'}:
+        # CSLS re-ranks each score against the whole matrix's neighbourhood means, so it needs
+        # every row at once and cannot be blocked.
+        scores, targets = compute_retrieval_scores(eeg_features, image_features, subject_ids, eval_mode, sattc_params)
+        if target_indices is not None:
+            targets = target_indices
+        count_5, count_1 = topk(scores, 5, target_indices=targets)
+        return count_5, count_1, len(eeg_features)
+
+    processed = process_query_features(eeg_features, subject_ids, eval_mode, sattc_params)
+    count_5 = count_1 = 0
+    for start in range(0, len(processed), _RETRIEVAL_BLOCK):
+        stop = min(start + _RETRIEVAL_BLOCK, len(processed))
+        scores = cosine_similarity(processed[start:stop], image_features).astype(np.float32, copy=False)
+        block_targets = (np.arange(start, stop, dtype=np.int64) if target_indices is None
+                         else target_indices[start:stop])
+        block_5, block_1 = topk(scores, 5, target_indices=block_targets)
+        count_5 += block_5
+        count_1 += block_1
     return count_5, count_1, len(eeg_features)

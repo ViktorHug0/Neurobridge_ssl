@@ -16,6 +16,7 @@ class ContrastiveLoss(nn.Module):
         is_softplus: bool,
         logit_scale_max=None,
         mse_on_raw: bool = False,
+        asymmetric: bool = False,
     ):
         super(ContrastiveLoss, self).__init__()
         self.alpha = alpha
@@ -24,6 +25,9 @@ class ContrastiveLoss(nn.Module):
         self.img_l2norm = img_l2norm
         self.text_l2norm = text_l2norm
         self.mse_on_raw = mse_on_raw  # ENIGMA: MSE on unnormalized target (learns CLIP magnitude)
+        # NeuralBench's ClipLoss(symmetric=False) scores only EEG->image, the direction the
+        # grader actually evaluates. Averaging both directions is this repo's default.
+        self.asymmetric = asymmetric
         
         self.is_softplus = is_softplus
         self.logit_scale_max = logit_scale_max
@@ -193,7 +197,9 @@ class ContrastiveLoss(nn.Module):
             loss_contrastive_te = (loss_eeg_te + loss_img_te) / 2
             loss_contrastive = self.beta * loss_contrastive_ie + (1 - self.beta) * loss_contrastive_te
         else:
-            loss_contrastive = (loss_eeg_ie + loss_img_ie) / 2
+            loss_contrastive = (
+                loss_eeg_ie if self.asymmetric else (loss_eeg_ie + loss_img_ie) / 2
+            )
         
         if self.alpha != 1.0:
             loss = self.alpha * loss_contrastive + (1 - self.alpha) * loss_mse

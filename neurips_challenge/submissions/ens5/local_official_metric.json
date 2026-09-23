@@ -1,0 +1,8 @@
+{
+  "top5_acc": 0.4817739151873767,
+  "top1_acc": 0.2122472879684418,
+  "n_samples": 162240,
+  "n_candidates": 200,
+  "input_frequency": 120,
+  "input_n_times": 120
+}

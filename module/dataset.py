@@ -111,6 +111,37 @@ def _eeg_cache_path(eeg_data_dir: str, key: str) -> str:
     return os.path.join(cache_dir, f"{key}.npy")
 
 
+def _fp16_memmap(array: np.ndarray, path: str) -> np.ndarray:
+    """An fp16 copy of `array` on disk, read back as a memmap.
+
+    `array.astype(np.float16)` on the memmap opened above would pull the whole thing into
+    anonymous RAM and keep it resident for the life of the dataset -- and train, val and test
+    each pay it. That is why un-averaged runs needed ~94 GB while NeuralBench, which cuts epochs
+    lazily from disk, holds ~30 GB for the same data. The conversion is chunked so neither the
+    source nor the destination is ever fully resident.
+    """
+    if not os.path.isfile(path):
+        tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".npy", dir=os.path.dirname(path), delete=False
+            ) as handle:
+                tmp = handle.name
+            out = np.lib.format.open_memmap(
+                tmp, mode="w+", dtype=np.float16, shape=array.shape
+            )
+            for start in range(0, array.shape[0], 64):
+                out[start:start + 64] = array[start:start + 64]
+            out.flush()
+            del out
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if tmp is not None and os.path.exists(tmp):
+                os.remove(tmp)
+    return np.load(path, mmap_mode="r")
+
+
 def _standardize_eeg_array(eeg_obj, train: bool, num_images_per_object: int = 10) -> np.ndarray:
     """
     Convert various EEG array layouts into this repo's internal format:
@@ -372,10 +403,9 @@ class EEGPreImageDataset(Dataset):
                 R = np.einsum('nct,ndt->cd', Xf, Xf) / (Xf.shape[0] * Xf.shape[-1])
                 W = _inv_sqrt_cov(R)
                 eeg_data = np.einsum('cd,...dt->...ct', W, eeg_data.astype(np.float32)).astype(eeg_data.dtype, copy=False)
-            if not self.average:
-                # Un-averaged reps for 9 subjects ~= 35GB fp32, OOMs a 31GB box; fp16 halves it to
-                # ~18GB (fork-workers share it copy-on-write). Mixing/averaging upcasts to fp32 per item.
-                eeg_data = eeg_data.astype(np.float16)
+            if not self.average and eeg_data.dtype != np.float16:
+                # Backed by disk, not RAM -- see _fp16_memmap. Mixing/averaging upcasts per item.
+                eeg_data = _fp16_memmap(eeg_data, eeg_cache_path[:-4] + "_fp16.npy")
             self.eeg_data_list.append(eeg_data)
         
         self.num_subjects = len(self.eeg_data_list)
