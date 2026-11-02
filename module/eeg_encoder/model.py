@@ -126,6 +126,63 @@ class TSConv(nn.Module):
         return x_out
 
 
+class ExtraInputAdapter(nn.Module):
+    """Per-dataset input translator for an extra stimulus set (Alljoined-1): a depthwise 25-tap temporal filter per
+    electrode then a 1x1 electrode mix, both initialised to the identity, so training starts from the raw trials and
+    can learn to re-shape that paradigm's responses towards the main one before the shared encoder."""
+
+    def __init__(self, channels, kernel=25):
+        super().__init__()
+        self.temporal = nn.Conv1d(channels, channels, kernel, padding=kernel // 2, groups=channels, bias=False)
+        self.mix = nn.Conv1d(channels, channels, 1)
+        nn.init.zeros_(self.temporal.weight)
+        with torch.no_grad():
+            self.temporal.weight[:, 0, kernel // 2] = 1.0
+            self.mix.weight.copy_(torch.eye(channels).unsqueeze(-1))
+        nn.init.zeros_(self.mix.bias)
+
+    def forward(self, x):  # (B, C, T)
+        return self.mix(self.temporal(x))
+
+
+class LatencyAligner(nn.Module):
+    """Learned per-trial latency normalisation: a small conv net reads the trial and predicts a shift d in
+    [-max_shift, max_shift] samples; the output is the trial resampled at t - d (linear interpolation, edges clamped),
+    so d > 0 delays it. Differentiable in d; the last layer starts at zero, i.e. training starts from no shift."""
+
+    def __init__(self, channels, max_shift):
+        super().__init__()
+        self.max_shift = float(max_shift)
+        self.net = nn.Sequential(
+            nn.Conv1d(channels, 16, 9, padding=4), nn.GELU(),
+            nn.Conv1d(16, 16, 9, stride=2, padding=4), nn.GELU(),
+            nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.Linear(16, 1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, x):  # (B, C, T)
+        d = self.max_shift * torch.tanh(self.net(x)).squeeze(-1)
+        T = x.shape[-1]
+        pos = (torch.arange(T, device=x.device, dtype=x.dtype) - d[:, None]).clamp(0, T - 1)
+        i0 = pos.floor().long().clamp(max=T - 2)
+        w = (pos - i0).unsqueeze(1)
+        idx = i0.unsqueeze(1).expand(-1, x.shape[1], -1)
+        return x.gather(-1, idx) * (1 - w) + x.gather(-1, idx + 1) * w
+
+
+def swap_batchnorm(module, kind):
+    """Replace every BatchNorm (plain or per-dataset) by a per-trial GroupNorm: kind 'group' = GroupNorm(1, C), i.e. a
+    LayerNorm over all of a trial's features with per-channel affine; 'instance' = GroupNorm(C, C), each channel
+    normalised over its own (electrode, time) map. No batch or dataset statistics remain."""
+    for name, child in module.named_children():
+        if isinstance(child, (DomainBatchNorm2d, nn.BatchNorm1d, nn.BatchNorm2d)):
+            c = child.primary.num_features if isinstance(child, DomainBatchNorm2d) else child.num_features
+            setattr(module, name, nn.GroupNorm(1 if kind == 'group' else c, c))
+        else:
+            swap_batchnorm(child, kind)
+
+
 def _make_activation(name):
     if name == "elu":
         return nn.ELU()
@@ -140,6 +197,36 @@ def _make_activation(name):
     raise ValueError(f"Unsupported TSConv activation: {name}")
 
 
+# score_track1.py / the sealed metric pass this ID for subjects the model has never seen (score_track1.py:161)
+UNKNOWN_SUBJECT_ID = 10 ** 6
+
+
+def _auxiliary_mask(subject_ids, boundary):
+    # unseen subjects are scored like the primary dataset (Alljoined), never routed to the auxiliary one
+    return (subject_ids >= boundary) & (subject_ids < UNKNOWN_SUBJECT_ID)
+
+
+class DomainConv2d(nn.Module):
+    """DomainBatchNorm2d's routing around two independent convolutions: one filter bank per EEG dataset
+    (e.g. a spatial layer per headset/montage), everything around it shared. IDs below ``boundary`` and
+    omitted IDs take the primary bank."""
+
+    def __init__(self, boundary, *conv_args, **conv_kwargs):
+        super().__init__()
+        self.boundary = int(boundary)
+        self.primary = nn.Conv2d(*conv_args, **conv_kwargs)
+        self.auxiliary = nn.Conv2d(*conv_args, **conv_kwargs)
+
+    def forward(self, features, subject_ids=None):
+        if subject_ids is None:
+            return self.primary(features)
+        aux = _auxiliary_mask(subject_ids, self.boundary)
+        out = self.primary(features)
+        if torch.any(aux):
+            out = torch.where(aux[:, None, None, None], self.auxiliary(features), out)
+        return out
+
+
 class DomainBatchNorm2d(nn.Module):
     """Two-domain BatchNorm with a shared surrounding feature extractor.
 
@@ -148,20 +235,35 @@ class DomainBatchNorm2d(nn.Module):
     deliberately equivalent to the primary path.
     """
 
-    def __init__(self, num_features, boundary):
+    def __init__(self, num_features, boundary, norm=nn.BatchNorm2d):  # norm: e.g. nn.BatchNorm1d for (B, C, T)
         super().__init__()
         if boundary <= 0:
             raise ValueError("DomainBatchNorm2d boundary must be positive")
         self.boundary = int(boundary)
-        self.primary = nn.BatchNorm2d(num_features)
-        self.auxiliary = nn.BatchNorm2d(num_features)
+        self.primary = norm(num_features)
+        self.auxiliary = norm(num_features)
+        # ponytail: a third dataset (THINGS-EEG1, ids >= boundary2) via a class attribute that build_eeg_encoder sets,
+        # instead of threading a second boundary through every encoder constructor
+        self.boundary2 = int(DomainBatchNorm2d.boundary2)
+        if self.boundary2:
+            self.tertiary = norm(num_features)
+
+    boundary2 = 0
 
     def forward(self, features, subject_ids=None):
         if subject_ids is None:
             return self.primary(features)
         if subject_ids.ndim != 1 or subject_ids.shape[0] != features.shape[0]:
             raise ValueError("subject_ids must have one entry per feature row")
-        auxiliary_mask = subject_ids >= self.boundary
+        if self.boundary2:
+            third = _auxiliary_mask(subject_ids, self.boundary2)
+            if torch.any(third):
+                output = torch.empty_like(features)
+                output[third] = self.tertiary(features[third])
+                if not torch.all(third):
+                    output[~third] = self.forward(features[~third], subject_ids[~third])
+                return output
+        auxiliary_mask = _auxiliary_mask(subject_ids, self.boundary)
         if not torch.any(auxiliary_mask):
             return self.primary(features)
         if torch.all(auxiliary_mask):
@@ -225,6 +327,7 @@ class TSConv_parameterizable(nn.Module):
         batch_norm=True,
         conv_bias=True,
         domain_batch_norm_boundary=0,
+        domain_spatial_boundary=0,
         subject_batch_norm_max_id=0,
         subject_adapter_rank=0,
         subject_adapter_max_id=32,
@@ -236,6 +339,7 @@ class TSConv_parameterizable(nn.Module):
         mutual_reconstruction_hidden=0,
         cohort_reconstruction_hidden=0,
         power_branch=False,
+        head_ln=True,
     ):
         super().__init__()
 
@@ -275,7 +379,9 @@ class TSConv_parameterizable(nn.Module):
                 )
             )
         layers.append(_make_activation(activation))
-        layers.append(nn.Conv2d(temporal_filters, spatial_filters, (channels_num, 1), (1, 1), bias=conv_bias))
+        spatial_args = (temporal_filters, spatial_filters, (channels_num, 1), (1, 1))
+        layers.append(DomainConv2d(domain_spatial_boundary, *spatial_args, bias=conv_bias) if domain_spatial_boundary > 0
+                      else nn.Conv2d(*spatial_args, bias=conv_bias))
         if batch_norm:
             layers.append(
                 SubjectBatchNorm2d(spatial_filters, self.subject_batch_norm_max_id)
@@ -379,7 +485,7 @@ class TSConv_parameterizable(nn.Module):
                 nn.Linear(trunk_dim, trunk_dim),
                 nn.Dropout(head_dropout),
             )),
-            nn.LayerNorm(trunk_dim),
+            nn.LayerNorm(trunk_dim) if head_ln else nn.Identity(),  # head_ln=False frees the output norm (= temperature/confidence)
             nn.Identity() if trunk_dim == feature_dim else nn.Linear(trunk_dim, feature_dim),
         )
 
@@ -390,7 +496,7 @@ class TSConv_parameterizable(nn.Module):
     @staticmethod
     def _apply_layers(layers, features, subject_ids):
         for layer in layers:
-            if isinstance(layer, (DomainBatchNorm2d, SubjectBatchNorm2d)):
+            if isinstance(layer, (DomainBatchNorm2d, DomainConv2d, SubjectBatchNorm2d)):
                 features = layer(features, subject_ids)
             else:
                 features = layer(features)
@@ -431,6 +537,10 @@ class TSConv_parameterizable(nn.Module):
                     # The held person's ID has no learned meaning.  Inference uses
                     # the population path trained under padding ID zero.
                     adapter_ids = torch.zeros_like(adapter_ids)
+                elif getattr(self, 'subject_adapter_dropout', 0) > 0:
+                    # Subject dropout (SAMGA): train the population path ID 0 that inference uses.
+                    drop = torch.rand(adapter_ids.shape, device=adapter_ids.device) < self.subject_adapter_dropout
+                    adapter_ids = torch.where(drop, torch.zeros_like(adapter_ids), adapter_ids)
                 if torch.any(adapter_ids.abs() > self.subject_adapter_max_id):
                     raise ValueError(
                         f"absolute subject adapter IDs must not exceed {self.subject_adapter_max_id}"

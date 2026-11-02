@@ -1,0 +1,1 @@
+bash CVPR_paper/scripts/screen3_eval.sh atm128_vc_f138 3300 > logs/cvpr/final/screen3_atm128_vc_f138.log 2>&1

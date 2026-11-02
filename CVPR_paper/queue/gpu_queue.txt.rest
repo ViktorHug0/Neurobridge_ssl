@@ -1,0 +1,10 @@
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 1 > logs/cvpr/samga_samga_3300_1.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 2 > logs/cvpr/samga_samga_3300_2.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 3 > logs/cvpr/samga_samga_3300_3.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 4 > logs/cvpr/samga_samga_3300_4.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 5 > logs/cvpr/samga_samga_3300_5.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 6 > logs/cvpr/samga_samga_3300_6.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 7 > logs/cvpr/samga_samga_3300_7.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 8 > logs/cvpr/samga_samga_3300_8.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 9 > logs/cvpr/samga_samga_3300_9.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh samga 3300 10 > logs/cvpr/samga_samga_3300_10.log 2>&1

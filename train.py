@@ -46,7 +46,7 @@ from module.inductive_covariance import (
     estimate_source_covariances,
 )
 from module.projector import *
-from module.sampler import GroupedImageBatchSampler
+from module.sampler import GroupedImageBatchSampler, NeighbourBatchSampler, RepeatGroupBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
 from module.eeg_augmentation import RandomTimeShift, RandomGaussianNoise, RandomChannelDropout, RandomSmooth
 from module.subject_augmentation import (
@@ -275,6 +275,24 @@ def _smooth_lambda_over_time(lam, n_time):
 
 
 def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
+    model = _build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num)
+    if getattr(args, 'norm_type', 'batch') != 'batch':
+        from module.eeg_encoder.model import swap_batchnorm
+        swap_batchnorm(model, args.norm_type)
+    if getattr(args, 'subject_adapter_dropout', 0) > 0:  # read by TSConv's subject adapter at training time only
+        model.subject_adapter_dropout = args.subject_adapter_dropout
+    if getattr(args, 'extra_input_adapter', False):  # submodule: trains, EMAs, reloads; unused at test (unseen ids)
+        from module.eeg_encoder.model import ExtraInputAdapter
+        model.extra_input_adapter = ExtraInputAdapter(channels_num)
+    if getattr(args, 'latency_align', 0) > 0:  # a submodule, so it trains, EMAs and reloads with the encoder
+        from module.eeg_encoder.model import LatencyAligner
+        model.latency_aligner = LatencyAligner(channels_num, args.latency_align)
+    return model
+
+
+def _build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
+    from module.eeg_encoder.model import DomainBatchNorm2d
+    DomainBatchNorm2d.boundary2 = getattr(args, 'tsconv_domain_bn_boundary2', 0)
     if args.eeg_encoder_type == 'ATM':
         return ATMS(
             feature_dim=feature_dim,
@@ -292,6 +310,9 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             spatial_filters=getattr(args, 'atm_spatial_filters', 40),
             projection_filters=getattr(args, 'atm_projection_filters', 40),
             conv_dropout=getattr(args, 'atm_conv_dropout', 0.5),
+            subject_token=not getattr(args, 'atm_no_subject_token', False),
+            backbone_dim=getattr(args, 'atm_backbone_dim', 0),
+            domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
         )
     if args.eeg_encoder_type == 'EEGNet':
         return EEGNet(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
@@ -305,6 +326,7 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             feature_dim=feature_dim,
             eeg_sample_points=eeg_sample_points,
             channels_num=channels_num,
+            backbone_dim=args.tsconv_backbone_dim,
             temporal_filters=args.tsconv_temporal_filters,
             temporal_kernel=args.tsconv_temporal_kernel,
             pool_kernel=args.tsconv_pool_kernel,
@@ -314,9 +336,12 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             activation=args.tsconv_activation,
             dropout=args.tsconv_dropout,
             head_dropout=head_dropout,
+            power_branch=getattr(args, 'tsconv_power_branch', False),
+            head_ln=not getattr(args, 'tsconv_head_no_ln', False),
             batch_norm=not args.tsconv_no_batch_norm,
             conv_bias=not args.tsconv_no_conv_bias,
             domain_batch_norm_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+            domain_spatial_boundary=getattr(args, 'tsconv_domain_spatial_boundary', 0),
             subject_batch_norm_max_id=getattr(args, 'tsconv_subject_bn_max_id', 0),
             subject_adapter_rank=getattr(args, 'subject_adapter_rank', 0),
             subject_adapter_max_id=getattr(args, 'subject_adapter_max_id', 32),
@@ -352,17 +377,74 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             feature_dim,
             channels_num,
             pretrained=not getattr(args, 'fm_no_pretrained', False),
+            ch_names=getattr(args, 'selected_channels', None) or None,  # a channel subset names its electrodes
             resample=getattr(args, 'fm_resample', 'resample'),
+            input_normalization=getattr(args, 'reve_input_normalization', 'trial_zscore'),
+            head=getattr(args, 'fm_head', 'mean'),
+            head_dropout=getattr(args, 'fm_head_dropout', 0.0),
+            drop_path=getattr(args, 'fm_drop_path', 0.0),
+            arch_kwargs=json.loads(getattr(args, 'fm_arch_kwargs', None) or '{}'),
         )
     from ensemble_experiments.architectures.ortho_encoders import (
         build_architecture_encoder,
         is_architecture_encoder,
     )
     if is_architecture_encoder(args.eeg_encoder_type):
+        extra = {}
+        if args.eeg_encoder_type.removeprefix('Ortho') == 'FastTSConvSqueezeformer':
+            # Reuse the TSConv geometry flags; their defaults equal the 250 Hz design.
+            extra = dict(
+                pool_kernel=getattr(args, 'tsconv_pool_kernel', 51),
+                pool_stride=getattr(args, 'tsconv_pool_stride', 5),
+                backbone_dim=getattr(args, 'tsconv_backbone_dim', 0),
+                d_model=getattr(args, 'sqf_d_model', 160),
+                depth=getattr(args, 'sqf_depth', 3),
+                power_branch=getattr(args, 'tsconv_power_branch', False),
+                domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+            )
+        if args.eeg_encoder_type == 'BridgeTransformer':  # REVE's position bank resolves electrodes by name
+            extra['ch_names'] = getattr(args, 'selected_channels', None) or None
+        extra.update(json.loads(getattr(args, 'arch_kwargs', None) or '{}'))
         return build_architecture_encoder(
-            args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num
+            args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num, **extra
         )
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
+
+
+def attach_lora(linear, rank):
+    """SUBJECT_LOG D5: low-rank fine-tuning of one nn.Linear in place: forward uses W + B A (A random, B zero, so the
+    model starts unchanged); state_dict() stores the merged weight under the usual key and drops the adapters, so
+    checkpoints load into the plain architecture (score_track1, grader)."""
+    linear.lora_A = nn.Parameter(torch.randn(rank, linear.in_features, device=linear.weight.device) / math.sqrt(linear.in_features))
+    linear.lora_B = nn.Parameter(torch.zeros(linear.out_features, rank, device=linear.weight.device))
+    linear.forward = lambda x: F.linear(x, linear.weight + linear.lora_B @ linear.lora_A, linear.bias)
+
+    def merged(module, destination, prefix, local_metadata):
+        destination[prefix + 'weight'] = (module.weight + module.lora_B @ module.lora_A).detach()
+        destination.pop(prefix + 'lora_A', None); destination.pop(prefix + 'lora_B', None)
+    linear._register_state_dict_hook(merged)
+
+
+def spatial_mix_bank(ch_names, max_deg, n=256, seed=0):
+    """Lever L1: (n, C, C) re-interpolation matrices for random montage rotations up to max_deg. Electrode i of a
+    displaced cap sits at R p_i and records the (spatially smooth) field there, interpolated from the recorded
+    electrodes with a Gaussian kernel on the sphere (sigma = 1/3 of the median nearest-neighbour angle, so the
+    unrotated matrix is ~identity)."""
+    import mne
+    pos = mne.channels.make_standard_montage('standard_1020').get_positions()['ch_pos']
+    p = np.array([pos[c] for c in ch_names], dtype=np.float64)
+    p /= np.linalg.norm(p, axis=1, keepdims=True)
+    ang = lambda a, b: np.arccos(np.clip(a @ b.T, -1.0, 1.0))  # noqa: E731
+    sigma = np.median(np.sort(ang(p, p), axis=1)[:, 1]) / 3
+    rng, bank = np.random.default_rng(seed), []
+    for _ in range(n):
+        axis = rng.normal(size=3); axis /= np.linalg.norm(axis)
+        theta = np.deg2rad(rng.uniform(-max_deg, max_deg))
+        k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        rot = np.eye(3) + np.sin(theta) * k + (1 - np.cos(theta)) * k @ k  # Rodrigues
+        w = np.exp(-ang(p @ rot.T, p) ** 2 / (2 * sigma ** 2))
+        bank.append(w / w.sum(axis=1, keepdims=True))
+    return np.stack(bank).astype(np.float32)
 
 
 def build_projector(projector_type, input_dim, output_dim, activation='none', topk=0):
@@ -371,6 +453,19 @@ def build_projector(projector_type, input_dim, output_dim, activation='none', to
         raise ValueError(f"Unsupported projector activation: {activation}")
     if activation == 'topk' and topk <= 0:
         raise ValueError('--projector_topk must be > 0 when --projector_activation topk')
+    if projector_type in ('subspace', 'subspace_c'):  # lever L3: EEG side k -> output; image/text side: identity
+        if input_dim == output_dim:
+            return ProjectorDirect(activation=activation, topk=topk)
+        return SubspaceProjector(input_dim, output_dim, centered=projector_type == 'subspace_c')
+    if projector_type == 'bottleneck_do':  # bottleneck with dropout on the code (VIB-like noise), lift as below
+        if input_dim == output_dim:
+            return ProjectorDirect(activation=activation, topk=topk)
+        return nn.Sequential(nn.Dropout(0.3), nn.Linear(input_dim, output_dim))
+    if projector_type == 'bottleneck':  # EEG side: encoder emits a low-rank code (--eeg_backbone_dim r), lifted
+        # linearly to the target space; image/text side: identity, so outputs stay in the grader's DINOv2 space
+        if input_dim == output_dim:
+            return ProjectorDirect(activation=activation, topk=topk)
+        return nn.Linear(input_dim, output_dim)
     if projector_type == 'direct':
         if input_dim != output_dim:
             raise ValueError(
@@ -449,10 +544,50 @@ def compute_alignment_sparsity_stats(features):
     return _finalize_alignment_sparsity_accumulator(acc)
 
 
+def _things_coral_maps(args, device, n_trials=2000):
+    """--things_coral: per THINGS-EEG2 subject (IDs 21-30 in the Alljoined dir) the map R_aj^1/2 R_s^-1/2 that
+    recolours its trials to the mean spatial covariance R_aj of the Alljoined TRAINING subjects (CORAL on raw EEG).
+    Index = subject id; every other id (Alljoined, test 10**6 clamped to 31) gets the identity, so the test path
+    is untouched. Deterministic (seeded sample of training-image trials), so evaluation rebuilds the same maps."""
+    def cov(s):
+        x = np.load(f'{args.eeg_data_dir}/sub-{s:02d}/train.npy', mmap_mode='r').reshape(-1, 32, 120)
+        idx = np.sort(np.random.default_rng(s).choice(len(x), 4 * n_trials, replace=False))
+        x = np.asarray(x[idx], np.float64); x = x[np.abs(x).sum((1, 2)) > 0][:n_trials]  # skip unseen-image padding
+        x = x - x.mean(-1, keepdims=True)
+        R = np.einsum('nct,ndt->cd', x, x) / (len(x) * x.shape[-1])
+        return R + 1e-3 * np.trace(R) / 32 * np.eye(32)
+    def power(R, p):
+        w, V = np.linalg.eigh(R); return (V * w ** p) @ V.T
+    R_aj = np.mean([cov(s) for s in args.train_subject_ids if s <= 20], 0)
+    A = np.tile(np.eye(32), (32, 1, 1))
+    for s in args.train_subject_ids:
+        if 21 <= s <= 30:
+            A[s] = power(R_aj, .5) @ power(cov(s), -.5)
+    return torch.tensor(A, dtype=torch.float32, device=device)
+
+
 def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
+    if getattr(model, 'extra_input_adapter', None) is not None:
+        from module.eeg_encoder.model import UNKNOWN_SUBJECT_ID
+        rows = (subject_id_batch > args.extra_subject_offset) & (subject_id_batch < UNKNOWN_SUBJECT_ID)
+        if rows.any():
+            eeg_batch = eeg_batch.clone()
+            eeg_batch[rows] = model.extra_input_adapter(eeg_batch[rows])
+    if getattr(model, 'latency_aligner', None) is not None:
+        eeg_batch = model.latency_aligner(eeg_batch)
     covariance_aligner = getattr(args, '_inductive_covariance_aligner', None)
     if covariance_aligner is not None:
         eeg_batch = covariance_aligner(eeg_batch, subject_id_batch)
+    if getattr(args, 'things_coral', False):
+        if getattr(args, '_things_coral', None) is None or args._things_coral.device != eeg_batch.device:
+            args._things_coral = _things_coral_maps(args, eeg_batch.device)
+        A = args._things_coral[subject_id_batch.clamp(max=31)]
+        eeg_batch = torch.einsum('bij,bjt->bit', A.to(eeg_batch.dtype), eeg_batch)
+    if getattr(args, 'input_lowpass_hz', 0):  # AUG_LOG: keep only the band that carries cross-subject image information
+        f = torch.fft.rfftfreq(eeg_batch.shape[-1], 1 / 120, device=eeg_batch.device)  # cv4 data are 120 Hz
+        eeg_batch = torch.fft.irfft(torch.fft.rfft(eeg_batch.float(), dim=-1) * (f < args.input_lowpass_hz), n=eeg_batch.shape[-1], dim=-1).to(eeg_batch.dtype)
+    if getattr(args, 'eeg_car', False):  # common average reference, per trial and time point (stateless)
+        eeg_batch = eeg_batch - eeg_batch.mean(dim=-2, keepdim=True)
     if getattr(args, 'eeg_instance_norm', False):
         # Per-trial, per-channel standardization. Uses only the trial itself, so it applies
         # identically at train and test time (no test-set statistics -> still pure zero-shot).
@@ -481,6 +616,7 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermedia
         model_kwargs = {}
         if (
             getattr(args, 'tsconv_domain_bn_boundary', 0) > 0
+            or getattr(args, 'tsconv_domain_spatial_boundary', 0) > 0
             or getattr(args, 'tsconv_subject_bn_max_id', 0) > 0
             or getattr(args, 'subject_adapter_rank', 0) > 0
         ):
@@ -495,6 +631,8 @@ def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermedia
         if return_intermediate:
             raise ValueError('TSConv30 does not expose intermediate features.')
         return model(eeg_batch)
+    if getattr(args, 'tsconv_domain_bn_boundary', 0) > 0:  # registry Squeezeformer with per-dataset BatchNorm
+        return model(eeg_batch, subject_ids=subject_id_batch)
     return model(eeg_batch)
 
 
@@ -857,7 +995,19 @@ def select_hard_counterfactual_views(eeg_features, image_features, num_views):
     )
 
 
-def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, extrapolate=0.0, eps=1e-8):
+def hyperalign_transfer(eeg_batch, subject_ids, rotations, allowed, prob):
+    """AUG_LOG: re-render each trial (probability prob) through the Procrustes rotation from its subject to a random
+    other training subject of the same dataset (neurips_challenge/hyperalign_maps.py: fitted on repeat-averaged
+    responses to the shared training images, so it follows the image-locked signal, not the background covariance)."""
+    w = allowed[subject_ids].float()
+    has = w.sum(1) > 0
+    partner = torch.multinomial(w + (~has).float()[:, None], 1).squeeze(1)  # rows without a partner draw anything, then stay
+    use = has & (torch.rand(len(eeg_batch), device=eeg_batch.device) < prob)
+    M = torch.where(use[:, None, None], rotations[subject_ids, partner], torch.eye(rotations.shape[-1], device=eeg_batch.device))
+    return torch.einsum('bcd,bdt->bct', M, eeg_batch.float()).to(eeg_batch.dtype)
+
+
+def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, extrapolate=0.0, eps=1e-8, boundary=0, partners=None, rotate=False):
     """do(subject := t): re-render a trial through another subject's channel-mixing operator.
 
     Model the sensor signal as x_s = A_s . (sources), so the subject-specific nuisance is the
@@ -898,8 +1048,9 @@ def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, extrapo
         inv_sqrt_ops[s] = (evecs * evals.rsqrt()) @ evecs.T
 
     out = eeg_batch.clone()
-    partners = uniq[torch.randint(uniq.numel(), (uniq.numel(),), device=uniq.device)]
-    for s, j in zip(uniq.tolist(), partners.tolist()):
+    if partners is None:
+        partners = draw_op_partners(subject_ids, boundary)
+    for s, j in zip(uniq.tolist(), partners):
         if s == j:
             continue
         mask = subject_ids == s
@@ -909,10 +1060,33 @@ def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, extrapo
             u = random.uniform(0.0, extrapolate)
             powered = (evecs * evals.pow(u / 2.0)) @ evecs.T
             transfer = sqrt_ops[s] @ powered @ inv_sqrt_ops[s]
+        elif rotate:  # control: partner's spectrum, random spatial orientation
+            q, _ = torch.linalg.qr(torch.randn(channels, channels, device=eye.device, dtype=eye.dtype))
+            transfer = q @ sqrt_ops[j] @ q.T @ inv_sqrt_ops[s]
         else:
             transfer = sqrt_ops[j] @ inv_sqrt_ops[s]
-        out[mask] = torch.einsum('cd,...dt->...ct', transfer.to(eeg_batch.dtype), eeg_batch[mask])
+        out[mask] = torch.einsum('cd,...dt->...ct', transfer.to(eeg_batch.dtype), eeg_batch[mask]).to(out.dtype)  # autocast einsum returns bf16
     return out
+
+
+def draw_op_partners(subject_ids, boundary=0):
+    """One random partner per subject in the batch (same headset only when boundary > 0: THINGS-EEG2 ids >= boundary)."""
+    uniq = torch.unique(subject_ids).tolist()
+    if boundary:
+        return [random.choice([j for j in uniq if (j >= boundary) == (s >= boundary)]) for s in uniq]
+    return [random.choice(uniq) for _ in uniq]
+
+
+def banded_operator_transfer(eeg_batch, subject_ids, edges, fs=120.0, boundary=0, **kw):
+    """Operator transfer applied separately in each frequency band [edges[i], edges[i+1]) Hz, same partners in every band."""
+    spec = torch.fft.rfft(eeg_batch.float(), dim=-1)
+    freqs = torch.fft.rfftfreq(eeg_batch.shape[-1], 1.0 / fs).to(eeg_batch.device)
+    partners = draw_op_partners(subject_ids, boundary)
+    out = 0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        band = torch.fft.irfft(spec * ((freqs >= lo) & (freqs < hi)), n=eeg_batch.shape[-1], dim=-1)
+        out = out + cross_subject_operator_transfer(band, subject_ids, partners=partners, **kw)
+    return out.to(eeg_batch.dtype)
 
 
 class _GroupedSubset(Subset):
@@ -976,7 +1150,52 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=1024, type=int, help='batch size')
     parser.add_argument('--learning_rate', default=1e-4, type=float)
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='AdamW weight decay (AVDE full-FT uses 0.05)')
-    parser.add_argument('--lr_scheduler', default='none', choices=['none', 'cosine'], help='optional warmup+cosine LR schedule (per epoch); AVDE full-FT uses cosine')
+    parser.add_argument('--lr_scheduler', default='none', choices=['none', 'cosine', 'onecycle', 'wsd', 'plateau'], help='optional warmup+cosine LR schedule (per epoch); AVDE full-FT uses cosine. onecycle steps PER OPTIMIZER STEP, matching the NeuralBench Track-1 recipe; wsd = warmup-stable-decay, also per step')
+    parser.add_argument('--plateau_patience', default=5, type=int, help='--lr_scheduler plateau (REVE authors): halve the lr once the per-epoch sealed top-5 has not improved for more than this many epochs; --warmup_epochs adds their per-step exponential warmup')
+    parser.add_argument('--optimizer', default='adamw', choices=['adamw', 'stableadamw'], help='stableadamw = the REVE authors\' optimizer and settings (betas 0.92/0.999, eps 1e-9)')
+    parser.add_argument('--batch_transform_mixed', type=int, default=0, help='with --batch_transform: apply it to random chunks of this many rows of the (multi-subject) batch, with k=2 directions, as the sealed grader serves shuffled mixed batches (0 = per subject group)')
+    parser.add_argument('--batch_transform_ab', type=float, nargs=2, default=[0.5, 0.5], help='(a, b) strengths of the training-time --batch_transform (mean, top direction)')
+    parser.add_argument('--batch_transform', action='store_true', help='train and evaluate under the grader-side batch transform (score_track1.batch_transform): per subject group in a training batch, subtract half its mean and halve its top principal direction; evaluation uses random-order 64-trial batches')
+    parser.add_argument('--input_mixup', action='store_true', help='REVE authors\' mixup: mix each EEG input with a shuffled one (lam ~ U(0,1)) and mix the two contrastive losses')
+    parser.add_argument('--wsd_decay_start', default=0.5, type=float, help='wsd: fraction of training after which the lr decays linearly to 0 (warmup fraction is --onecycle_pct_start)')
+    parser.add_argument('--fm_layer_decay', default=1.0, type=float, help='foundation-model layer-wise lr decay: transformer block i of L gets lr * decay**(L - i), embeddings decay**(L + 1); the head keeps lr (1 = off)')
+    parser.add_argument('--onecycle_pct_start', default=0.1, type=float, help='OneCycleLR warmup fraction (NeuralBench Track-1 uses 0.1)')
+    parser.add_argument('--ema_decay', default=0.0, type=float, help='keep an EMA of the EEG encoder weights and evaluate/checkpoint it (0 disables; 0.999 ~ a 1000-step horizon)')
+    parser.add_argument('--ema_warmup', action='store_true', help='ramp the EMA decay as min(ema_decay, (1+n)/(10+n)) so early epochs do not lag')
+    parser.add_argument('--codabench_eval_every', default=0, type=int, help='every N epochs, estimate the Codabench per-epoch metric on the official input (0 disables)')
+    parser.add_argument('--codabench_eval_fraction', default=0.1, type=float, help='fraction of test trials per subject used by --codabench_eval_every')
+    parser.add_argument('--sealed_test_metric', action='store_true', help="report the per-epoch test top-1/top-5 under the NeurIPS-2026 Track-1 sealed rule (single-epoch predictions averaged within (subject, image) before retrieval; score_track1.py's subject_agg) instead of on repetition-averaged EEG, which moves to the avg_eeg_* columns")
+    parser.add_argument('--sealed_test_fraction', default=0.125, type=float, help='fraction of test trials per subject scored by --sealed_test_metric (seeded: the same trials every epoch); 0.125 = ~10 of 80 repetitions per image')
+    parser.add_argument('--sealed_test_every', default=2, type=int, help='score the sealed rule every N epochs (plus the last epoch and every new best); other epochs log NaN test top-1/top-5')
+    parser.add_argument('--grad_clip', default=0.0, type=float, help='clip gradient norm to this value (0 disables); NeuralBench Track-1 uses 1.0')
+    parser.add_argument('--rep_avg_prob', default=0.0, type=float, help='probability of replacing a training trial by the mean of 2..R random valid repeats of the same subject and image (higher-SNR view, same target)')
+    parser.add_argument('--xsubj_mix_prob', default=0.0, type=float, help='Track-1 SubjectMix: probability of mixing a training trial with a trial of the same image from another subject (dataset-side)')
+    parser.add_argument('--xsubj_mix_alpha', default=1.0, type=float, help='Beta(alpha, alpha) for --xsubj_mix_prob')
+    parser.add_argument('--input_lowpass_hz', default=0.0, type=float, help='zero every input frequency at or above this (FFT along time, 120 Hz data), train and test; 0 = off')
+    parser.add_argument('--sam_rho', default=0.0, type=float, help='sharpness-aware minimisation radius; the ascent direction is the previous step\'s gradient (no extra forward pass); 0 = off')
+    parser.add_argument('--swa_from_epoch', default=0, type=int, help='from this epoch on, replace the EMA by a uniform average of the weights after every step (SWA/SWAD); 0 = off')
+    parser.add_argument('--hyperalign_prob', default=0.0, type=float, help='per-trial probability of re-rendering a training trial through the Procrustes rotation to another training subject (--hyperalign_maps)')
+    parser.add_argument('--hyperalign_maps', default='/nasbrain/p20fores/alljoined/Preprocessed_data_120Hz_neuralbench/hyperalign_R.npy', type=str, help='(31, 31, C, C) rotations from neurips_challenge/hyperalign_maps.py')
+    parser.add_argument('--band_swap_prob', default=0.0, type=float, help='probability of replacing a training trial\'s 8-30 Hz content by that of a random trial of another same-dataset subject (identity-band swap)')
+    parser.add_argument('--noise_swap_prob', default=0.0, type=float, help='probability of replacing a training trial by its subject\'s evoked mean for the image + another same-dataset subject\'s single-trial residual (noise transplant)')
+    parser.add_argument('--distill_targets', default='', type=str, help='per-trial teacher predictions (export_teacher.py .npy, row = train index)')
+    parser.add_argument('--distill_lambda', default=0.0, type=float, help='weight of KL(teacher || student) over the batch images')
+    parser.add_argument('--distill_tau', default=0.05, type=float)
+    parser.add_argument('--anticorr_lambda', default=0.0, type=float, help='negative-correlation weight: penalise student mass on the in-batch images the --distill_targets members wrongly favour (no imitation)')
+    parser.add_argument('--amp_scale_std', default=0.0, type=float, help='training aug: per-channel gain ~ 1 + N(0, std)')
+    parser.add_argument('--spatial_jitter_deg', default=0.0, type=float, help='training aug (lever L1): re-interpolate every electrode from its neighbours after a random rotation of the montage by up to this many degrees (simulated cap displacement; 0 = off)')
+    parser.add_argument('--spatial_jitter_prob', default=0.5, type=float, help='probability per training trial of --spatial_jitter_deg')
+    parser.add_argument('--repeat_group_batches', action='store_true', help='batches of whole (subject, image) groups with all their repeats (lever L2; un-averaged deterministic data); pair with --multi_positive_loss')
+    parser.add_argument('--repeat_mean_loss', default=0.0, type=float, help='lever L2: weight of a contrastive loss on the mean prediction of each (subject, image) group in the batch -- the sealed metric averages repeats; needs --repeat_group_batches')
+    parser.add_argument('--neighbor_loss', default=0.0, type=float, help='lever L4: weight of auxiliary heads predicting the targets of the RSVP neighbours (sub-XX/train_neighbors.npy, build_alljoined_neighbors.py); training only')
+    parser.add_argument('--amp_gain_range', default=0.0, type=float, help='training aug: one global gain per trial, log-uniform in [1/r, r] (0/1 = off); new-subject recording-scale robustness')
+    parser.add_argument('--time_mask_len', default=0, type=int, help='training aug: zero one random window of up to this many samples')
+    parser.add_argument('--init_encoder', default='', type=str, help='state dict or checkpoint_*.pth to initialise the EEG encoder from (strict=False, matching shapes only)')
+    parser.add_argument('--sealed_early_stop_patience', default=0, type=int, help='with --sealed_test_metric: end training once the per-epoch sealed-rule test top-5 has not improved for this many evaluations (0 = off); the epoch reached is kept')
+    parser.add_argument('--stop_after_epoch', default=0, type=int, help='end training after this epoch while the lr schedule still spans --num_epochs (0 = off); with --select_best_on fixed this epoch is kept')
+    parser.add_argument('--soft_mix_beta', default=0.0, type=float, help='with --soft_target_tau: target = (1-beta) one-hot + beta soft (NeuroCLIP, beta .3)')
+    parser.add_argument('--soft_target_tau', default=0.0, type=float, help='> 0: soft EEG->image contrastive targets softmax(image-image cosine / tau); 0 = one-hot')
+    parser.add_argument('--asymmetric_loss', action='store_true', help='contrastive loss in the EEG->image direction only, as NeuralBench ClipLoss(symmetric=False) does; default averages both directions')
     parser.add_argument('--warmup_epochs', default=0, type=int, help='linear LR warmup epochs when --lr_scheduler cosine')
     parser.add_argument('--min_lr', default=1e-6, type=float, help='cosine floor LR')
     parser.add_argument(
@@ -984,6 +1203,34 @@ if __name__ == '__main__':
         help='how --eeg_encoder_type LaBraM/CBraMod reduces a 250-sample epoch to the 200 samples '
              'the foundation model consumes: resample the same one-second window to 200 Hz '
              '(default), or crop the first 200 samples',
+    )
+    parser.add_argument(
+        '--reve_input_normalization', default='trial_zscore', choices=['trial_zscore', 'none'],
+        help="per-trial z-score + clip 15 inside the REVE wrapper, or 'none' to feed the cached "
+             "tensors unchanged; the 0.29 reference checkpoint used 'none'",
+    )
+    parser.add_argument(
+        '--fm_unfreeze_last_k', default=0, type=int,
+        help='train only the last K foundation-model layers plus the head (0 = full fine-tune); '
+             'REVE has 22 layers of 3.14M params each',
+    )
+    parser.add_argument(
+        '--fm_head', default='mean', choices=['mean', 'mlp', 'attnstat', 'flatten', 'multilayer'],
+        help="foundation-model head: token mean -> Linear, or (REVE only) REVE's own query-pool + "
+             "flatten-all-tokens -> RMSNorm -> dropout -> Linear",
+    )
+    parser.add_argument('--fm_arch_kwargs', default='', type=str, help='JSON constructor overrides for a --fm_no_pretrained LaBraM/REVE (num_layers, embed_dim, patch_size, ...)')
+    parser.add_argument('--fm_drop_path', default=0.0, type=float, help='stochastic depth: LaBraM (its fine-tuning recipe uses 0.1) and REVE (every attention/feed-forward branch, linear in depth)')
+    parser.add_argument('--fm_head_dropout', default=0.0, type=float, help='dropout before the --fm_head flatten Linear')
+    parser.add_argument(
+        '--fm_backbone_lr_scale', default=1.0, type=float,
+        help='foundation-model backbone lr = learning_rate * scale; the head and everything else '
+             'keep learning_rate (EEG-FM-Bench: 0.1-0.5)',
+    )
+    parser.add_argument(
+        '--fm_head_warmup_epochs', default=0, type=int,
+        help='keep the foundation-model backbone frozen for the first N epochs so the head is not '
+             'random when the backbone starts moving (REVE two-stage fine-tuning)',
     )
     parser.add_argument(
         '--fm_no_pretrained', action='store_true',
@@ -1028,6 +1275,7 @@ if __name__ == '__main__':
         help='export per-sample pre-normalization EEG alignment norms (training split, best checkpoint)',
     )
     parser.add_argument('--multi_positive_loss', action='store_true', help='enable multi-positive EEG-image contrastive loss')
+    parser.add_argument('--neighbour_batch_prob', default=0.0, type=float, help='probability per batch of drawing it from one k-means cluster of the image targets (fine-grained negatives)')
     parser.add_argument('--grouped_batch_sampler', action='store_true', help='sample multiple subjects per exact image in each batch')
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
     parser.add_argument('--subject_mixup_within', action='store_true', help='rebuttal arm: Beta-mix 2 of a subject''s OWN reps for the same stimulus (within-subject; isolates the cross-subject factor). Needs un-averaged reps (no --data_average).')
@@ -1083,16 +1331,38 @@ if __name__ == '__main__':
     parser.add_argument('--mmd_lambda', default=0.0, type=float, help='weight of the multi-kernel MMD cross-modal distribution term (SAMGA coarse stage)')
     parser.add_argument('--coarse_epochs', default=0, type=int, help='epochs of the coarse stage; afterwards the shared encoder is frozen and MMD is dropped (0 = never switch)')
     parser.add_argument('--eeg_instance_norm', action='store_true', help='per-trial per-channel standardization of raw EEG before the encoder (train and test alike)')
+    parser.add_argument('--eeg_car', action='store_true', help='common average reference of raw EEG before the encoder, per trial (train and test alike)')
+    parser.add_argument('--things_coral', action='store_true', help='recolour each THINGS-EEG2 training subject (IDs 21-30) to the Alljoined training subjects\' mean spatial covariance (CORAL); Alljoined/test inputs untouched')
     parser.add_argument('--op_transfer_prob', default=0.0, type=float, help='probability per batch of re-rendering raw EEG through another subject`s channel-mixing operator (counterfactual do(subject:=t))')
     parser.add_argument('--op_transfer_shrink', default=0.05, type=float, help='covariance shrinkage for --op_transfer_prob')
+    parser.add_argument('--boost_gamma', default=0.0, type=float, help='boosting: weight each trial by (1 - ensemble prob of its true image among the batch)^gamma, from --distill_targets (the members\' training predictions); needs --multi_positive_loss')
+    parser.add_argument('--op_transfer_bands', default=[], nargs='+', type=float, help='band edges in Hz (e.g. 0 4 8 13 30 61): transfer each band with its own covariances (120 Hz data)')
+    parser.add_argument('--op_transfer_cross_dataset', action='store_true', help='allow Alljoined <-> THINGS-EEG2 partners (default: same dataset)')
+    parser.add_argument('--op_transfer_rotate', action='store_true', help='control: rotate the partner covariance by a random orthogonal matrix')
     parser.add_argument('--op_transfer_extrapolate', default=0.0, type=float, help='if >0, draw the target operator at u~U(0,this) along the SPD geodesic through a partner subject; u>1 synthesizes subjects outside the training hull')
     parser.add_argument('--brain2brain_lambda', default=0.0, type=float, help='weight for same-stimulus cross-subject EEG<->EEG InfoNCE (stimulus-grounded invariance, no image target)')
+    parser.add_argument('--global_negatives', default=0.0, type=float, help='weight of an extra EEG->image cross-entropy against ALL training-image targets (frozen, so exact)')
+    parser.add_argument('--global_concept_eps', default=0.0, type=float, help='global-negatives target: move eps of the mass to the other images of the same THINGS concept')
+    parser.add_argument('--global_soft_tau', default=0.0, type=float, help='global-negatives target: softmax(image-image cosine / tau) over all training images instead of one-hot')
+    parser.add_argument('--global_symmetric', default=0.0, type=float, help='with global negatives: + weight x image->EEG cross-entropy over the batch queries')
+    parser.add_argument('--mask_concept_neg', action='store_true', help='in-batch InfoNCE without same-concept different-image negatives (false-negative elimination)')
+    parser.add_argument('--loss_trunc', default=0.0, type=float, help='drop this fraction of the highest per-trial InfoNCE losses in each batch (robust to uninformative trials)')
+    parser.add_argument('--siglip', action='store_true', help='in-batch pairwise sigmoid loss (SigLIP) instead of InfoNCE')
+    parser.add_argument('--siglip_bias', default=-10.0, type=float, help='initial SigLIP bias (learned)')
+    parser.add_argument('--global_negatives_replace', action='store_true', help='use the all-training-images cross-entropy INSTEAD of the in-batch contrastive loss')
     parser.add_argument('--relational_lambda', default=0.0, type=float, help='weight for RKD-style relational loss: EEG-EEG similarity structure matches image-image structure')
+    parser.add_argument('--pr_lambda', default=0.0, type=float, help='weight of the collapse guard relu(1/PR - 1/pr_floor) on the batch EEG cloud (CVPR E8.11c)')
+    parser.add_argument('--pr_floor', default=14.0, type=float, help='participation-ratio floor of the collapse guard (ATM-128 test clouds: 14.3)')
+    parser.add_argument('--iso_lambda', default=0.0, type=float, help='weight of the cross-subject isometry loss: mean residual of the best rotation between two source subjects\' embeddings of the batch\'s shared images (CVPR E8.11); logged in REL')
+    parser.add_argument('--rsa_lambda', default=0.0, type=float, help='weight of 1 - RSA (Pearson corr of centred EEG-EEG vs image-image cosines, same-image pairs dropped; CVPR E8.4); logged in REL')
     parser.add_argument('--relational_temperature', default=0.07, type=float, help='temperature for --relational_lambda similarity structures')
     parser.add_argument('--auxiliary_alignment_dims', default='', type=str,
                         help='comma-separated training-only alignment widths sharing one encoder')
     parser.add_argument('--auxiliary_alignment_lambda', default=0.0, type=float,
                         help='weight of training-only multi-resolution contrastive supervision')
+    parser.add_argument('--auxiliary_fixed_targets', action='store_true',
+                        help='AUG_LOG 2026-10-30: auxiliary heads align to the TRUE training-only target embeddings (identity image side; '
+                             '--auxiliary_alignment_dims must equal those target dims) instead of a learned projection of them')
     parser.add_argument('--auxiliary_alignment_epochs', default=0, type=int,
                         help='apply auxiliary alignment heads for first N epochs (0 = all)')
     parser.add_argument('--teacher_alignment_lambda', default=0.0, type=float,
@@ -1128,6 +1398,16 @@ if __name__ == '__main__':
     parser.add_argument('--val_concept_ratio', default=0.0, type=float, help='hold out this fraction of TRAINING CONCEPTS (all their images, all training subjects) as a validation split for checkpoint selection; keeps all training subjects, unlike --val_subject_id')
     parser.add_argument('--val_concept_seed', default=20260822, type=int, help='seed choosing the held-out concepts; constant across folds and arms on purpose so every arm trains on identical data')
     parser.add_argument('--save_testsel_checkpoint', action='store_true', help='additionally save checkpoint_testsel_best.pth (best held-out test loss) alongside the selected checkpoint, as a matched control for val-selected runs')
+    parser.add_argument(
+        '--select_best_metric',
+        type=str,
+        choices=['loss', 'top5'],
+        default='loss',
+        help=(
+            'rank checkpoints by the selection split loss (historical default) or by its '
+            'top-5 accuracy; see neurips_challenge/README.md for why top5 is better here'
+        ),
+    )
     parser.add_argument(
         '--select_best_on',
         type=str,
@@ -1185,13 +1465,33 @@ if __name__ == '__main__':
                         help='initialize the encoder and projectors from a compatible training checkpoint')
     parser.add_argument('--init_checkpoint_scope', choices=['all', 'encoder', 'conv'], default='all',
                         help='load all compatible modules, only the EEG encoder, or only TSConv convolution weights from --init_checkpoint')
+    parser.add_argument('--freeze_bn_stats', action='store_true', help='BatchNorm layers stay in eval mode during training (few-shot oracles)')
+    parser.add_argument('--train_max_trials', default=0, type=int, help='train on a seeded random subset of this many trials (few-shot oracles, SUBJECT_LOG D8)')
+    parser.add_argument('--lora_rank', default=0, type=int, help='rank of LoRA adapters on the --lora_regex Linear layers (SUBJECT_LOG D5)')
+    parser.add_argument('--lora_regex', default='proj_eeg|eproj', type=str, help='"model.<name>" / "eproj<name>" of the Linear layers to adapt')
+    parser.add_argument('--trainable_regex', default='', type=str,
+                        help='train only parameters whose "model.<name>" / "eproj.<name>" matches (fine-tune oracles)')
     parser.add_argument('--freeze_eeg_encoder', action='store_true',
                         help='freeze an initialized EEG encoder in eval mode and train only downstream modules')
     parser.add_argument('--freeze_image_projector', action='store_true',
                         help='keep the image projector fixed after full checkpoint initialization')
+    parser.add_argument('--per_subject_test_log', action='store_true',
+                        help='pooled multi-subject runs: every epoch, log each test subject\'s loss/top1/top5 '
+                             '(its own 200-row batch, unique gallery) to per_subject_test.csv, so the best epoch '
+                             'can be picked per subject as a single-subject run would')
+    parser.add_argument('--eval_unique_gallery', action='store_true',
+                        help='rank val/test queries against each DISTINCT stimulus once instead of '
+                             'one row per presentation; without it repeated presentations put '
+                             'identical vectors in the gallery and cap top-5 at ~5/n_repeats')
+    parser.add_argument('--tsconv_head_no_ln', action='store_true', help='drop the LayerNorm at the end of the TSConv head trunk (lets the output norm vary per trial)')
+    parser.add_argument('--tsconv_backbone_dim', default=0, type=int, help='width of the TSConv residual trunk before a separate trunk->feature_dim layer (0 = trunk at feature_dim, no extra layer); NeuralBench Track1TSConv uses 1024')
     parser.add_argument('--tsconv_temporal_filters', default=40, type=int, help='temporal filter count for TSConv_parameterizable')
     parser.add_argument('--tsconv_temporal_kernel', default=25, type=int, help='temporal kernel width for TSConv_parameterizable')
+    parser.add_argument('--tsconv_power_branch', action='store_true', help='TSConv_parameterizable: add a ShallowConvNet band-power branch (square -> pool -> log) before the trunk')
     parser.add_argument('--tsconv_pool_kernel', default=51, type=int, help='temporal average-pooling kernel for TSConv_parameterizable')
+    parser.add_argument('--sqf_d_model', default=160, type=int, help='FastTSConvSqueezeformer token width (divisible by its 4 heads)')
+    parser.add_argument('--arch_kwargs', default='', type=str, help='JSON dict of constructor kwargs for registry encoders (ortho_encoders.py)')
+    parser.add_argument('--sqf_depth', default=3, type=int, help='FastTSConvSqueezeformer number of blocks')
     parser.add_argument('--tsconv_pool_stride', default=5, type=int, help='temporal average-pooling stride for TSConv_parameterizable')
     parser.add_argument('--tsconv_spatial_filters', default=40, type=int, help='spatial filter count for TSConv_parameterizable')
     parser.add_argument('--tsconv_projection_filters', default=40, type=int, help='1x1 projection filter count for TSConv_parameterizable')
@@ -1199,6 +1499,13 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_dropout', default=0.5, type=float, help='backbone dropout for TSConv_parameterizable')
     parser.add_argument('--tsconv_head_dropout', default=-1.0, type=float, help='projection-head dropout for TSConv_parameterizable; negative reuses --tsconv_dropout')
     parser.add_argument('--tsconv_no_batch_norm', action='store_true', help='disable BatchNorm layers in TSConv_parameterizable')
+    parser.add_argument('--tsconv_domain_spatial_boundary', default=0, type=int, help='separate TSConv spatial (electrode-mixing) conv for subject IDs at or above this one, e.g. the THINGS-EEG2 subjects mapped onto the Alljoined montage (0 disables)')
+    parser.add_argument('--extra_trials_dir', default='', type=str, help='append another stimulus set\'s single trials to training (Alljoined-1: /nasbrain/p20fores/alljoined/alljoined1_120Hz)')
+    parser.add_argument('--extra_subject_offset', default=40, type=int, help='subject id of extra trials = offset + their subject number (Alljoined-1: 41..48)')
+    parser.add_argument('--extra_input_adapter', action='store_true', help='learned identity-init temporal+channel adapter applied to extra-trial subjects only')
+    parser.add_argument('--latency_align', default=0, type=float, help='learned per-trial input time shift within +-this many samples (model.LatencyAligner); 0 = off')
+    parser.add_argument('--norm_type', default='batch', choices=['batch', 'group', 'instance'], help='replace every BatchNorm of the encoder by per-trial GroupNorm(1, C) (group) or GroupNorm(C, C) (instance); drops the per-dataset split')
+    parser.add_argument('--tsconv_domain_bn_boundary2', default=0, type=int, help='with --tsconv_domain_bn_boundary: a third BatchNorm path for subject IDs >= this (THINGS-EEG1 pseudo-subjects, 31)')
     parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
     parser.add_argument('--tsconv_subject_bn_max_id', default=0, type=int, help='use source-person TSConv BatchNorm paths plus population path 0 (0 disables)')
     parser.add_argument('--tsconv_no_conv_bias', action='store_true', help='disable convolution biases in TSConv_parameterizable')
@@ -1214,12 +1521,15 @@ if __name__ == '__main__':
     parser.add_argument('--atm_spatial_filters', default=40, type=int, help='ATM readout spatial filter count')
     parser.add_argument('--atm_projection_filters', default=40, type=int, help='ATM readout projection filter count')
     parser.add_argument('--atm_conv_dropout', default=0.5, type=float, help='ATM convolutional readout dropout')
+    parser.add_argument('--atm_backbone_dim', default=0, type=int, help='ATM head trunk width; 0 = feature_dim (no separate output Linear)')
+    parser.add_argument('--atm_no_subject_token', action='store_true', help='drop the ATM subject token (keeps all 63 channels; grader gives no subject ids)')
     parser.add_argument('--subject_adapter_rank', default=0, type=int, help='rank of learned source-person FiLM random effects at the temporal TSConv block (0 disables)')
     parser.add_argument('--subject_adapter_max_id', default=32, type=int, help='largest subject ID addressable by the source-person adapter; ID 0 is the population path')
     parser.add_argument('--subject_adapter_scale', default=0.1, type=float, help='residual scale of channelwise subject FiLM effects')
     parser.add_argument('--subject_adapter_virtual_prob', default=0.0, type=float, help='probability that each virtual batch identity draws a source-embedding Gaussian random effect')
     parser.add_argument('--subject_adapter_virtual_scale', default=1.0, type=float, help='posterior-predictive scale around the empirical source-adapter distribution')
     parser.add_argument('--subject_adapter_inferred', action='store_true', help='infer a continuous rank-R subject FiLM code from each EEG observation, including unseen people')
+    parser.add_argument('--subject_adapter_dropout', default=0.0, type=float, help='probability of replacing a training trial\'s adapter ID by the population ID 0 (trains the path inference uses)')
     parser.add_argument('--subject_adapter_router_lambda', default=0.0, type=float, help='source-ID classification weight anchoring the amortized subject-code router')
     parser.add_argument('--mutual_reconstruction_lambda', default=0.0, type=float, help='weight for exact-stimulus cross-person EEG reconstruction through source random effects')
     parser.add_argument('--mutual_reconstruction_hidden', default=256, type=int, help='hidden width of the training-time conditional EEG reconstruction decoder')
@@ -1229,7 +1539,7 @@ if __name__ == '__main__':
     parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--eeg_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
-    parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'mlp'], default='direct')
+    parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'mlp', 'subspace', 'subspace_c', 'bottleneck', 'bottleneck_do'], default='direct', help='subspace (lever L3): the EEG encoder outputs --eeg_backbone_dim coefficients of the top principal directions of the training targets')
     parser.add_argument(
         '--projector_activation',
         type=str,
@@ -1255,6 +1565,8 @@ if __name__ == '__main__':
     parser.add_argument('--aug_image_feature_dirs', default=[], nargs='+', type=str, help='where your augmentation image feature are')
     parser.add_argument('--text_feature_dir', default='./data/things_eeg/text_feature/BLIP2', type=str, help='where your text feature are')
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
+    parser.add_argument('--train_object_fraction', default=1.0, type=float, help='train on this fraction of the training concepts (fixed seed-0 subset, all subjects); CVPR E8.8b volume control')
+    parser.add_argument('--save_epoch_checkpoints', nargs='*', type=int, default=[], help='also save checkpoint_epXXX.pth at these epochs (1-based; CVPR E8.10 TTA-vs-training-length curves)')
     parser.add_argument('--save_last_checkpoint', action='store_true', help='also write checkpoint_last.pth (final epoch); off by default since nothing reads it and it doubles checkpoint disk use')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
     parser.add_argument('--train_rng_seed', type=int, default=None,
@@ -1289,6 +1601,9 @@ if __name__ == '__main__':
             args.cohort_reconstruction_lambda > 0,
             args.brain2brain_lambda > 0,
             args.relational_lambda > 0,
+            args.rsa_lambda > 0,
+            args.iso_lambda > 0,
+            args.pr_lambda > 0,
             args.mmd_lambda > 0,
             args.vrex_lambda > 0,
             args.matryoshka_lambda > 0,
@@ -1331,8 +1646,11 @@ if __name__ == '__main__':
     if args.tsconv_domain_bn_boundary > 0 and args.tsconv_subject_bn_max_id > 0:
         raise ValueError('domain and subject TSConv BatchNorm routing are mutually exclusive.')
     if args.tsconv_domain_bn_boundary > 0:
-        if args.eeg_encoder_type != 'TSConv_parameterizable':
-            raise ValueError('--tsconv_domain_bn_boundary requires TSConv_parameterizable.')
+        if args.eeg_encoder_type.removeprefix('Ortho') not in ('TSConv_parameterizable', 'FastTSConvSqueezeformer', 'ATM',
+                                                                 'FactorizedSTFormer', 'ElectrodeTokenTSConv', 'FilterAttnTSConv',
+                                                                 'TimeAttnFlatTSConv', 'VirtualSensorFormer', 'DynSpatialTSConv',
+                                                                 'DualPathTSConv', 'TSConvPlus', 'TimeFreqXTSConv', 'SqfMix', 'GRUEncoder', 'DilatedConvNeXt1D'):
+            raise ValueError('--tsconv_domain_bn_boundary requires TSConv_parameterizable, FastTSConvSqueezeformer or ATM.')
         if args.tsconv_no_batch_norm:
             raise ValueError('--tsconv_domain_bn_boundary is incompatible with --tsconv_no_batch_norm.')
     if args.tsconv_subject_bn_max_id > 0:
@@ -1602,6 +1920,12 @@ if __name__ == '__main__':
     )
     log(f'Evaluation mode: {args.eval_mode}')
 
+    hyperalign = None
+    if args.hyperalign_prob > 0:  # rotations + which (subject, partner) pairs may be used: same dataset, both training subjects
+        rot = torch.as_tensor(np.load(args.hyperalign_maps), dtype=torch.float32, device=device)
+        ids = torch.arange(rot.shape[0], device=device)
+        tr = torch.zeros(rot.shape[0], dtype=torch.bool, device=device); tr[[i for i in args.train_subject_ids if i < rot.shape[0]]] = True
+        hyperalign = (rot, tr[:, None] & tr[None, :] & (ids[:, None] != ids[None, :]) & ((ids[:, None] >= 21) == (ids[None, :] >= 21)))
     cross_dataset_translation = None
     if args.cross_dataset_translation:
         translation_npz = np.load(args.cross_dataset_translation)
@@ -1664,6 +1988,23 @@ if __name__ == '__main__':
         bootstrap_repetition_count=args.bootstrap_repetition_count,
         subject_ea_align=args.subject_ea_align,
     )
+    if args.train_object_fraction < 1:  # CVPR E8.8b: same data volume as fewer subjects, all subjects kept
+        log(f'train_object_fraction {args.train_object_fraction}: {len(train_dataset.keep_objects(args.train_object_fraction))} training concepts')
+    if args.extra_trials_dir:  # Alljoined-1 (export_alljoined1.py): extra single trials with their own image targets
+        train_dataset.add_extra_trials(args.extra_trials_dir, args.extra_subject_offset)
+    train_dataset.xsubj_mix_prob, train_dataset.xsubj_mix_alpha = args.xsubj_mix_prob, args.xsubj_mix_alpha
+    train_dataset.rep_avg_prob, train_dataset.noise_swap_prob, train_dataset.band_swap_prob = args.rep_avg_prob, args.noise_swap_prob, args.band_swap_prob
+    train_dataset.amp_scale_std, train_dataset.time_mask_len = args.amp_scale_std, args.time_mask_len
+    train_dataset.amp_gain_range = args.amp_gain_range
+    if args.spatial_jitter_deg > 0:
+        train_dataset.spatial_mix_bank = spatial_mix_bank(args.selected_channels, args.spatial_jitter_deg)
+        train_dataset.spatial_jitter_prob = args.spatial_jitter_prob
+        log(f'spatial jitter: {len(train_dataset.spatial_mix_bank)} montage rotations up to {args.spatial_jitter_deg} deg, '
+            f'p={args.spatial_jitter_prob}')
+    if args.distill_lambda > 0 or args.anticorr_lambda > 0 or args.boost_gamma > 0:
+        assert not args.data_average and not args.data_random, '--distill_targets rows are single trials'
+        train_dataset.distill_targets = np.load(args.distill_targets, mmap_mode='r')
+        assert len(train_dataset.distill_targets) == len(train_dataset), 'teacher rows != training trials'
 
     if args.inductive_covariance_align:
         if args.subject_ea_align:
@@ -1757,6 +2098,14 @@ if __name__ == '__main__':
     log(f'number of channels: {channels_num}')
 
     pin_memory = device.type == "cuda"
+    global_gallery = None
+    if args.global_negatives > 0 or args.global_negatives_replace:
+        # every training image's frozen target is a negative (16540), not only the batch's: the targets never move,
+        # so the full softmax is exact and cheap; same-image duplicates in a batch stop being false negatives
+        global_gallery = torch.tensor(np.asarray(train_dataset.image_features[..., :image_feature_dim], dtype=np.float32)
+                                      .reshape(-1, image_feature_dim), device=device)
+        global_n_img = train_dataset.image_features.shape[1]
+        log(f'global negatives: {len(global_gallery)} training images')
     train_main_dataset = train_dataset
     concept_val_dataloader = None
     if args.val_concept_ratio > 0.0:
@@ -1767,8 +2116,6 @@ if __name__ == '__main__':
         # --multi_positive_loss is explicitly trained to pull together.
         if args.data_random:
             raise ValueError("--val_concept_ratio requires deterministic indexing (disable --data_random).")
-        if eeg_transform is not None or args.image_aug:
-            raise ValueError("--val_concept_ratio assumes an unaugmented val view; disable --eeg_aug/--image_aug.")
         groups = train_dataset.get_image_group_indices()
         concepts = sorted({key[0] for key in groups})
         holdout_count = min(
@@ -1789,8 +2136,16 @@ if __name__ == '__main__':
             if args.grouped_batch_sampler
             else Subset(train_dataset, main_train_indices)
         )
+        # Val scores against clean targets, as the test set does: a shallow copy shares every
+        # array but reads image_features instead of the --image_aug targets.
+        val_view = copy.copy(train_dataset)
+        val_view.image_aug = False
+        val_view.eeg_transform = None  # and clean EEG: --eeg_aug is for training rows only
+        val_view.rep_avg_prob = val_view.noise_swap_prob = val_view.band_swap_prob = 0
+        val_view.xsubj_mix_prob = val_view.amp_scale_std = val_view.time_mask_len = val_view.amp_gain_range = 0
+        val_view.distill_targets = None
         concept_val_dataloader = DataLoader(
-            Subset(train_dataset, concept_val_indices),
+            Subset(val_view, concept_val_indices),
             batch_size=200, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory,
         )
         log(
@@ -1856,7 +2211,17 @@ if __name__ == '__main__':
             subj_probe_val_dataset, batch_size=pb, shuffle=False, drop_last=False, num_workers=args.num_workers, pin_memory=pin_memory
         )
 
-    if args.grouped_batch_sampler:
+    if args.train_max_trials > 0:  # SUBJECT_LOG D8 few-shot oracle: a seeded random subset of K training trials
+        keep = np.sort(np.random.default_rng(0).choice(len(train_main_dataset), min(args.train_max_trials, len(train_main_dataset)), replace=False))
+        train_main_dataset = Subset(train_main_dataset, keep.tolist())
+        log(f'--train_max_trials {args.train_max_trials}: training on {len(keep)} trials')
+    if args.repeat_group_batches:
+        if train_main_dataset is not train_dataset:
+            raise ValueError("--repeat_group_batches needs the full training set (no --val_concept_ratio).")
+        batch_sampler = RepeatGroupBatchSampler(len(train_dataset), train_dataset.num_repetitions, args.batch_size, seed=seed)
+        dataloader = DataLoader(train_main_dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=pin_memory)
+        log(f'repeat-group batches: {batch_sampler.groups_per_batch} (subject, image) groups x {batch_sampler.reps} repeats')
+    elif args.grouped_batch_sampler:
         batch_sampler = GroupedImageBatchSampler(
             train_main_dataset,
             batch_size=args.batch_size,
@@ -1871,6 +2236,14 @@ if __name__ == '__main__':
             f'Grouped batch sampler enabled: images_per_batch={batch_sampler.images_per_batch}, '
             f'samples_per_image={batch_sampler.samples_per_image}, effective_batch_size={effective_batch_size}'
         )
+    elif args.neighbour_batch_prob > 0:  # AUG_LOG: fine-grained negatives from k-means clusters of the image targets
+        ds = train_dataset
+        assert train_main_dataset is ds and not (ds.average or ds.random or ds.subject_mixup_within or ds.bootstrap_repetition_average)
+        keys = (np.arange(len(ds)) // ds.num_repetitions) % (ds.num_objects * ds.num_images_per_object)
+        feats = np.asarray(ds.image_features[..., :image_feature_dim]).reshape(ds.num_objects * ds.num_images_per_object, -1)
+        batch_sampler = NeighbourBatchSampler(keys, feats, args.batch_size, args.neighbour_batch_prob, seed=seed)
+        dataloader = DataLoader(train_main_dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=pin_memory)
+        log(f'neighbour batches: p={args.neighbour_batch_prob}, {len(batch_sampler.clusters)} image clusters')
     else:
         dataloader = DataLoader(
             train_main_dataset,
@@ -1889,6 +2262,14 @@ if __name__ == '__main__':
         raise ValueError("--subject_probe_holdout and --val_concept_ratio both re-split the train set; pick one.")
     if args.early_stop_patience < 0:
         raise ValueError("--early_stop_patience must be nonnegative.")
+    if args.boost_gamma > 0 and not (args.multi_positive_loss and args.distill_targets):
+        raise ValueError('--boost_gamma needs --multi_positive_loss (the only loss path that takes sample weights) and --distill_targets.')
+    if args.repeat_mean_loss > 0 and not args.repeat_group_batches:
+        raise ValueError("--repeat_mean_loss needs --repeat_group_batches (batches must hold whole repeat groups).")
+    if args.repeat_group_batches and (args.data_average or args.data_random or args.grouped_batch_sampler):
+        raise ValueError("--repeat_group_batches needs un-averaged, deterministic data and no --grouped_batch_sampler.")
+    if args.sealed_early_stop_patience > 0 and not args.sealed_test_metric:
+        raise ValueError("--sealed_early_stop_patience requires --sealed_test_metric.")
     if args.early_stop_patience > 0 and args.select_best_on != 'val':
         raise ValueError("--early_stop_patience requires --select_best_on val.")
     if args.early_stop_min_delta < 0:
@@ -1947,8 +2328,10 @@ if __name__ == '__main__':
         'eeg_confidence_mode', 'eeg_confidence_hidden_dim',
         'tsconv_temporal_filters', 'tsconv_temporal_kernel', 'tsconv_pool_kernel', 'tsconv_pool_stride',
         'tsconv_spatial_filters', 'tsconv_projection_filters', 'tsconv_activation', 'tsconv_dropout',
-        'tsconv_head_dropout', 'tsconv_no_batch_norm', 'tsconv_no_conv_bias',
-        'tsconv_domain_bn_boundary',
+        'tsconv_head_dropout', 'tsconv_no_batch_norm', 'tsconv_no_conv_bias', 'tsconv_power_branch',
+        'fm_head', 'fm_head_dropout', 'fm_drop_path', 'arch_kwargs', 'fm_arch_kwargs',
+        'tsconv_domain_bn_boundary', 'tsconv_domain_bn_boundary2', 'tsconv_domain_spatial_boundary',
+        'norm_type', 'latency_align', 'extra_input_adapter', 'extra_subject_offset',
         'subject_adapter_rank', 'subject_adapter_max_id', 'subject_adapter_scale',
         'subject_adapter_inferred',
         'inductive_covariance_align', 'inductive_covariance_alpha',
@@ -1967,6 +2350,14 @@ if __name__ == '__main__':
         json.dump(inference_config, f, indent=4)
 
     model = build_eeg_encoder(args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
+    if args.init_encoder:
+        # Pretrained trunk (pretrain_denoise.py) or a previous run's checkpoint (curriculum).
+        pretrained = torch.load(args.init_encoder, map_location=device, weights_only=False)
+        pretrained = pretrained.get('model_state_dict', pretrained)  # a train.py checkpoint works too
+        own = model.state_dict()
+        pretrained = {k: v for k, v in pretrained.items() if k in own and own[k].shape == v.shape}
+        model.load_state_dict(pretrained, strict=False)
+        log(f'--init_encoder: loaded {len(pretrained)}/{len(own)} tensors from {args.init_encoder}')
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'EEG Encoder trainable parameters: {num_params / 1e6:.2f}M')
     log(str(model))
@@ -1983,6 +2374,9 @@ if __name__ == '__main__':
         args.projector, backbone_feature_dim, args.feature_dim,
         activation=projector_activation, topk=projector_topk,
     ).to(device)
+    if args.projector in ('subspace', 'subspace_c'):
+        eeg_projector.fit(train_dataset.image_features)  # training images only; stored in the checkpoint
+        log(f'subspace head: {backbone_feature_dim} principal directions of the training targets')
     img_projector = build_projector(
         args.projector, image_feature_dim, args.feature_dim,
         activation=projector_activation, topk=projector_topk,
@@ -2043,6 +2437,27 @@ if __name__ == '__main__':
         model.eval()
         log('Frozen initialized EEG encoder in eval mode')
 
+    if args.fm_unfreeze_last_k > 0:
+        trainable = model.unfreeze_last_k(args.fm_unfreeze_last_k)
+        log(f'Partial fine-tune: last {args.fm_unfreeze_last_k} backbone layers + head, '
+            f'{trainable:,} trainable parameters')
+
+    if args.lora_rank > 0:  # SUBJECT_LOG D5: rank-r updates W + B A on the nn.Linear layers matching --lora_regex
+        import re
+        for prefix, root in (('model.', model), ('eproj', eeg_projector)):
+            for name, module in root.named_modules():
+                full = prefix + name
+                if isinstance(module, nn.Linear) and re.search(args.lora_regex, full):
+                    attach_lora(module, args.lora_rank)
+                    log(f'LoRA rank {args.lora_rank} on {full} {tuple(module.weight.shape)}')
+        args.trainable_regex = 'lora_'  # only the adapters train; the checkpoint stores the merged weights
+    if args.trainable_regex:  # SUBJECT_LOG D4: fine-tune only the matching parameters (BN running stats adapt anyway)
+        import re
+        for prefix, module in (('model.', model), ('eproj.', eeg_projector)):
+            for name, parameter in module.named_parameters():
+                parameter.requires_grad = re.search(args.trainable_regex, prefix + name) is not None
+        log(f'--trainable_regex {args.trainable_regex}: '
+            f'{sum(p.numel() for m in (model, eeg_projector) for p in m.parameters() if p.requires_grad):,} trainable parameters')
     if args.freeze_image_projector:
         set_requires_grad(img_projector, False)
         img_projector.eval()
@@ -2096,8 +2511,16 @@ if __name__ == '__main__':
         args.t_learnable,
         args.softplus,
         logit_scale_max=args.logit_scale_max,
+        asymmetric=args.asymmetric_loss,
         mse_on_raw=args.mse_on_raw,
+        soft_target_tau=args.soft_target_tau,
+        soft_mix_beta=args.soft_mix_beta,
     ).to(device)
+    if args.init_checkpoint and args.init_checkpoint_scope == 'all':  # the learned temperature belongs to the head
+        saved = torch.load(args.init_checkpoint, map_location=device, weights_only=False).get('criterion_state_dict')
+        if saved is not None:
+            criterion.load_state_dict(saved)
+            log(f'Initialized the loss (logit scale) from {args.init_checkpoint}')
     log(str(criterion))
     auxiliary_dims = [
         int(value) for value in str(args.auxiliary_alignment_dims).split(',')
@@ -2144,8 +2567,10 @@ if __name__ == '__main__':
         auxiliary_eeg_projectors = nn.ModuleList([
             ProjectorLinear(backbone_feature_dim, dim) for dim in auxiliary_dims
         ]).to(device)
+        if args.auxiliary_fixed_targets and list(auxiliary_dims) != list(auxiliary_target_dims):
+            raise ValueError(f'--auxiliary_fixed_targets needs --auxiliary_alignment_dims {auxiliary_target_dims}')
         auxiliary_img_projectors = nn.ModuleList([
-            ProjectorLinear(target_dim, dim)
+            nn.Identity() if args.auxiliary_fixed_targets else ProjectorLinear(target_dim, dim)
             for target_dim, dim in zip(auxiliary_target_dims, auxiliary_dims)
         ]).to(device)
         torch.random.set_rng_state(auxiliary_rng)
@@ -2184,21 +2609,105 @@ if __name__ == '__main__':
         'img_projector': img_projector,
         'text_projector': text_projector,
     }
+    neighbor_heads = neighbor_table = neighbor_targets = None
+    if args.neighbor_loss > 0:
+        # lever L4: tables indexed [subject id, object, image, rep, offset] -> neighbour's training image k (-1: none)
+        # subjects without a table (THINGS-EEG2 exports: no RSVP order) keep -1, i.e. no neighbour loss
+        paths = {s: os.path.join(args.eeg_data_dir, f"sub-{s:02d}", "train_neighbors.npy") for s in args.train_subject_ids}
+        tables = {s: np.load(f) for s, f in paths.items() if os.path.exists(f)}
+        first = next(iter(tables.values()))
+        neighbor_table = torch.full((max(args.train_subject_ids) + 1, *first.shape), -1, dtype=torch.long)
+        for s, t in tables.items():
+            neighbor_table[s] = torch.from_numpy(t.astype(np.int64))
+        neighbor_table = neighbor_table.to(device)
+        neighbor_targets = torch.as_tensor(np.asarray(train_dataset.image_features, dtype=np.float32)).reshape(
+            -1, image_feature_dim).to(device)
+        neighbor_heads = nn.ModuleList([nn.Linear(args.feature_dim, args.feature_dim) for _ in range(first.shape[-1])]).to(device)
+        module_registry['neighbor_heads'] = neighbor_heads
+        log(f'neighbour heads: {first.shape[-1]} RSVP offsets, coverage '
+            f'{float((neighbor_table[args.train_subject_ids] >= 0).float().mean()):.3f}')
     if eeg_confidence_head is not None:
         module_registry['eeg_confidence_head'] = eeg_confidence_head
     if auxiliary_eeg_projectors is not None:
         module_registry['auxiliary_eeg_projectors'] = auxiliary_eeg_projectors
         module_registry['auxiliary_img_projectors'] = auxiliary_img_projectors
-    optimizer = optim.AdamW(
+    siglip_head = None
+    if args.siglip:  # learnable SigLIP bias (the EEG norm already plays the temperature)
+        siglip_head = nn.Module(); siglip_head.b = nn.Parameter(torch.tensor(float(args.siglip_bias), device=device))
+        module_registry['siglip_head'] = siglip_head
+    trainable_parameters = (
         collect_trainable_parameters(list(module_registry.values()))
-        + ([p for p in criterion.parameters() if p.requires_grad] if args.t_learnable else []),
-        lr=args.learning_rate,
-        betas=(0.9, 0.999),
-        weight_decay=args.weight_decay,
+        + ([p for p in criterion.parameters() if p.requires_grad] if args.t_learnable else [])
     )
+    fm_backbone = getattr(model, 'fm', None)
+    param_groups = [{'params': trainable_parameters}]
+    if args.fm_backbone_lr_scale != 1.0 and fm_backbone is not None:
+        backbone_ids = {id(p) for p in fm_backbone.parameters()}
+        param_groups = [
+            {'params': [p for p in trainable_parameters if id(p) not in backbone_ids],
+             'lr': args.learning_rate},
+            {'params': [p for p in trainable_parameters if id(p) in backbone_ids],
+             'lr': args.learning_rate * args.fm_backbone_lr_scale},
+        ]
+        log(f'Foundation backbone lr {args.learning_rate * args.fm_backbone_lr_scale:g}, '
+            f'head lr {args.learning_rate:g}')
+    if args.fm_layer_decay != 1.0 and fm_backbone is not None:
+        if args.fm_backbone_lr_scale != 1.0:
+            raise ValueError('--fm_layer_decay and --fm_backbone_lr_scale are mutually exclusive')
+        names = [name for name, _ in fm_backbone.named_parameters()]
+        # REVE transformer.layers, EEGPT target_encoder.blocks, LaBraM blocks
+        prefix = next(p for p in ('transformer.layers.', 'target_encoder.blocks.', 'blocks.')
+                      if any(n.startswith(p) for n in names))
+        depth_of = lambda name: int(name[len(prefix):].split('.')[0])
+        n_layers = 1 + max(depth_of(n) for n in names if n.startswith(prefix))
+        scale_of = {}  # parameter id -> lr multiplier (BEiT-style layer ids: embeddings 0, block i -> i + 1)
+        for name, parameter in fm_backbone.named_parameters():
+            if name.startswith(prefix):
+                layer_id = depth_of(name) + 1
+            elif name.startswith(('final_layer', 'cls_query_token', 'norm.', 'target_encoder.norm.')):
+                layer_id = n_layers + 1  # REVE's own head (bypassed by return_output); final norms
+            else:
+                layer_id = 0  # patch/channel/positional embeddings and their norms
+            scale_of[id(parameter)] = args.fm_layer_decay ** (n_layers + 1 - layer_id)
+        groups = {}
+        for parameter in trainable_parameters:
+            groups.setdefault(scale_of.get(id(parameter), 1.0), []).append(parameter)
+        param_groups = [{'params': ps, 'lr': args.learning_rate * scale}
+                        for scale, ps in sorted(groups.items(), reverse=True)]
+        log(f'Layer-wise lr decay {args.fm_layer_decay}: {len(param_groups)} groups, lr '
+            f'{args.learning_rate:g} (head) down to {args.learning_rate * min(groups):.2g} (embeddings)')
+    trainable_ids = {id(p) for p in trainable_parameters}
+    if args.optimizer == 'stableadamw':
+        from module.stable_adamw import StableAdamW
+        optimizer = StableAdamW(param_groups, lr=args.learning_rate, betas=(0.92, 0.999), eps=1e-9,
+                                weight_decay=args.weight_decay)
+    else:
+        optimizer = optim.AdamW(
+            param_groups,
+            lr=args.learning_rate,
+            betas=(0.9, 0.999),
+            weight_decay=args.weight_decay,
+        )
     grad_scaler = torch.amp.GradScaler(
         'cuda', enabled=(args.amp_dtype == 'float16')
     )
+    ema_model = None
+    if args.ema_decay > 0:
+        from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+        # BatchNorm running stats are averaged too (use_buffers), so the EMA model is
+        # self-consistent when it is swapped in for evaluation.
+        ema_update = get_ema_multi_avg_fn(args.ema_decay)
+        if args.ema_warmup:
+            def ema_update(ema_list, cur_list, n):
+                # timm/TF-style warmup: the average tracks the live weights early, so it does
+                # not lag while they change fast, and reaches ema_decay after ~9k updates.
+                decay = min(args.ema_decay, (1.0 + n.item()) / (10.0 + n.item()))
+                if torch.is_floating_point(ema_list[0]):
+                    torch._foreach_lerp_(ema_list, cur_list, 1.0 - decay)
+                else:
+                    for ema_t, cur_t in zip(ema_list, cur_list):
+                        ema_t.copy_(ema_t * decay + cur_t * (1.0 - decay))
+        ema_model = AveragedModel(model, multi_avg_fn=ema_update, use_buffers=True)
     if device.type == 'cuda':
         torch.cuda.reset_peak_memory_stats(device)
 
@@ -2215,6 +2724,35 @@ if __name__ == '__main__':
             return floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
+    elif args.lr_scheduler == 'onecycle':
+        # Stepped per optimizer step, not per epoch -- this is the whole point of OneCycle and
+        # the reason the per-epoch cosine above is not a substitute.
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=[group['lr'] for group in optimizer.param_groups],
+            total_steps=total_epochs * len(dataloader),
+            pct_start=args.onecycle_pct_start,
+            anneal_strategy='cos',
+        )
+    elif args.lr_scheduler == 'wsd':
+        wsd_total = total_epochs * len(dataloader)
+        wsd_warmup = max(1, int(args.onecycle_pct_start * wsd_total))
+        wsd_decay = int(args.wsd_decay_start * wsd_total)
+
+        def _wsd_lambda(step):
+            if step < wsd_warmup:
+                return (step + 1) / wsd_warmup
+            if step < wsd_decay:
+                return 1.0
+            return max(0.0, (wsd_total - step) / max(wsd_total - wsd_decay, 1))
+
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, _wsd_lambda)
+    elif args.lr_scheduler == 'plateau':
+        # REVE authors (reve_eeg dt.py): ReduceLROnPlateau(max, 0.5) per epoch, after an exponential per-step warmup
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=args.plateau_patience)
+        warmup_steps = args.warmup_epochs * len(dataloader)
+        plateau_warmup = optim.lr_scheduler.LambdaLR(
+            optimizer, lambda step: (10 ** (step / warmup_steps) - 1) / 9 if step < warmup_steps else 1.0)
 
     if args.train_rng_seed is not None:
         seed_everything(args.train_rng_seed)
@@ -2237,7 +2775,7 @@ if __name__ == '__main__':
     head_select_loader = (val_dataloader if args.select_best_on == 'val' and val_dataloader is not None
                           else test_dataloader)
 
-    def build_checkpoint(epoch_idx, loss_value, optimizer_obj):
+    def build_checkpoint(epoch_idx, loss_value):
         checkpoint = {
             'epoch': epoch_idx,
             'stage': 'joint',
@@ -2246,7 +2784,8 @@ if __name__ == '__main__':
             'eeg_projector_state_dict': eeg_projector.state_dict(),
             'img_projector_state_dict': img_projector.state_dict(),
             'text_projector_state_dict': text_projector.state_dict(),
-            'optimizer_state_dict': optimizer_obj.state_dict(),
+            # No optimizer state: nothing in this repo resumes training, and AdamW's two
+            # moments per parameter are 2/3 of a REVE checkpoint (840 MB -> 280 MB).
             'loss': loss_value,
         }
         if eeg_confidence_head is not None:
@@ -2325,11 +2864,14 @@ if __name__ == '__main__':
             log(f"Saved EEG norm metadata CSV: {csv_path} (parquet skipped: {exc})")
             return csv_path
 
+    per_subject_last = {}  # subject -> (loss, top1, top5) of the latest test pass
+
     def evaluate_split(split_loader, split_name):
         if split_loader is None:
             return float('nan'), float('nan'), float('nan'), {}
 
         total_loss_local = 0.0
+        batch_losses = []  # (subject, loss) per batch, for --per_subject_test_log
         eeg_feature_list = []
         image_feature_list = []
         subjects = []
@@ -2371,6 +2913,10 @@ if __name__ == '__main__':
                     args.multi_positive_loss
                 )
                 total_loss_local += loss.item()
+                if args.per_subject_test_log and split_name == 'test':
+                    batch_subjects = subject_id_batch.unique()
+                    assert len(batch_subjects) == 1, 'per-subject test loss needs one subject per test batch'
+                    batch_losses.append((int(batch_subjects[0]), loss.item()))
                 eeg_feature_list.append(eeg_feature_batch.float().cpu().numpy())
                 image_feature_list.append(image_feature_proj.float().cpu().numpy())
                 subjects.append(subject_id_batch.cpu().numpy())
@@ -2383,15 +2929,38 @@ if __name__ == '__main__':
         subject_all = np.concatenate(subjects, axis=0)
         object_all = np.concatenate(object_indices, axis=0)
         image_all = np.concatenate(image_indices, axis=0)
+        gallery, targets = image_feature_all, None
+        if args.eval_unique_gallery:
+            # Rank against each distinct stimulus once. The flat per-item gallery holds one row
+            # per presentation, so a repeated image contributes many IDENTICAL vectors (40 when
+            # un-averaged: 4 reps x 10 subjects) and the target is an arbitrary member of a tied
+            # block -- a perfect model tops out near 5/40. That ceiling, not model quality, is
+            # what checkpoint selection was reading. This is also the grader's protocol.
+            keys = object_all.astype(np.int64) * (int(image_all.max()) + 1) + image_all.astype(np.int64)
+            _, first, targets = np.unique(keys, return_index=True, return_inverse=True)
+            gallery = image_feature_all[first]
         top5_count, top1_count, total = retrieve_all(
             eeg_feature_all,
-            image_feature_all,
+            gallery,
             subject_ids=subject_all,
             eval_mode=args.eval_mode,
             sattc_params=sattc_params,
+            target_indices=targets,
         )
         top5_acc_local = top5_count / total * 100
         top1_acc_local = top1_count / total * 100
+        if batch_losses:
+            assert args.eval_unique_gallery, '--per_subject_test_log needs --eval_unique_gallery (pooled gallery repeats images)'
+            # Each subject exactly as its own single-subject run scores it: its batch loss, and its
+            # queries ranked against the (shared, unique) gallery.
+            per_subject_last.clear()
+            for subject in sorted({s for s, _ in batch_losses}):
+                rows = subject_all == subject
+                s5, s1, n = retrieve_all(eeg_feature_all[rows], gallery, subject_ids=subject_all[rows],
+                                         eval_mode=args.eval_mode, sattc_params=sattc_params,
+                                         target_indices=None if targets is None else targets[rows])
+                losses = [l for s, l in batch_losses if s == subject]
+                per_subject_last[subject] = (sum(losses) / len(losses), s1 / n * 100, s5 / n * 100)
         sparsity = {}
         if args.projector_activation in _SPARSE_PROJECTOR_ACTIVATIONS:
             eeg_sp = compute_alignment_sparsity_stats(eeg_feature_all)
@@ -2466,7 +3035,38 @@ if __name__ == '__main__':
     best_testsel_epoch = -1
     best_test_epoch = 0
     best_selected_top1 = 0.0   # top1 on whichever split selects; == best_top1_acc unless select_best_on=val
-    history = {'epoch': [], 'train_loss': [], 'test_loss': [], 'top1_acc': []}
+    history = {'epoch': [], 'train_loss': [], 'test_loss': [], 'top1_acc': [],
+               'test_top5_acc': [], 'val_loss': [], 'val_top1_acc': [], 'val_top5_acc': []}
+    if args.sealed_test_metric:
+        # Selection would otherwise read the sealed test number itself.
+        assert args.select_best_on != 'test', '--sealed_test_metric needs --select_best_on val or fixed'
+        history.update(avg_eeg_top1=[], avg_eeg_top5=[])
+    sealed_best_top5, sealed_stale = float('-inf'), 0
+
+    sealed_best = {'top5': float('-inf')}
+
+    def sealed_test_scores():
+        """(top1, top5) in % under the Track-1 sealed rule, on the current (EMA) weights."""
+        from neurips_challenge.score_track1 import score_modules
+        start = time.time()
+        r = score_modules(model, eeg_projector, img_projector, args, args.test_subject_ids, device, 512, 0,
+                          fraction=args.sealed_test_fraction, return_preds=True)
+        # per-(subject, image) mean predictions of this epoch (~3 MB): ensembles can take any epoch, no weights needed
+        np.savez_compressed(os.path.join(log_dir, f'sealed_preds_ep{epoch:03d}.npz'), mean_norm=r['mean_norm'],
+                            **{f's{k}': v.astype(np.float16) for k, v in r['subject_mean_preds'].items()})
+        if not os.path.exists(os.path.join(log_dir, 'sealed_gallery.npy')):
+            np.save(os.path.join(log_dir, 'sealed_gallery.npy'), r['gallery_normed'])
+        if args.save_weights and 100 * r['subject_agg']['top5'] > sealed_best['top5']:
+            sealed_best['top5'] = 100 * r['subject_agg']['top5']
+            torch.save(build_checkpoint(epoch, -sealed_best['top5']), f"{writer.log_dir}/checkpoint_sealed_best.pth")
+        s = r['subject_agg']
+        log(f"sealed-rule test top5 {100 * s['top5']:.2f} top1 {100 * s['top1']:.2f} "
+            f"(fraction {args.sealed_test_fraction}, {time.time() - start:.0f}s)")
+        # per-subject curve: neurips_challenge/cv4_summary.py picks each recipe's epoch budget from it
+        with open(os.path.join(log_dir, 'sealed_per_epoch.jsonl'), 'a') as handle:
+            handle.write(json.dumps({'epoch': epoch, 'fraction': args.sealed_test_fraction,
+                                     'by_subject': {k: 100 * v['top5'] for k, v in r['subject_agg_by_subject'].items()}}) + '\n')
+        return 100 * s['top1'], 100 * s['top5']
     probe_history = (
         {'epoch': [], 'eeg_backbone_val_acc': [], 'eeg_align_val_acc': []}
         if args.subject_probe_holdout
@@ -2499,7 +3099,7 @@ if __name__ == '__main__':
         best_test_sparsity = dict(initial_sparsity)
         if args.save_weights:
             torch.save(
-                build_checkpoint(0, initial_selected_loss, optimizer),
+                build_checkpoint(0, initial_selected_loss),
                 f"{writer.log_dir}/checkpoint_test_best.pth",
             )
         log(
@@ -2518,11 +3118,32 @@ if __name__ == '__main__':
 
     epochs_without_selection_improvement = 0
     early_stop_reference_loss = best_test_loss
+    codabench_history = []
+    sam_dir = None  # --sam_rho: unit gradient of the previous step
     for epoch in range(1, total_epochs + 1):
+        # Autocast is switched on globally (set_autocast_enabled), so no autocast region ever closes to flush its
+        # weight-cast cache: the epoch-end evaluation's no-grad casts survived into the next epoch's first forward,
+        # which then had no grad_fn when only the head trained (frozen-backbone probe, 2026-10-09).
+        torch.clear_autocast_cache()
+        if ema_model is not None and epoch > 1:
+            model.load_state_dict(raw_state)
+        if args.swa_from_epoch and epoch == args.swa_from_epoch:  # SWAD-style: from here on, evaluate the uniform average of every step's weights
+            ema_model = AveragedModel(model, use_buffers=True)
+        if args.fm_head_warmup_epochs > 0 and epoch in (1, args.fm_head_warmup_epochs + 1):
+            # AdamW skips parameters whose grad is None, so a frozen backbone is simply not
+            # stepped; unfreezing restores whatever --fm_unfreeze_last_k left trainable.
+            thawed = epoch > args.fm_head_warmup_epochs
+            for parameter in model.fm.parameters():
+                parameter.requires_grad_(thawed and id(parameter) in trainable_ids)
+            log(f'Foundation backbone {"unfrozen" if thawed else "frozen for head warmup"}')
         if args.freeze_eeg_encoder:
             model.eval()
         else:
             model.train()
+            if args.freeze_bn_stats:  # SUBJECT_LOG D8: keep the init checkpoint's BatchNorm statistics (few-shot oracles)
+                for module in model.modules():
+                    if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                        module.eval()
         eeg_projector.train()
         if args.freeze_image_projector:
             img_projector.eval()
@@ -2577,12 +3198,20 @@ if __name__ == '__main__':
             image_idx_batch = batch[5].to(device)
 
             optimizer.zero_grad()
+            sam_eps = None
+            if args.sam_rho > 0 and sam_dir is not None:  # SAM with a stale ascent direction: the previous step's unit gradient
+                with torch.no_grad():
+                    sam_eps = [args.sam_rho * d for d in sam_dir]
+                    torch._foreach_add_(trainable_parameters, sam_eps)
             if args.op_transfer_prob > 0 and random.random() < args.op_transfer_prob:
-                eeg_batch = cross_subject_operator_transfer(
-                    eeg_batch, subject_id_batch,
-                    shrink=args.op_transfer_shrink,
-                    extrapolate=args.op_transfer_extrapolate,
-                )
+                op_kw = dict(shrink=args.op_transfer_shrink, extrapolate=args.op_transfer_extrapolate, rotate=args.op_transfer_rotate,
+                             boundary=21 if not args.op_transfer_cross_dataset and any(s >= 21 for s in args.train_subject_ids) and min(args.train_subject_ids) < 21 else 0)
+                if args.op_transfer_bands:
+                    eeg_batch = banded_operator_transfer(eeg_batch, subject_id_batch, args.op_transfer_bands, **op_kw)
+                else:
+                    eeg_batch = cross_subject_operator_transfer(eeg_batch, subject_id_batch, **op_kw)
+            if hyperalign is not None:
+                eeg_batch = hyperalign_transfer(eeg_batch, subject_id_batch, *hyperalign, args.hyperalign_prob)
             if cross_dataset_translation is not None:
                 eeg_batch = translate_auxiliary_subjects(
                     eeg_batch,
@@ -2745,9 +3374,28 @@ if __name__ == '__main__':
                     latency_subject_ids,
                     latency_shifts,
                 )
+            if args.input_mixup:
+                # REVE authors' mixup (reve_eeg dt.py): one lam ~ U(0,1) per batch, mixed with a shuffled batch
+                mix_lam, mix_perm = random.random(), torch.randperm(eeg_batch.shape[0], device=eeg_batch.device)
+                eeg_batch = mix_lam * eeg_batch + (1 - mix_lam) * eeg_batch[mix_perm]
             eeg_backbone_batch = run_eeg_backbone(
                 model, args, eeg_batch, backbone_subject_id_batch
             )
+            if args.batch_transform:  # the transform a test subject's predict() batches get, per subject group here
+                from neurips_challenge.score_track1 import batch_transform
+                grouped = eeg_backbone_batch.clone()
+                if args.batch_transform_mixed:  # sealed condition: shuffled chunks mixing subjects
+                    perm = torch.randperm(len(grouped), device=grouped.device)
+                    for j in range(0, len(perm), args.batch_transform_mixed):
+                        rows = perm[j:j + args.batch_transform_mixed]
+                        if len(rows) > 2:
+                            grouped[rows] = batch_transform(eeg_backbone_batch[rows], a=args.batch_transform_ab[0], k=2, b=args.batch_transform_ab[1], detach_dir=True)
+                else:
+                    for sid in torch.unique(backbone_subject_id_batch):
+                        rows = backbone_subject_id_batch == sid
+                        if rows.sum() > 2:
+                            grouped[rows] = batch_transform(eeg_backbone_batch[rows], a=args.batch_transform_ab[0], b=args.batch_transform_ab[1], detach_dir=True)
+                eeg_backbone_batch = grouped
             subject_router_loss = eeg_batch.new_tensor(0.0)
             subject_router_rows = 0
             if args.subject_adapter_router_lambda > 0:
@@ -2906,6 +3554,17 @@ if __name__ == '__main__':
                 ).mean()
                 loss = loss + args.teacher_alignment_lambda * teacher_alignment_loss
                 total_teacher_alignment_loss += teacher_alignment_loss.item()
+            boost_w = None
+            if args.boost_gamma > 0:  # AUG_LOG boosting: up-weight trials the current ensemble gets wrong (targets unchanged)
+                with torch.no_grad():
+                    t = batch[7].to(device).float()
+                    if t.shape[1] == 1:  # precomputed per-trial p_true (neurips_challenge/boost_weights.py)
+                        p_true = t[:, 0]
+                    else:
+                        p_true = ((F.normalize(t, dim=1) @ F.normalize(image_feature_for_loss.float(), dim=1).T
+                                   / args.distill_tau).softmax(dim=1) * positive_mask.float()).sum(1)
+                    boost_w = (1 - p_true).clamp_min(0) ** args.boost_gamma
+                    boost_w = boost_w / boost_w.mean().clamp_min(1e-8)
             cl_loss = compute_cross_modal_loss(
                 criterion,
                 {'feature': eeg_feature_for_loss, 'confidence': eeg_confidence_batch},
@@ -2916,11 +3575,110 @@ if __name__ == '__main__':
                 sample_weights=(
                     train_subject_weight_lookup[subject_id_batch]
                     if train_subject_weight_lookup is not None
-                    else None
+                    else boost_w
                 ),
             )
+            if args.input_mixup:  # ... and the loss is lam * L(own targets) + (1 - lam) * L(partner's targets)
+                cl_loss = mix_lam * cl_loss + (1 - mix_lam) * compute_cross_modal_loss(
+                    criterion,
+                    {'feature': eeg_feature_for_loss, 'confidence': eeg_confidence_batch},
+                    image_feature_for_loss[mix_perm],
+                    text_feature_proj[mix_perm],
+                    positive_mask[mix_perm][:, mix_perm],
+                    args.multi_positive_loss,
+                )
+            if args.mask_concept_neg:  # false-negative elimination: same-concept, different-image pairs leave the softmax
+                q_m = criterion._normalize_inputs(eeg_feature_for_loss, None)[0]
+                lg = (q_m @ F.normalize(image_feature_for_loss, dim=1).T) * criterion._get_logit_scale()
+                same_c = object_idx_batch[:, None] == object_idx_batch[None, :]
+                lg = lg.masked_fill(same_c & ~positive_mask, float('-inf'))
+                cl_loss = -(torch.log_softmax(lg, 1).masked_fill(~positive_mask, float('-inf'))).logsumexp(1).mean()
+            if args.loss_trunc > 0:  # robust InfoNCE: drop the batch's highest-loss fraction of trials (label noise:
+                # most single trials carry little image information; their large losses only add gradient noise)
+                q_t = criterion._normalize_inputs(eeg_feature_for_loss, None)[0]
+                lg = (q_t @ F.normalize(image_feature_for_loss, dim=1).T) * criterion._get_logit_scale()
+                per = -(torch.log_softmax(lg, 1) + torch.log(positive_mask.float().clamp_min(1e-30))).logsumexp(1)
+                keep_n = max(1, int(round(len(per) * (1 - args.loss_trunc))))
+                cl_loss = per.topk(keep_n, largest=False).values.mean()
+            if siglip_head is not None:  # pairwise sigmoid loss, in-batch; same-image duplicates are positives
+                q_s = criterion._normalize_inputs(eeg_feature_for_loss, None)[0]
+                z = q_s @ F.normalize(image_feature_for_loss, dim=1).T + siglip_head.b
+                y = positive_mask.float() * 2 - 1
+                cl_loss = -F.logsigmoid(y * z).sum() / len(z)
+            if global_gallery is not None:
+                gal = F.normalize(img_projector(global_gallery), dim=1)
+                q = criterion._normalize_inputs(eeg_feature_for_loss, None)[0]
+                gidx = object_idx_batch.long() * global_n_img + image_idx_batch.long()
+                logits_g = (q @ gal.T) * criterion._get_logit_scale()
+                if args.global_concept_eps > 0 or args.global_soft_tau > 0:
+                    with torch.no_grad():  # soft targets over the whole training gallery
+                        if args.global_soft_tau > 0:  # image-image similarity structure (distillation)
+                            tgt = torch.softmax((gal[gidx] @ gal.T) / args.global_soft_tau, dim=1)
+                        else:
+                            tgt = F.one_hot(gidx, len(gal)).float()
+                        if args.global_concept_eps > 0:  # spread eps over the other images of the same concept
+                            same = (torch.arange(len(gal), device=device)[None] // global_n_img) == (gidx[:, None] // global_n_img)
+                            same = same & (torch.arange(len(gal), device=device)[None] != gidx[:, None])
+                            tgt = (1 - args.global_concept_eps) * tgt + args.global_concept_eps * same.float() / same.sum(1, keepdim=True)
+                    g_loss = -(tgt * F.log_softmax(logits_g, dim=1)).sum(1).mean()
+                else:
+                    g_loss = F.cross_entropy(logits_g, gidx)
+                cl_loss = g_loss if args.global_negatives_replace else cl_loss + args.global_negatives * g_loss
+                if args.global_symmetric > 0:  # image -> EEG over the batch's queries (anti-hub); duplicates are positives
+                    li = logits_g[:, gidx].T                                   # (B images, B queries)
+                    lp = F.log_softmax(li, dim=1)
+                    cl_loss = cl_loss + args.global_symmetric * -(torch.logsumexp(lp.masked_fill(~positive_mask, -1e9), 1)).mean()
             loss = loss + cl_loss
             total_cl_loss += cl_loss.item()
+            if args.repeat_mean_loss > 0 or neighbor_heads is not None:
+                assert eeg_feature_for_loss.shape[0] == subject_id_batch.shape[0], 'L2/L4 losses need unfiltered batches'
+            if args.repeat_mean_loss > 0:
+                # lever L2: the sealed metric averages raw predictions over repeats, so train the averages too
+                key = (subject_id_batch.long() * 4096 + object_idx_batch.long()) * 64 + image_idx_batch.long()
+                _, inv = torch.unique(key, return_inverse=True)
+                n_groups = int(inv.max()) + 1
+                counts = torch.bincount(inv, minlength=n_groups).to(eeg_feature_for_loss.dtype)
+                mean_feat = torch.zeros(n_groups, eeg_feature_for_loss.shape[1], device=device,
+                                        dtype=eeg_feature_for_loss.dtype).index_add_(0, inv, eeg_feature_for_loss)
+                mean_feat = mean_feat / counts[:, None]
+                first = torch.full((n_groups,), inv.numel(), device=device, dtype=torch.long).scatter_reduce_(
+                    0, inv, torch.arange(inv.numel(), device=device), reduce='amin')
+                rm_loss = compute_cross_modal_loss(
+                    criterion, {'feature': mean_feat, 'confidence': None}, image_feature_for_loss[first],
+                    text_feature_proj[first],
+                    build_image_positive_mask(object_idx_batch[first], image_idx_batch[first]), True)
+                loss = loss + args.repeat_mean_loss * rm_loss
+            if neighbor_heads is not None:
+                rep_idx = batch[6].to(device).long()
+                nb = neighbor_table[subject_id_batch.long(), object_idx_batch.long(), image_idx_batch.long(), rep_idx]
+                nb_losses = []
+                for j, head in enumerate(neighbor_heads):
+                    valid = nb[:, j] >= 0
+                    if int(valid.sum()) < 8:
+                        continue
+                    k = nb[valid, j]
+                    nb_losses.append(compute_cross_modal_loss(
+                        criterion, {'feature': head(eeg_feature_for_loss[valid]), 'confidence': None},
+                        neighbor_targets[k], text_feature_proj[valid], k[:, None] == k[None, :], True))
+                if nb_losses:
+                    loss = loss + args.neighbor_loss * torch.stack(nb_losses).mean()
+            if args.distill_lambda > 0:
+                # Ensemble distillation: match the teacher's softmax over this batch's images.
+                teacher = F.normalize(batch[7].to(device).float(), dim=1)
+                images = F.normalize(image_feature_for_loss.float(), dim=1)
+                student_logits = F.normalize(eeg_feature_for_loss.float(), dim=1) @ images.T / args.distill_tau
+                teacher_probs = (teacher @ images.T / args.distill_tau).softmax(dim=1)
+                distill_loss = F.kl_div(student_logits.log_softmax(dim=1), teacher_probs, reduction='batchmean')
+                loss = loss + args.distill_lambda * distill_loss
+            if args.anticorr_lambda > 0:
+                # AUG_LOG negative correlation: penalise the probability the student puts on the in-batch images the
+                # OTHER members wrongly favour (their mass off the true image). No imitation of their answers.
+                others = F.normalize(batch[7].to(device).float(), dim=1)
+                images = F.normalize(image_feature_for_loss.float(), dim=1)
+                wrong = ~((object_idx_batch[:, None] == object_idx_batch[None, :]) & (image_idx_batch[:, None] == image_idx_batch[None, :]))
+                p_s = (F.normalize(eeg_feature_for_loss.float(), dim=1) @ images.T / args.distill_tau).softmax(dim=1)
+                p_o = (others @ images.T / args.distill_tau).softmax(dim=1)
+                loss = loss + args.anticorr_lambda * (p_s * p_o * wrong).sum(1).mean()
             matryoshka_active = (
                 args.matryoshka_lambda > 0
                 and (args.matryoshka_epochs <= 0 or epoch <= args.matryoshka_epochs)
@@ -2955,6 +3713,19 @@ if __name__ == '__main__':
                 loss = loss + args.relational_lambda * rel_loss
                 total_rel_loss += rel_loss.item()
 
+            if args.rsa_lambda > 0:
+                rsa_loss = criterion.rsa_loss(eeg_feature_for_loss, image_feature_for_loss, positive_mask)
+                loss = loss + args.rsa_lambda * rsa_loss
+                total_rel_loss += rsa_loss.item()
+
+            if args.iso_lambda > 0:
+                iso_loss = criterion.isometry_loss(eeg_feature_for_loss, image_idx_batch, subject_id_batch)
+                loss = loss + args.iso_lambda * iso_loss
+                total_rel_loss += iso_loss.item()
+
+            if args.pr_lambda > 0:
+                loss = loss + args.pr_lambda * criterion.collapse_penalty(eeg_feature_for_loss, args.pr_floor)
+
             if args.vrex_lambda > 0:
                 row_losses = criterion.multi_positive_row_losses(
                     eeg_feature_for_loss, image_feature_for_loss, positive_mask
@@ -2984,8 +3755,24 @@ if __name__ == '__main__':
                 total_subject_adapt_subjects += valid_subjects
 
             grad_scaler.scale(loss).backward()
+            if args.sam_rho > 0:  # back to w; the gradient taken at w + eps is what the optimizer applies
+                with torch.no_grad():
+                    if sam_eps is not None:
+                        torch._foreach_sub_(trainable_parameters, sam_eps)
+                    g = [p.grad if p.grad is not None else torch.zeros_like(p) for p in trainable_parameters]
+                    norm = torch.linalg.vector_norm(torch.stack([torch.linalg.vector_norm(x.float()) for x in g]))
+                    sam_dir = [x / (norm + 1e-12) for x in g] if torch.isfinite(norm) else None
+            if args.grad_clip > 0:
+                grad_scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(trainable_parameters, args.grad_clip)
             grad_scaler.step(optimizer)
             grad_scaler.update()
+            if ema_model is not None:
+                ema_model.update_parameters(model)
+            if args.lr_scheduler in ('onecycle', 'wsd'):
+                scheduler.step()
+            elif args.lr_scheduler == 'plateau' and plateau_warmup.last_epoch < warmup_steps:
+                plateau_warmup.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(dataloader)
@@ -3036,14 +3823,34 @@ if __name__ == '__main__':
         # end-of-run reload both use checkpoint_test_best.pth), and it was 270GB across the run
         # archive. Pass --save_last_checkpoint if you need the final-epoch weights.
         if args.save_weights and args.save_last_checkpoint:
-            torch.save(build_checkpoint(epoch, avg_loss, optimizer), f"{writer.log_dir}/checkpoint_last.pth")
+            torch.save(build_checkpoint(epoch, avg_loss), f"{writer.log_dir}/checkpoint_last.pth")
 
+        if ema_model is not None:
+            # Everything below -- test/val metrics, selection, checkpoints, the Codabench
+            # estimate -- sees the EMA weights; the raw weights are restored before training.
+            raw_state = copy.deepcopy(model.state_dict())
+            model.load_state_dict(ema_model.module.state_dict())
         model.eval()
         eeg_projector.eval()
         img_projector.eval()
         text_projector.eval()
 
         avg_test_loss, top1_acc, top5_acc, test_sparsity = evaluate_split(test_dataloader, "test")
+        if args.sealed_test_metric:
+            # Challenge runs only: test top-1/top-5 (and result.csv's best ones) follow the sealed
+            # rule via the grader's own pass on this run's test data; the loss stays as above.
+            history['avg_eeg_top1'].append(top1_acc)
+            history['avg_eeg_top5'].append(top5_acc)
+            top1_acc = top5_acc = float('nan')
+            if epoch % args.sealed_test_every == 0 or epoch == total_epochs:
+                top1_acc, top5_acc = sealed_test_scores()
+        if per_subject_last:
+            path = os.path.join(log_dir, 'per_subject_test.csv')
+            with open(path, 'a') as handle:
+                if handle.tell() == 0:
+                    handle.write('epoch,subject,test_loss,top1,top5\n')
+                for subject, (s_loss, s_top1, s_top5) in per_subject_last.items():
+                    handle.write(f'{epoch},{subject},{s_loss:.5f},{s_top1:.2f},{s_top5:.2f}\n')
         writer.add_scalar('Loss/test', avg_test_loss, epoch)
         writer.add_scalar('Acc/top1_test', top1_acc, epoch)
         writer.add_scalar('Acc/top5_test', top5_acc, epoch)
@@ -3159,22 +3966,53 @@ if __name__ == '__main__':
                     probe_history[key] = []
                 probe_history[key].append(acc)
 
+        if args.codabench_eval_every > 0 and epoch % args.codabench_eval_every == 0:
+            # Same code path as the post-run score_track1.py, on a fixed trial subset of the
+            # official 120 Hz grader input; the final full score stays the number of record.
+            from neurips_challenge.score_track1 import OFFICIAL_EEG_DIR, score_modules
+            cb_cfg = copy.copy(args)
+            cb_cfg.eeg_data_dir = OFFICIAL_EEG_DIR
+            model.eval(); eeg_projector.eval(); img_projector.eval()
+            cb_start = time.time()
+            cb = score_modules(model, eeg_projector, img_projector, cb_cfg, args.test_subject_ids,
+                               device, 512, 0, fraction=args.codabench_eval_fraction)['per_epoch']
+            codabench_history.append({'epoch': epoch, **cb})
+            pd.DataFrame(codabench_history).to_csv(os.path.join(log_dir, 'codabench_estimates.csv'), index=False)
+            writer.add_scalar('Codabench/est_top5', cb['top5'], epoch)
+            log(f"codabench estimate ({cb['n_queries']} queries, {time.time() - cb_start:.0f}s): "
+                f"top5 {cb['top5']:.4f} top1 {cb['top1']:.4f}")
+
         history['epoch'].append(epoch)
         history['train_loss'].append(avg_loss)
         history['test_loss'].append(avg_test_loss)
         history['top1_acc'].append(top1_acc)
+        history['test_top5_acc'].append(top5_acc)
+        history['val_loss'].append(val_loss)
+        history['val_top1_acc'].append(val_top1)
+        history['val_top5_acc'].append(val_top5)
+        # Persist each epoch, including interrupted runs. top1_acc is test top-1.
+        metrics_path = os.path.join(log_dir, 'epoch_metrics.csv')
+        pd.DataFrame(history).to_csv(metrics_path + '.tmp', index=False)
+        os.replace(metrics_path + '.tmp', metrics_path)
 
         selected_loss = avg_test_loss
         selected_top1 = top1_acc
+        selected_top5 = top5_acc
         if args.select_best_on == 'val' and not np.isnan(val_loss):
             selected_loss = val_loss
             selected_top1 = val_top1
+            selected_top5 = val_top5
+        if args.select_best_metric == 'top5':
+            # Contrastive loss keeps rising once the model gets confident, long after ranking
+            # is still improving: on all 8 Track-1 sweep runs the val-loss minimum sat 2.5-5.4
+            # top-5 points below the val-accuracy maximum. Rank on the metric we report.
+            selected_loss = -selected_top5
 
         if args.select_best_on == 'fixed':
             # Honest refit protocol: the epoch budget was chosen on source validation
             # before this run.  Test metrics are still logged for reporting, but may
             # not influence which weights are retained.
-            is_better = epoch == total_epochs
+            is_better = epoch == min(args.stop_after_epoch or total_epochs, total_epochs)  # a stop past the schedule = its last epoch
         else:
             is_better = False
             if selected_loss < best_test_loss:
@@ -3182,6 +4020,12 @@ if __name__ == '__main__':
             elif selected_loss == best_test_loss and selected_top1 > best_top1_acc:
                 is_better = True
 
+        if is_better and args.sealed_test_metric and np.isnan(top1_acc):
+            # an off-epoch became the best: score it so result.csv's best numbers are never NaN
+            top1_acc, top5_acc = sealed_test_scores()
+            history['top1_acc'][-1], history['test_top5_acc'][-1] = top1_acc, top5_acc
+            pd.DataFrame(history).to_csv(metrics_path + '.tmp', index=False)
+            os.replace(metrics_path + '.tmp', metrics_path)
         if is_better:
             best_test_loss = selected_loss
             best_top5_acc = top5_acc
@@ -3190,13 +4034,15 @@ if __name__ == '__main__':
             best_test_epoch = epoch
             best_test_sparsity = dict(test_sparsity)
             if args.save_weights:
-                torch.save(build_checkpoint(epoch, selected_loss, optimizer), f"{writer.log_dir}/checkpoint_test_best.pth")
+                torch.save(build_checkpoint(epoch, selected_loss), f"{writer.log_dir}/checkpoint_test_best.pth")
+        if args.save_weights and epoch in args.save_epoch_checkpoints:  # same (EMA-swapped) weights as evaluated
+            torch.save(build_checkpoint(epoch, selected_loss), f"{writer.log_dir}/checkpoint_ep{epoch:03d}.pth")
         if args.save_testsel_checkpoint and avg_test_loss < best_testsel_loss:
             # Matched control: what test-loss selection would have kept on this same
             # trajectory. Never influences training or the selected checkpoint.
             best_testsel_loss = avg_test_loss
             best_testsel_epoch = epoch
-            torch.save(build_checkpoint(epoch, avg_test_loss, optimizer), f"{writer.log_dir}/checkpoint_testsel_best.pth")
+            torch.save(build_checkpoint(epoch, avg_test_loss), f"{writer.log_dir}/checkpoint_testsel_best.pth")
         if args.early_stop_patience > 0:
             if selected_loss < early_stop_reference_loss - args.early_stop_min_delta:
                 early_stop_reference_loss = selected_loss
@@ -3204,8 +4050,10 @@ if __name__ == '__main__':
             else:
                 epochs_without_selection_improvement += 1
 
-        if scheduler is not None:
-            scheduler.step()
+        if args.lr_scheduler == 'plateau':
+            scheduler.step(top5_acc)  # the per-epoch sealed top-5, the same signal as --sealed_early_stop_patience
+        elif scheduler is not None and args.lr_scheduler not in ('onecycle', 'wsd'):
+            scheduler.step()  # onecycle/wsd already stepped per optimizer step
 
         if (
             args.early_stop_patience > 0
@@ -3216,6 +4064,20 @@ if __name__ == '__main__':
                 f"improvement for {epochs_without_selection_improvement} epochs "
                 f"(best epoch {best_test_epoch})."
             )
+            break
+        if args.sealed_early_stop_patience > 0 and not np.isnan(top5_acc):
+            if top5_acc > sealed_best_top5:
+                sealed_best_top5, sealed_stale = top5_acc, 0
+            else:
+                sealed_stale += 1
+            if sealed_stale >= args.sealed_early_stop_patience:
+                log(f"Early stopping after epoch {epoch}: sealed-rule test top-5 not improved for {sealed_stale} "
+                    f"evaluations (best {sealed_best_top5:.2f}).")
+                if args.save_weights and not is_better:  # --select_best_on fixed keeps the epoch reached
+                    torch.save(build_checkpoint(epoch, selected_loss), f"{writer.log_dir}/checkpoint_test_best.pth")
+                break
+        if epoch == args.stop_after_epoch:
+            log(f"Stopping after epoch {epoch} of a {total_epochs}-epoch schedule (--stop_after_epoch).")
             break
 
     save_training_plot(history, os.path.join(log_dir, 'training_metrics.png'))

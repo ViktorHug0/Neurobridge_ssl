@@ -1,0 +1,8 @@
+bash CVPR_paper/scripts/screen3_eval.sh atm128_vc 3300 > logs/cvpr/final/screen3_atm128_vc.log 2>&1
+bash CVPR_paper/scripts/final_analyses.sh atm128_vc 3301 > logs/cvpr/final/final_atm128_vc_3301.log 2>&1
+bash CVPR_paper/scripts/final_analyses.sh atm128_vc 3302 > logs/cvpr/final/final_atm128_vc_3302.log 2>&1
+bash CVPR_paper/scripts/encoder_battery.sh atm128_iv20_vc 3300 > logs/cvpr/final/battery_atm128_iv20_vc.log 2>&1
+bash CVPR_paper/scripts/encoder_battery.sh atm128_iv44_vc 3300 > logs/cvpr/final/battery_atm128_iv44_vc.log 2>&1
+bash CVPR_paper/scripts/encoder_battery.sh atm128_dino40_vc 3300 > logs/cvpr/final/battery_atm128_dino40_vc.log 2>&1
+bash CVPR_paper/scripts/encoder_battery.sh atm128_cliph_vc 3300 > logs/cvpr/final/battery_atm128_cliph_vc.log 2>&1
+bash CVPR_paper/scripts/encoder_battery.sh atm128_bigg27_vc 3300 > logs/cvpr/final/battery_atm128_bigg27_vc.log 2>&1

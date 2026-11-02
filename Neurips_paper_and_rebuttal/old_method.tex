@@ -1,0 +1,179 @@
+\begin{comment}
+
+\section{Proposed Method: SAGE}
+\label{sec:method}
+
+We propose SAGE (\textbf{S}ubject-\textbf{A}gnostic to \textbf{G}eometrically-aligned \textbf{E}mbeddings), a two-stage framework designed to bridge the intra-/cross-subject gap in EEG-to-image decoding. The first stage (\emph{subject-disentangled training}) focuses on learning representations that are less confounded by subject identity, while the second stage (\emph{transductive geometric alignment}) performs a test-time correction of the geometric misalignment between the source EEG and target image embedding spaces.
+
+\subsection{Visual Target Space: Intermediate InternViT Features}
+\label{sec:visual}
+
+A central design decision concerns the choice of image representation to which EEG features are aligned.
+Final-layer features from large vision transformers encode highly abstract, class-discriminative semantics that may correlate poorly with the lower-level perceptual content accessible from EEG signals~\cite{cichy2014resolving}.
+Du et al.~\cite{du2025shallow} demonstrated systematically that intermediate layers yield superior EEG-image alignment, as they balance high-level object identity with mid-level perceptual organization---both of which are decodable from brain signals.
+
+We use InternViT-6B~\cite{chen2024internvl}, a large vision transformer~\cite{vaswani2017attention,dosovitskiy2021vit}, and extract activations at \textbf{layer 28} (of 48 transformer blocks).
+This layer balances coarse scene structure with fine-grained object features, avoiding the over-abstracted semantic representations of the final layers.
+Image embeddings are linearly projected to the shared $d$-dimensional alignment space and $\ell_2$-normalized: $\hat{\mathbf{v}} = \phi(\mathbf{v}) / \|\phi(\mathbf{v})\|$, where $\phi$ is the learnable projection.
+The image encoder is frozen throughout training.
+
+\subsection{EEG Encoder: TSConv with All 63 Channels}
+\label{sec:tsconv}
+
+On the EEG side, we employ the Temporal-Spatial Convolutional (TSConv) architecture introduced in NICE~\cite{song2024nice}.
+TSConv applies temporal convolutions followed by spatial convolutions, reflecting the natural factored structure of EEG data: temporal dynamics are captured first across the full electrode set, followed by spatial mixing across all channels.
+We depart from the configuration adopted by Shallow Alignment~\cite{du2025shallow}, which processed only 16 occipital/parietal channels using an EEGProject (MLP) encoder.
+Instead, following~\cite{zhang2025neurobridge}, we retain \textbf{all 63 channels}, leveraging complementary information from frontal, temporal, and parietal regions known to participate in visual processing~\cite{cichy2014resolving}.
+
+NeuroBridge~\cite{zhang2025neurobridge} and Shallow Alignment~\cite{du2025shallow} demonstrated that projecting both modalities into a jointly learned space---rather than forcing EEG embeddings into a frozen backbone space---yields superior alignment.
+We adopt the same strategy: both EEG and image features are projected via learnable linear maps, which distill high-dimensional intermediate representations into the compact alignment subspace.
+Concretely, given an input $\mathbf{X} \in \mathbb{R}^{C \times T}$ ($C{=}63$ channels, $T{=}250$ time steps), TSConv proceeds as follows:
+
+\begin{enumerate}[noitemsep]
+  \item A temporal convolution (40 filters, kernel $1{\times}25$, stride 1) captures short-range temporal dynamics across the full time series, followed by average pooling (kernel $1{\times}51$, stride 5) to compress the temporal dimension.
+  \item Batch normalization and ELU activation.
+  \item A spatial convolution (kernel $C{\times}1$, 40 filters) mixes information across all $C$ electrode channels into a single spatial summary per time step, followed by batch normalization, ELU, and dropout.
+  \item The output is flattened and passed through a two-layer MLP with residual connection, GELU activation, and layer normalization, projecting to the final embedding $\mathbf{e} \in \mathbb{R}^d$.
+\end{enumerate}
+
+EEG embeddings are \emph{not} $\ell_2$-normalized before the contrastive loss, unlike the image embeddings.
+This asymmetric scheme, adopted from NeuroBridge~\cite{zhang2025neurobridge} and ENIGMA~\cite{kneeland2025enigma}, enables \emph{confidence weighting}: the magnitude $\|\mathbf{e}_i\|$ scales the effective temperature of sample $i$ in the loss, allowing the model to down-weight noisy or ambiguous trials without explicit supervision.
+
+\subsection{Multi-Positive InfoNCE with Stimulus-Grouped Batches}
+\label{sec:infonce}
+
+Let $\mathbf{e}_i \in \mathbb{R}^d$ denote the (unnormalized) EEG embedding for sample $i$, $\hat{\mathbf{v}}_j \in \mathbb{R}^d$ the $\ell_2$-normalized image embedding for image $j$, and $\tau > 0$ a learnable temperature.
+We organize training into \textbf{stimulus-grouped batches}~\cite{khosla2020supcon}: each batch of size $N = M \times K$ is composed of $M$ distinct image stimuli, each represented by $K$ EEG responses from different subjects.
+Let $\mathcal{I} = \{1,\ldots,N\}$ index all EEG samples, $\mathcal{A} = \{1,\ldots,M\}$ index the $M$ image embeddings, and $\mathcal{P}(i) \subseteq \mathcal{A}$ denote the image indices sharing the same stimulus label as sample $i$.
+The EEG-to-image loss follows the multi-positive InfoNCE structure of SupCon~\cite{khosla2020supcon}:
+\begin{equation}
+  \label{eq:infonce}
+  \mathcal{L}_{\mathrm{E \to V}}
+  = \frac{-1}{N}\sum_{i \in \mathcal{I}}
+    \frac{1}{|\mathcal{P}(i)|}
+    \sum_{p \in \mathcal{P}(i)}
+    \log
+    \frac{\exp\!\bigl(\mathbf{e}_i \cdot \hat{\mathbf{v}}_p\,/\,\tau\bigr)}
+         {\displaystyle\sum_{a \in \mathcal{A}}\exp\!\bigl(\mathbf{e}_i \cdot \hat{\mathbf{v}}_a\,/\,\tau\bigr)}.
+\end{equation}
+The image-to-EEG direction $\mathcal{L}_{\mathrm{V \to E}}$ is defined analogously with roles reversed: for image $j$, the positive set $\mathcal{Q}(j) = \{i \in \mathcal{I} : c_i = c_j\}$ contains all $K$ EEG responses from different subjects who viewed the same stimulus, recovering the full multi-positive structure ($|\mathcal{Q}(j)| = K$).
+The total loss is $\mathcal{L}_{\mathrm{ctr}} = (\mathcal{L}_{\mathrm{E \to V}} + \mathcal{L}_{\mathrm{V \to E}}) / 2$.
+Averaging over $\mathcal{Q}(j)$ prevents the $K$ same-stimulus EEG embeddings from acting as false negatives, extending the standard contrastive logic of SimCLR~\cite{chen2020simclr} and SupCon~\cite{khosla2020supcon} to the multi-modal brain-decoding setting.
+
+
+\subsection{Compact Alignment Space as an Information Bottleneck}
+\label{sec:bottleneck}
+
+We project both modalities into a shared $d=64$ dimensional alignment space, a configuration significantly more compact than the 512--1024 dimensions standard in recent literature~\cite{zhang2025neurobridge,du2025shallow, wu2025ubp}. This choice of a narrow bottleneck is motivated by both computational and statistical considerations. From a computational perspective, the downstream transductive alignment pipeline, specifically ZCA whitening and orthogonal Procrustes estimation, requires well-conditioned covariance matrices. Given the limited number of test samples ($N=200$), lower dimensionality ensures stable estimation.
+
+Statistically, the bottleneck serves as a structural regularizer that forces the encoder to prioritize stimulus-predictive directions while discarding high-variance subject-specific idiosyncrasies that do not consistently align with image content across subjects. We validate this architectural constraint empirically in Section~\ref{sec:probes}: reducing the embedding dimensionality from 1024 to 64 not only leads to a marked decrease in subject-identifiability as measured by a linear probe, but also results in a concomitant increase in cross-subject retrieval accuracy. This confirms that the compact space actively suppresses subject-specific variance while preserving the discriminative features necessary for generalization.
+
+\subsection{Cross-Subject Mixing Regularization}
+\label{sec:mixup}
+
+Despite the use of stimulus-grouped training and a compact bottleneck, residual subject-specific geometry still contaminates the alignment space. To explicitly enforce subject-invariant representations, we introduce \emph{SubjectMix}, a cross-subject mixing regularization tailored to the multi-subject retrieval task.
+
+Within each stimulus-grouped batch, for every EEG sample $\mathbf{x}_i$ belonging to subject $s_i$, we randomly select a partner $\mathbf{x}_j$ from a different subject $s_j \neq s_i$ who perceived the same visual stimulus. A mixed EEG trial $\tilde{\mathbf{x}}_i$ is generated via a convex combination of the raw signals:
+\begin{equation}
+  \label{eq:mix}
+  \tilde{\mathbf{x}}_i = \lambda_i\,\mathbf{x}_i + (1 - \lambda_i)\,\mathbf{x}_j, \quad \lambda_i \sim \mathrm{Beta}(\alpha_{\mathrm{mix}}, \alpha_{\mathrm{mix}}).
+\end{equation}
+Crucially, the mixed sample $\tilde{\mathbf{x}}_i$ is aligned to the \textbf{original, unmodified image embedding} shared by both $\mathbf{x}_i$ and $\mathbf{x}_j$. 
+
+This differs fundamentally from standard Mixup~\cite{zhang2018mixup} in its objective: rather than smoothing decision boundaries through label interpolation, SubjectMix serves as a cross-subject augmentation that enforces representation invariance across different neural manifolds. By requiring that any arbitrary linear combination of same-stimulus EEG signals maps to the same visual target, we penalize directions in embedding space that encode subject-specific noise or anatomical signatures. The contrastive loss thus favors features that are consistent across the subject population. As shown in Section~\ref{sec:probes}, this regularization effectively reduces the accuracy of subject-identity probes in the alignment space, facilitating the learning of more generalizable neural-to-visual mappings.
+
+% [Figure 1: Architecture overview. Left panel (training): (a) Stimulus-grouped batch showing same-image EEG recordings from K subjects. (b) Cross-subject mixing generating synthetic EEG samples. (c) TSConv encoder and compact MLP projector producing 64-d EEG embeddings (not L2-normalized). (d) Frozen InternViT-6B with linear projection and L2-normalization producing image embeddings. (e) Multi-positive InfoNCE loss. Right panel (test-time adaptation): Sequential stages of the transductive pipeline on the 200-way test set, from raw EEG embeddings through whitening, CSLS, Sinkhorn, Procrustes, and iterative refinement.]
+
+\subsection{Transductive Test-Time Adaptation}
+\label{sec:tta}
+
+The cross-subject performance gap stems from a combination of poor encoder generalization and a systematic geometric mismatch between the new subject's EEG manifold and the image embedding space. Because this shift is tied to subject-specific factors such as cortical geometry and electrode placement, it is fundamentally difficult to resolve at training time without access to the held-out subject's data. 
+To bridge this divide without requiring new labels, we reframe the retrieval task as a \emph{transductive} problem: rather than classifying each EEG query in isolation, we leverage the global structure of the full 200-sample test batch to estimate and correct the subject-specific coordinate shift. 
+By treating the query set and the candidate images as two unlabeled point clouds with a known one-to-one matching constraint, we can perform unsupervised registration via a sequential, iterative pipeline.
+
+\subsubsection{Stage 1: ZCA Whitening}
+\label{sec:whitening}
+
+Let $\{\mathbf{e}_i\}_{i=1}^{N}$ be the $N{=}200$ EEG embeddings of the held-out subject ($\mathbf{e}_i \in \mathbb{R}^d$).
+We estimate the mean $\hat{\boldsymbol{\mu}}$ and shrinkage-regularized covariance:
+\begin{equation}
+  \hat{\Sigma} = \frac{1}{N{-}1}\sum_{i=1}^N
+    (\mathbf{e}_i{-}\hat{\boldsymbol{\mu}})(\mathbf{e}_i{-}\hat{\boldsymbol{\mu}})^\top,\quad
+  \tilde{\Sigma} = (1-\rho)\,\hat{\Sigma}
+    + \rho\,\tfrac{\operatorname{tr}(\hat{\Sigma})}{d}\,I_d,
+\end{equation}
+where $\rho$ is a shrinkage coefficient that stabilizes the estimate.
+The ZCA (symmetric) whitening matrix is $W = \tilde{\Sigma}^{-1/2}$. 
+The whitened, centered, and $\ell_2$-normalized EEG embedding is $\mathbf{e}_i' = W(\mathbf{e}_i - \hat{\boldsymbol{\mu}}) / \|W(\mathbf{e}_i - \hat{\boldsymbol{\mu}})\|$.
+After whitening, the query cloud is approximately isotropic, ensuring that no single direction dominates cosine similarity due to high variance.
+Note that this whitening is performed as a static pre-processing step: the transformation is estimated and applied once before the iterative alignment loop begins.
+
+\subsubsection{Stage 2: CSLS Hubness Correction}
+\label{sec:csls}
+
+Following whitening, we apply Cross-domain Similarity Local Scaling (CSLS)~\cite{conneau2018muse} to mitigate the hubness effect.
+For a query $\mathbf{e}_i'$ and a candidate $\hat{\mathbf{v}}_j$,
+\begin{equation}
+  \mathrm{CSLS}(\mathbf{e}_i', \hat{\mathbf{v}}_j)
+  = 2\cos(\mathbf{e}_i', \hat{\mathbf{v}}_j) - r_X(\mathbf{e}_i') - r_Y(\hat{\mathbf{v}}_j),
+\end{equation}
+where $r_X(\mathbf{e}_i')$ and $r_Y(\hat{\mathbf{v}}_j)$ are mean neighborhood similarities.
+CSLS acts as a local density correction, penalizing points that frequently appear as nearest neighbors. 
+This step is crucial for stabilizing the initial similarity matrix $S$ before it is used for global structural alignment.
+
+\subsubsection{Stage 3: Sinkhorn Permutation Regularization}
+\label{sec:sinkhorn}
+
+The CSLS similarity matrix $S \in \mathbb{R}^{N \times N}$ is converted into a soft doubly-stochastic assignment matrix via Sinkhorn-Knopp~\cite{cuturi2013sinkhorn,sinkhorn1964}:
+\begin{equation}
+  P^{(0)} = \exp(S / \tau_{\mathrm{sk}}),
+  \qquad
+  P^{(t+1)} = \mathrm{SinkhornNorm}(P^{(t)}),
+\end{equation}
+where $\tau_{\mathrm{sk}}$ controls assignment sharpness and $\mathrm{SinkhornNorm}$ alternates row and column normalization. 
+This stage provides the core geometric intuition of our approach: by imposing a doubly-stochastic constraint, we exploit the known bijective (one-to-one) structure of the 200-way task. 
+Standard retrieval often suffers from many-to-one collapses (hubs); Sinkhorn forces the queries to "spread" across the candidate set, ensuring that each image receives exactly one unit of assignment. 
+The resulting matrix $P^{(\infty)}$ acts as a structured, soft supervision signal for the subsequent alignment.
+
+\subsubsection{Stage 4: Weighted Orthogonal Procrustes Alignment}
+\label{sec:procrustes}
+
+Given soft assignments $P$, we fit an orthogonal rotation $R \in \mathcal{O}(d)$ that maps EEG embeddings toward image embeddings:
+\begin{equation}
+  \label{eq:procrustes-obj}
+  R^* = \arg\min_{R^\top R = I}
+    \sum_{i,j} P_{ij}\,\|\mathbf{e}_i' R - \hat{\mathbf{v}}_j\|^2.
+\end{equation}
+The closed-form solution is given by the SVD of the weighted cross-covariance matrix $M = E'^\top P\, V$. 
+
+\subsubsection{Stage 5: Iterative Refinement}
+\label{sec:iterative}
+
+After the initial static ZCA whitening of the queries, the remaining three stages are iterated to convergence as detailed in Algorithm~\ref{alg:tta}. 
+This alternating minimization jointly refines the soft correspondence matrix $P$ and the orthogonal rotation $R^*$ in the spirit of expectation-maximization.
+The loop terminates when the change in the assignment matrix $P$ falls below a threshold or the maximum number of iterations is reached.
+The final retrieval prediction for query $i$ is then given by $\hat{y}_i = \arg\max_j \mathrm{CSLS}(\mathbf{e}_i', \hat{\mathbf{v}}_j)$.
+
+\begin{algorithm}[H]
+\caption{Transductive Test-Time Adaptation}
+\label{alg:tta}
+\begin{algorithmic}[1]
+\STATE \textbf{Input:} Raw EEG embeddings $\{\mathbf{e}_i\}_{i=1}^N$, image candidates $\{\hat{\mathbf{v}}_j\}_{j=1}^N$
+\STATE \textbf{Output:} Aligned EEG embeddings $\{\mathbf{e}_i'\}_{i=1}^N$
+\STATE $\mathbf{e}_i' \leftarrow \mathrm{ZCAWhitening}(\{\mathbf{e}_i\})$ \COMMENT{Static pre-processing}
+\REPEAT
+    \STATE $S_{ij} \leftarrow \mathrm{CSLS}(\mathbf{e}_i', \hat{\mathbf{v}}_j)$ \COMMENT{Local density correction}
+    \STATE $P \leftarrow \mathrm{Sinkhorn}(\exp(S / \tau_{\mathrm{sk}}))$ \COMMENT{Structural permutation prior}
+    \STATE $M \leftarrow E'^\top P V$ \COMMENT{Weighted cross-covariance}
+    \STATE $U, \Sigma, V_{\mathrm{svd}}^\top \leftarrow \mathrm{SVD}(M)$
+    \STATE $R^* \leftarrow U V_{\mathrm{svd}}^\top$ \COMMENT{Solve orthogonal Procrustes}
+    \STATE $\mathbf{e}_i' \leftarrow \ell_2\text{-normalize}(\mathbf{e}_i' R^*)$ \COMMENT{Update embeddings}
+\UNTIL{convergence}
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Hyperparameters.}
+Whitening shrinkage $\rho = 0.85$; CSLS neighborhood $k = 1$; Sinkhorn temperature $\tau_{\mathrm{sk}} = 0.1$, 8 complete CSLS+Sinkhorn+Procrustes refinement cycles, each application of Sinkhorn consisting of 6 iterations.
+All hyperparameters were selected using training-subject cross-validation and fixed before any evaluation on held-out test subjects.
+
+\end{comment}

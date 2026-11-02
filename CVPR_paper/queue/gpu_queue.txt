@@ -1,0 +1,3 @@
+# CVPR GPU queue. One line = one fold. Workers pop from the top. Reordered 2026-10-20 night (4 GPUs).
+# 1) screens folds 1/3/8 of every candidate encoder  2) intra-subject ATM bases  3) full folds  4) extra seeds
+# 2026-10-24 ValCon retraining for the v2 paper (user: ValCon base encoders for all results). Order: Table-2 encoders, ATM seeds, intra, variants f138.

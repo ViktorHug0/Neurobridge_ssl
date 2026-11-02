@@ -1,0 +1,95 @@
+# 2026-10-15 ARCH_LOG H0: hybrid architectures, fold 1 screens
+# 2026-10-15 17:30 ensemble search caches (user)
+enscache_a 1
+enscache_b 1
+hbase32_things 1
+# H3: hta variants (attention kind, depth)
+# H1: TSConvPlus axes
+# SUBJECT_LOG D4: fine-tune oracle (interleaved)
+ftor_tsc 1
+# H2: TSConvPlus filters / kernel / pool
+hf80_things 1
+hf20_things 1
+# H4: more filters
+hf160_things 1
+ftor_tsc_bn 1
+hk49_things 1
+hk13_things 1
+hsm2_things 1
+# H6: pooling type, stacked temporal conv
+# R-series (user): REVE-style token variants, ~5M, vs reve_d6w256_things
+# ROUTING_LOG E48 (user): learned participant embedding for in-batch routing (GPU, short)
+route_emb_both 1
+# E48b/E49 (user): in-batch contrastive participant embedding, then neighbour whitening (waits for its embeddings)
+route_emb_con 1
+# A30 (user): product-of-experts ensemble combiner over a training-image proxy gallery
+poe_sim 1
+route_whiten2 1
+rmix_things 1
+rtime_things 1
+relec_things 1
+# E48c: participant embedder with 69 training identities (+ THINGS-EEG1; waits for eeg1_identity_cache.py)
+route_emb_big 1
+route_emb_eval 1
+# rmix confirmation + ensemble candidate (needs all 4 folds for ens_cache)
+rmix_things 2
+rmix_things 3
+rmix_things 4
+# R-series iteration on rtime (time tokens + flatten): readout and patch size
+rtime12_things 1
+rtime3_things 1
+enscache_rmix 1
+# rmix iteration (the R-series winner): coarser time tokens, flatten readout
+rmix40_things 1
+rmixflat_things 1
+ftor_tsc_head 1
+ftor_tsc_temp 1
+# H7 (SUBJECT_LOG D4: ~90% of the per-person headroom is in the readout): mixture-of-experts readout
+rmixd8_things 1
+# H5 (user question): time <- frequency cross-attention
+rmix_s2_things 1
+rmix_s2_things 2
+# rmixd8 (fold 1 last-3 30.23 vs rmix 28.83): confirm on folds 2-4 + ensemble cache, ahead of the seed replicate
+# E50 (user: easy router test): deployed router with its LDA refitted on 61 identities
+route_ldaE 1
+rmixd8_things 2
+rmixd8_things 3
+rmixd8_things 4
+# SUBJECT_LOG D6 (user): feature-space batch transform inside the TSC-bn64 head
+feat_tf 1
+enscache_rmixd8 1
+rmixd12_things 1
+# D5 (user): LoRA head oracles interleaved with the rmix scaling ladder
+ftor_tsc_lora4 1
+rmix_d12w256_things 1
+ftor_tsc_hbias 1
+ftor_tsc_hconv 1
+ftor_tsc_lora1 1
+rmix_d8w320_things 1
+# SUBJECT_LOG D7: label-free recolouring of the 40 filter outputs (person / batch stats)
+feat_coral 1
+ftor_tsc_lora16 1
+rmix_d16w256_things 1
+# R-series round 3 (scaling settled: size is not the lever): readout and time-token layout around rmix
+rmix_split_things 1
+rmix_ms_things 1
+# R-series round 4: REVE electrode tokens + TSConv-stem time tokens (cross-family hybrid)
+rmix_tsc9_things 1
+rmix_sqf_things 1
+# R-series round 5: the attention mechanism itself (all earlier R runs used plain full softmax attention)
+rmix_reg_things 1
+# rmix_reg (fold 1 last-3 29.80 vs rmix 28.83 / seed-2 28.43): confirm on folds 2-4 + ensemble cache
+rmix_reg_things 2
+rmix_reg_things 3
+rmix_reg_things 4
+enscache_rmix_reg 1
+# R-series round 6: attention along time within each electrode (electrode x patch tokens); split FFN paths per token type
+rmix_tffn_things 1
+# R-series round 7: Squeezeformer attention-stats readout on rmix, screened on 2 folds (fold-1 leads were noise twice)
+rmix_apool_things 1
+# round 8: Squeezeformer + rmix electrode tokens (SQF family), 2-fold screen vs sqf_dbn_things
+sqfmix_things 1
+sqfmix_things 2
+# round 9: attention across TSConv-stem filters + electrodes (REVE x TSConv along the filter axis), 2-fold screen
+rmix_filt_things 1
+rmix_filt_things 2

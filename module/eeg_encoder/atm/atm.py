@@ -6,6 +6,7 @@ from einops.layers.torch import Rearrange
 from .subject_layers.Transformer_EncDec import Encoder, EncoderLayer
 from .subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
 from .subject_layers.Embed import DataEmbedding
+from ..model import DomainBatchNorm2d
 
 class Config:
     def __init__(
@@ -173,6 +174,7 @@ class ATMS(nn.Module):
         conv_dropout=0.5,
         subject_token=True,
         backbone_dim=0,
+        domain_bn_boundary=0,
     ):
         super(ATMS, self).__init__()
         # e_layers == 0 keeps the per-channel temporal embedding and the conv readout but drops
@@ -216,6 +218,10 @@ class ATMS(nn.Module):
             projection_filters=projection_filters,
             dropout=conv_dropout,
         )
+        tsconv = self.enc_eeg[0].tsconv
+        if domain_bn_boundary > 0:  # per-dataset statistics in the conv stem's two BatchNorms (cf. FastTSConvSqueezeformer)
+            for k in (2, 5):
+                tsconv[k] = DomainBatchNorm2d(tsconv[k].num_features, domain_bn_boundary)
         embedding_dim = pooled_width * projection_filters
         # backbone_dim > 0 mirrors TSConv_parameterizable's trunk: the residual head runs at
         # backbone_dim and a final Linear maps to feature_dim (the grader's 1536-D space).
@@ -233,7 +239,13 @@ class ATMS(nn.Module):
         # print("x", x.shape)
         # x = self.subject_wise_linear[0](x)
         # print(f'After subject-specific linear transformation shape: {x.shape}')
-        eeg_embedding = self.enc_eeg(x)
+        if any(isinstance(layer, DomainBatchNorm2d) for layer in self.enc_eeg[0].tsconv):
+            z = x.unsqueeze(1)
+            for layer in self.enc_eeg[0].tsconv:
+                z = layer(z, subject_ids) if isinstance(layer, DomainBatchNorm2d) else layer(z)
+            eeg_embedding = self.enc_eeg[1](self.enc_eeg[0].projection(z))
+        else:
+            eeg_embedding = self.enc_eeg(x)
         
         out = self.proj_eeg(eeg_embedding)
         return out

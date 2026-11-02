@@ -1,0 +1,671 @@
+
+
+STRUCTURED VISUAL TARGET LEARNING FORCROSS-SUBJECT EEG-TO-IMAGE RETRIEVAL
+
+Report GitHub Issue
+      ×
+
+      Title:
+
+Content selection saved. Describe the issue below:
+
+      Description:
+
+      Submit without GitHub
+      Submit in GitHub
+
+    arXiv is now an independent nonprofit!
+    Learn more
+    ×
+
+      Back to arXiv
+
+    Why HTML?
+
+      Report Issue
+
+      Back to Abstract
+
+      Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Method
+
+2.1 Problem Setup
+
+2.2 Structured Multi-View Visual Target
+
+2.3 Block Attention Residual View Routing
+
+2.4 Training Objective
+
+3 Experiments
+
+3.1 Dataset Details
+
+3.2 Evaluation Details
+
+3.3 Implementation Details
+
+3.4 Results and Discussion
+
+4 CONCLUSION
+
+References
+
+    License: CC BY 4.0
+
+arXiv:2609.36971v1 [cs.CV] 29 Sep 2026
+
+STRUCTURED VISUAL TARGET LEARNING FOR
+CROSS-SUBJECT EEG-TO-IMAGE RETRIEVAL
+
+Salini Yadav
+††thanks: Corresponding author. Email:
+salini_y1@cs.iitr.ac.in
+
+Taveena Lotey
+
+Mickaël Coustaty
+
+Pravendra Singh
+
+Partha Pratim Roy
+
+Abstract
+
+Cross-subject EEG-to-image retrieval requires a neural representation trained on source subjects to remain aligned with a visual embedding space for an unseen subject. Whereas existing methods primarily focus on the EEG side, we address this problem from the perspective of the visual target. Our approach preserves the spatial information of the Perception Encoder, converts its patch grid into a compact set of learned visual views, and aggregates them for each image with a block-structured, content-dependent router. The target is learned jointly with the EEG encoder through contrastive learning with MMD regularization across source subjects. For deployment, we propose a training-free representation refinement that aligns frozen embeddings without updating either encoder. Under leave-one-subject-out evaluation on THINGS-EEG2, the structured target achieves 35.3%/65.6% Top-1/Top-5 accuracy, the best among compared methods. Refinement raises this to 48.1%/77.1%, an 18.5% Top-1 gain over the strongest compared method, improving all ten held-out subjects
+11
+          1
+
+        Code: https://github.com/Shalini-Y1/SVTL_EEG2Image.
+
+Index Terms: EEG decoding, cross-subject generalization, zero-shot EEG-to-image retrieval, visual representation learning, contrastive learning
+
+††address: 1Indian Institute of Technology Roorkee, India
+2University of La Rochelle, France
+3Indian Institute of Technology (ISM) Dhanbad, India
+
+1 Introduction
+
+Visual decoding from EEG aims to recover perceived visual content from non-invasive neural recordings [3, 11]. EEG-to-image retrieval systems map neural responses and candidate images into a shared embedding space, enabling zero-shot recognition of concepts never seen as output classes during training [11, 17]. On the THINGS-EEG2 benchmark [3], progress depends on both the EEG encoder and the visual target it is trained to match [11, 9, 20].
+
+A practically important but considerably harder setting is cross-subject retrieval. Under leave-one-subject-out (LOSO) evaluation, the model is trained on several subjects and tested on one whose recordings are never observed [13]. Because EEG responses to the same image vary substantially across individuals, a mapping learned from source subjects often transfers poorly to a new one. Differences in head anatomy, electrode placement, and individual neural response patterns shift the EEG feature distribution, so an encoder that performs well on source subjects may produce embeddings that no longer align with the visual space for the target subject [15]. Closing this gap is essential for deployment, since subject-specific labeled calibration is costly in practice.
+
+Prior work has addressed this problem mainly from the neural side. NICE established contrastive EEG-to-image retrieval on THINGS-EEG2 with frozen visual features [17], and later methods improved the EEG encoder, multimodal supervision, or the choice of visual features [11, 18, 20, 21, 22, 2]. SAMGA introduced subject-aware multi-granularity alignment for zero-shot EEG-to-image retrieval [9]. Classical cross-subject BCI methods, such as Euclidean alignment, hyperalignment, and Riemannian Procrustes analysis, instead align the neural data directly [6, 5, 14], while test-time calibration adapts frozen models using unlabeled target-subject data [7]. In most of these approaches, however, the visual side is represented by a single global image embedding shared by all subjects.
+
+We argue that this visual target is itself a bottleneck for cross-subject generalization. A global embedding compresses an image into one vector, so every subject’s EEG must be mapped onto the same summary, even though different individuals’ responses may reflect different aspects of the image. Modern vision encoders retain far richer information: the Perception Encoder (PE) shows that intermediate spatial representations carry distributed, complementary visual information not confined to the final output [1]. We hypothesize that supervising EEG with several complementary image views provides the encoder with multiple ways to match a new subject’s response, thereby enabling better transfer across individuals.
+
+Figure 1: Overview of the proposed cross-subject EEG-to-image retrieval framework. The trainable EEG encoder maps EEG signals into the shared embedding space, while a frozen pre-trained vision encoder produces spatial visual tokens that are converted into multiple visual views using learned multi-view pooling and fused by the block attention–residual router. EEG and image embeddings are aligned through a two-stage objective, combining contrastive learning with MMD-based distribution alignment in Stage I and contrastive learning alone in Stage II.
+
+We therefore introduce a structured multi-view visual target constructed from PE spatial features. Learned queries [12, 8] pool the spatial feature map into multiple complementary views. These views are then grouped and aggregated by a block-structured, content-dependent router [19, 16], so that different subsets of spatial information contribute depending on the image. The visual target is learned jointly with the EEG encoder through EEG–vision contrastive learning and is combined with a two-stage schedule that uses MMD regularization [4] to reduce distributional differences among source subjects. For unseen subjects, we further introduce a post hoc representation refinement that requires no target-subject labels or additional training. It aligns the frozen EEG and image embeddings through moment matching, CSLS-based pseudo-correspondences [10], and regularized orthogonal alignment. This step targets the residual distribution shift that remains after training, which training-time regularization cannot fully remove because target-subject data are unavailable during training. Since the refinement uses the unlabeled test embeddings of the held-out subject collectively (i.e., it is transductive), we report it separately.
+
+Our contributions are:
+
+• 
+
+a structured multi-view visual target that converts spatially distributed PE features into complementary supervision views for cross-subject EEG decoding;
+
+• 
+
+a content-dependent block routing strategy that adaptively aggregates these views for each image;
+
+• 
+
+a training-free representation refinement for unseen subjects. In ten-subject LOSO experiments on THINGS-EEG2, the structured target achieves the highest average retrieval accuracy among the methods reported in Table 1, while the separate representation-refinement stage further raises Top-1 accuracy to
+48.1%.
+
+2 Method
+
+2.1 Problem Setup
+
+We address cross-subject EEG-to-image retrieval under a leave-one-subject-out (LOSO) protocol. Let
+
+ $\mathcal{D}=\{(x_{i},I_{i},s_{i})\}_{i=1}^{N},$ 
+
+(1)
+
+where  $x_{i}\in\mathbb{R}^{C\times T}$  denotes an EEG trial,  $I_{i}$  is the corresponding image, and  $s_{i}$  denotes the subject identity. We learn an EEG encoder  $f_{\theta}$  that maps neural responses into a shared embedding space with a frozen visual encoder. During training, nine subjects are used as source subjects, while the held-out subject is completely unseen. At inference, the learned EEG encoder is applied without target-subject fine-tuning.
+
+Rather than using a single global image descriptor for supervision, we construct a structured multi-view visual target from the spatial representation produced by the frozen visual encoder. The detailed architecture is depicted in Fig. 1.
+
+2.2 Structured Multi-View Visual Target
+
+Let the spatial patch representation of an image be denoted by  $P\in\mathbb{R}^{T\times D}$ .To preserve complementary spatial information, we introduce  $K$  learnable queries
+ $Q\in\mathbb{R}^{K\times D}$  and extract multiple visual views through cross-attention:
+
+ $V=\operatorname{MHA}\left(Q,\operatorname{LN}(P),\operatorname{LN}(P)\right),\qquad V\in\mathbb{R}^{K\times D}.$ 
+
+(2)
+
+where  $P$  denotes the spatial patch features,  $Q$  the learnable queries,  $\operatorname{LN}$  Layer Normalization, and  $\operatorname{MHA}$  multi-head cross-attention.
+Each query learns a distinct attention pattern over the spatial tokens, producing multiple task-specific views instead of collapsing the entire feature map into a single global vector. The extracted views are subsequently projected into the common EEG–vision embedding space:
+
+ $z_{k}=f_{k}(V_{k}),\qquad k=1,\ldots,K.$ 
+
+(3)
+
+We then adapt block attention-residual routing to aggregate these visual views into a structured supervision target. This adaptation is designed specifically to construct visual supervision for cross-subject EEG representation learning, rather than to combine transformer-layer residuals.
+
+Table 1: Cross-subject zero-shot EEG-to-image retrieval on THINGS-EEG2 under leave-one-subject-out evaluation. Results are reported as Top-1 / Top-5 accuracy (%).
+
+Method
+Sub-01
+Sub-02
+Sub-03
+Sub-04
+Sub-05
+Sub-06
+Sub-07
+Sub-08
+Sub-09
+Sub-10
+Avg.
+
+NICE [17]
+7.6/22.8
+5.9/20.5
+6.0/22.3
+6.3/20.7
+4.4/18.3
+5.6/22.2
+5.6/19.7
+6.3/22.0
+5.7/17.6
+8.4/28.3
+6.2/21.4
+
+ATM [11]
+10.5/26.8
+7.1/24.8
+11.9/33.8
+14.7/39.4
+7.0/23.9
+11.1/35.8
+16.1/43.5
+15.0/40.3
+4.9/22.7
+20.5/46.5
+11.9/33.8
+
+UBP [21]
+11.5/29.7
+15.5/40.0
+9.8/27.0
+13.0/32.3
+8.8/33.8
+11.7/31.0
+10.2/23.8
+12.2/32.2
+15.5/40.5
+16.0/43.5
+12.4/33.4
+
+NeuroBridge [22]
+23.2/52.4
+21.2/49.3
+13.2/36.5
+17.0/45.3
+14.5/37.7
+25.0/55.0
+15.3/45.1
+20.1/44.9
+13.7/36.5
+27.2/56.3
+19.0/45.9
+
+Shallow Alignment [2]
+24.6/54.7
+31.3/61.5
+11.4/31.1
+19.9/48.8
+19.0/45.5
+24.1/49.8
+18.6/51.6
+17.6/46.7
+23.3/54.9
+34.6/63.2
+22.4/50.8
+
+SAMGA∗ [9]
+36.0/58.5
+37.5/68.5
+21.0/43.0
+29.0/56.0
+21.0/51.0
+32.0/62.0
+25.5/55.5
+26.0/50.0
+24.0/51.0
+43.5/72.5
+29.6/56.8
+
+Ours
+41.5/72.0
+38.5/73.0
+24.5/51.0
+39.0/71.5
+32.5/61.0
+35.5/64.5
+33.5/69.0
+32.5/58.0
+27.5/55.5
+48.0/80.5
+35.3/65.6
+
+Ours†
+56.0/84.0
+58.0/84.0
+41.5/72.5
+44.0/75.5
+44.5/74.5
+49.5/76.0
+48.0/78.0
+37.0/63.0
+43.5/76.0
+59.0/87.5
+48.1/77.1
+
+∗Reproduced using the official implementation under the same experimental settings as the proposed method.
+†Transductive: uses unlabeled target-subject embeddings without labels or encoder updates for representation refinement.
+
+2.3 Block Attention Residual View Routing
+
+The learned visual views are hierarchically aggregated through block attention-residual routing to form a structured visual supervision target for cross-subject EEG–vision learning [19]. The  $K$  views are divided into  $B$  equal-sized blocks. Within each block, a learnable query  $q_{v}$  computes content-dependent attention weights:
+
+ $a_{b,k}=\operatorname{softmax}_{k\in\mathcal{B}_{b}}\left(\frac{q_{v}^{\top}\operatorname{LN}(z_{k})}{\tau}\right),$ 
+
+(4)
+
+where  $\mathcal{B}_{b}$  denotes the set of views in the  $b$ -th block. The block representation is
+
+ $h_{b}=\sum_{k\in\mathcal{B}_{b}}a_{b,k}z_{k}.$ 
+
+(5)
+
+A second learnable query  $q_{B}$  assigns content-dependent weights
+to the block representations:
+
+ $w_{b}=\operatorname{softmax}_{b}\left(\frac{q_{B}^{\top}\operatorname{LN}(h_{b})}{\tau}\right).$ 
+
+(6)
+
+The final view weight is
+
+ $\omega_{b,k}=w_{b}a_{b,k}.$ 
+
+(7)
+
+The structured visual target is then obtained as
+
+ $z_{I}=g\left(\sum_{b=1}^{B}\sum_{k\in\mathcal{B}_{b}}\omega_{b,k}z_{k}\right).$ 
+
+(8)
+
+where  $g(\cdot)$  denotes the final projection into the shared EEG–vision embedding space.
+
+In our implementation,  $K=12$  visual views are organized into  $B=4$  blocks. This two-level aggregation selectively integrates complementary visual views while avoiding a single flat softmax over all views. The key contribution is the adaptation of block attention-residual routing to structured visual target construction for cross-subject EEG–vision representation learning.
+
+2.4 Training Objective
+
+We optimize the EEG and visual projection components using a temperature-scaled contrastive EEG–image objective. To improve cross-subject consistency, training uses a two-stage optimization schedule. In Stage I, the contrastive objective is jointly optimized with an MMD-based regularization term that reduces distributional differences among source subjects. The MMD contribution is progressively reduced during this stage. In Stage II, the shared projection layer is frozen and the optimization focuses on EEG–vision contrastive alignment with a reduced learning rate.
+
+This training strategy encourages subject-invariant EEG representations while preserving the semantic alignment required for image retrieval. For the representation-refinement setting, the trained encoders are kept frozen and refinement is performed post hoc on the held-out subject using only the unordered EEG and image embeddings, without target-subject labels or additional model training. The procedure first performs per-dimension moment matching, followed by pseudo-correspondence estimation using CSLS and mutual nearest-neighbor landmarks [10]. We use 64 landmarks and confidence-based weighting for the estimated correspondences, followed by regularized orthogonal alignment with a regularization coefficient  $\rho=0.1$ . The resulting aligned
+representations are finally evaluated using CSLS-based retrieval. This post hoc procedure is referred to as representation refinement and is evaluated separately from the trained model’s direct output.
+
+3 Experiments
+
+3.1 Dataset Details
+
+We evaluate on the THINGS-EEG2 dataset [3], which contains EEG recordings from 10 subjects collected using a rapid serial visual presentation (RSVP) paradigm. The training set comprises 1,654 object concepts, with 10 images per concept and 4 repetitions per image, resulting in 16,540 images and 66,160 EEG trials per subject. The test set contains 200 previously unseen concepts, with one image per concept repeated 80 times, forming a shared 200-image retrieval gallery. EEG recordings consist of 63 channels and are downsampled from 1,000 Hz to 250 Hz for modeling. We follow a strict ten-fold leave-one-subject-out (LOSO) protocol, where nine subjects are used for training and the remaining subject is held out entirely for testing. We report 200-way zero-shot Top-1 and Top-5 retrieval accuracy.
+
+3.2 Evaluation Details
+
+For each EEG trial, the learned EEG encoder produces an embedding
+
+ $z_{E}=f_{s}\left(f_{p}\left(f_{\theta}(x_{t})\right)\right),$ 
+
+(9)
+
+where  $f_{\theta}$  denotes the EEG encoder and  $f_{p},f_{s}$  denote the projection modules. Each candidate image is represented by its corresponding structured visual target, forming the retrieval gallery
+
+ $\mathcal{G}=\left\{z_{I}^{(1)},z_{I}^{(2)},\ldots,z_{I}^{(M)}\right\}.$ 
+
+(10)
+
+Retrieval is performed by ranking the gallery according to cosine similarity,
+
+ $S(z_{E},z_{I})=\frac{z_{E}^{\top}z_{I}}{\|z_{E}\|_{2}\|z_{I}\|_{2}}.$ 
+
+(11)
+
+The highest-scoring image determines Top-1 retrieval, while the five highest-scoring images determine Top-5 retrieval.
+
+3.3 Implementation Details
+
+All experiments are conducted on a Linux-based system equipped with three NVIDIA RTX A6000 GPUs, each providing 48 GB of GPU memory. The EEG signal is encoded using a TSConv-based neural encoder followed by a linear projection into a 512-dimensional shared EEG–vision embedding space [17]. The encoder operates on a  $0$ – $250$  ms time window, with smoothing-based EEG augmentation enabled during training, while the visual encoder (Perception Encoder PE-Core-G14
+[1]) is kept frozen. We extract  $K=12$  visual views from the spatial visual representation and organize them into  $B=4$  blocks for hierarchical block attention-residual routing. The router uses a temperature of  $0.7$  and a subject-bias dropout rate of  $0.3$ , with EEG-conditioned routing disabled.
+
+Training uses a batch size of  $1024$  and an initial learning rate of  $1\times 10^{-4}$  for up to 50 epochs. The contrastive temperature is fixed at  $0.07$ , with  $\alpha=\beta=1.0$  for the alignment objectives. Image features are  $\ell_{2}$ -normalized before alignment. Following the two-stage optimization described in Section 2.4, Stage I runs for 20 epochs and jointly optimizes the contrastive and distribution-alignment objectives, with the distribution-alignment weight reduced from  $0.9$  to  $0.5$ . In Stage II, the shared projection component is frozen and contrastive training continues with a reduced learning rate of  $5\times 10^{-5}$ . Early stopping is applied with respect to the validation set with a patience of 10 epochs. The EEG feature dimension before projection is 1024, and the intermediate visual feature dimension is 1024.
+
+For cross-subject evaluation, we follow a leave-one-subject-out protocol on THINGS-EEG2, using nine subjects for source training and the remaining subject for evaluation. All experiments use a fixed random seed of 2025. The frozen visual representation uses the specified spatial feature representation with visual layers 20, 24, 28, 32, and 36 as the source features for multi-view target construction.
+
+3.4 Results and Discussion
+
+Figure 2: Subject-wise Top-1 retrieval accuracy on THINGS-EEG2 under
+leave-one-subject-out evaluation. Results are reported for each of the
+ten held-out subjects across all compared methods.
+
+Figure 3: Average cross-subject Top-1 retrieval accuracy on THINGS-EEG2
+under leave-one-subject-out evaluation. Results are averaged across the
+ten held-out subjects for all compared methods.
+
+Figure 4: Subject-wise effect of representation refinement on cross-subject EEG-to-image retrieval.
+(a) Top-1 and Top-5 retrieval accuracy before and after refinement for each held-out subject.
+(b) Subject-wise Top-1 and Top-5 accuracy gains, reported in percentage points (pp).
+
+Comparison with prior methods. Table 1 reports LOSO retrieval accuracy for all ten held-out subjects. Without any target-subject adaptation, the proposed structured visual target achieves 35.3% Top-1 and 65.6% Top-5 accuracy on average, the highest among the compared methods. For a controlled comparison with the strongest baseline, we reproduced SAMGA [9] using its official implementation under our experimental settings (SAMGA∗). Under identical settings, our model improves the average accuracy by 5.7 points in Top-1 and 8.8 points in Top-5, and outperforms SAMGA∗ on all ten held-out subjects for both metrics. Fig. 2 shows this comparison per subject. All methods follow a similar difficulty profile: Sub-10 is the easiest held-out subject for every method, and Sub-03 is among the hardest for the stronger methods, reflecting subject-dependent signal quality. Nevertheless, our model stays above SAMGA∗ for every subject, and the refined model is the best for every subject. As summarized in Fig. 3, the average Top-1 accuracy rises from 29.6% for SAMGA∗ to 35.3% with the structured target and to 48.1% with refinement. This suggests that supervising EEG with multiple learned visual views, rather than a single global image embedding, yields representations that transfer better to unseen subjects.
+
+Representation refinement. Applying the label-free refinement to the frozen embeddings raises the average accuracy from 35.3% to 48.1% Top-1 and from 65.6% to 77.1% Top-5. Because the refinement uses the unlabeled test embeddings of the held-out subject collectively, we report it separately from the direct model output. As shown in Fig. 4, refinement improves both Top-1 and Top-5 accuracy for every held-out subject, with Top-1 gains ranging from 4.5 percentage points (pp) for Subject 8 to 19.5 pp for Subject 2 (mean 12.8 pp). The gain is only weakly related to a subject’s accuracy before refinement (Pearson  $r=-0.23$  across subjects), suggesting that the benefit depends on the subject-specific structure of the embeddings rather than on how poorly the subject is initially decoded.
+
+Discussion. The two components act at different stages. The structured target shapes the EEG representation during source training, whereas refinement aligns the resulting embeddings to an unseen subject at deployment without labels or encoder updates. The large refinement gains indicate that, for new subjects, the source-trained embeddings retain stimulus-related structure that is misaligned rather than lost. A limitation is that refinement currently uses all test trials of the held-out subject; its behavior with smaller target batches remains to be characterized.
+
+4 CONCLUSION
+
+We presented a structured visual target learning framework for cross-subject
+EEG-to-image retrieval. The proposed approach preserves spatial information
+from the frozen Perception Encoder, converts it into multiple learned visual
+views, and adaptively aggregates them through block-structured,
+content-dependent routing. MMD-based regularization further promotes
+cross-subject consistency during training. We also introduced a training-free
+representation refinement stage that aligns frozen EEG and visual embeddings
+for an unseen subject without target-subject labels or encoder updates.
+Future work will explore refinement with limited target-subject data and
+alternative visual backbones.
+
+References
+
+[1]
+D. Bolya, P. Huang, P. Sun, J. H. Cho, A. Madotto, C. Wei, T. Ma, J. Zhi, J. Rajasegaran, H. Bangalath, et al. (2026)
+
+Perception encoder: the best visual embeddings are not at the output of the network.
+
+Advances in Neural Information Processing Systems 38, pp. 60884–60937.
+
+Cited by: §1,
+§3.3.
+
+[2]
+Y. Du, S. Dai, Y. Song, P. M. Thompson, H. Tang, and L. Zhan (2026)
+
+Deep models, shallow alignment: uncovering the granularity mismatch in neural decoding.
+
+arXiv preprint arXiv:2601.21948.
+
+Cited by: §1,
+Table 1.
+
+[3]
+A. T. Gifford, K. Dwivedi, G. Roig, and R. M. Cichy (2022)
+
+A large and rich eeg dataset for modeling human visual object recognition.
+
+NeuroImage 264, pp. 119754.
+
+Cited by: §1,
+§3.1.
+
+[4]
+A. Gretton, K. M. Borgwardt, M. J. Rasch, B. Schölkopf, and A. Smola (2012)
+
+A kernel two-sample test.
+
+Journal of Machine Learning Research 13 (25), pp. 723–773.
+
+Cited by: §1.
+
+[5]
+J. V. Haxby, J. S. Guntupalli, A. C. Connolly, Y. O. Halchenko, B. R. Conroy, M. I. Gobbini, M. Hanke, and P. J. Ramadge (2011)
+
+A common, high-dimensional model of the representational space in human ventral temporal cortex.
+
+Neuron 72 (2), pp. 404–416.
+
+Cited by: §1.
+
+[6]
+H. He and D. Wu (2019)
+
+Transfer learning for brain–computer interfaces: a euclidean space data alignment approach.
+
+IEEE Transactions on Biomedical Engineering 67 (2), pp. 399–410.
+
+Cited by: §1.
+
+[7]
+Q. Huang and W. Zhu (2026)
+
+SATTC: structure-aware label-free test-time calibration for cross-subject eeg-to-image retrieval.
+
+arXiv preprint arXiv:2603.20738.
+
+Cited by: §1.
+
+[8]
+A. Jaegle, F. Gimeno, A. Brock, A. Zisserman, O. Vinyals, and J. Carreira (2021)
+
+Perceiver: general perception with iterative attention.
+
+In Proceedings of the 38th International Conference on Machine Learning (ICML),
+
+Proceedings of Machine Learning Research, Vol. 139, pp. 4651–4664.
+
+Cited by: §1.
+
+[9]
+L. Jiang, Q. She, J. Xu, H. Xu, D. Wu, and Z. Kuang (2026)
+
+Subject-aware multi-granularity alignment for zero-shot eeg-to-image retrieval.
+
+arXiv preprint arXiv:2604.17782.
+
+Cited by: §1,
+§1,
+Table 1,
+§3.4.
+
+[10]
+G. Lample, A. Conneau, M. Ranzato, L. Denoyer, and H. Jégou (2018)
+
+Word translation without parallel data.
+
+In International conference on learning representations,
+
+Cited by: §1,
+§2.4.
+
+[11]
+D. Li, C. Wei, S. Li, J. Zou, H. Qin, and Q. Liu (2024)
+
+Visual decoding and reconstruction via eeg embeddings with guided diffusion.
+
+arXiv preprint arXiv:2403.07721.
+
+Cited by: §1,
+§1,
+Table 1.
+
+[12]
+J. Li, D. Li, S. Savarese, and S. Hoi (2023)
+
+BLIP-2: bootstrapping language-image pre-training with frozen image encoders and large language models.
+
+In Proceedings of the 40th International Conference on Machine Learning (ICML),
+
+Proceedings of Machine Learning Research, Vol. 202, pp. 19730–19742.
+
+Cited by: §1.
+
+[13]
+T. Li, Y. Yan, F. Dou, W. Song, and X. Zhang (2026)
+
+Cross-subject generalization for eeg decoding: a survey of deep learning methods.
+
+Progress in Biomedical Engineering 8 (2), pp. 022013.
+
+Cited by: §1.
+
+[14]
+P. L. C. Rodrigues, C. Jutten, and M. Congedo (2018)
+
+Riemannian procrustes analysis: transfer learning for brain–computer interfaces.
+
+IEEE Transactions on Biomedical Engineering 66 (8), pp. 2390–2401.
+
+Cited by: §1.
+
+[15]
+S. Saha and M. Baumert (2020)
+
+Intra-and inter-subject variability in eeg-based sensorimotor brain computer interface: a review.
+
+Frontiers in computational neuroscience 13, pp. 87.
+
+Cited by: §1.
+
+[16]
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean (2017)
+
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer.
+
+In International Conference on Learning Representations (ICLR),
+
+Cited by: §1.
+
+[17]
+Y. Song, B. Liu, X. Li, N. Shi, Y. Wang, and X. Gao (2024)
+
+Decoding natural images from eeg for object recognition.
+
+In International conference on learning representations,
+
+Vol. 2024, pp. 47648–47665.
+
+Cited by: §1,
+§1,
+Table 1,
+§3.3.
+
+[18]
+J. Tang, S. Jiang, F. Su, and Z. Zhao (2026)
+
+Aligning what eeg can see: structural representations for brain-vision matching.
+
+arXiv preprint arXiv:2603.07077.
+
+Cited by: §1.
+
+[19]
+K. Team, G. Chen, Y. Zhang, J. Su, W. Xu, S. Pan, Y. Wang, Y. Wang, G. Chen, B. Yin, et al. (2026)
+
+Attention residuals.
+
+arXiv preprint arXiv:2603.15031.
+
+Cited by: §1,
+§2.3.
+
+[20]
+J. Wang, L. Zhang, H. Lin, Q. Liu, G. Huang, Z. Li, Z. Liang, and X. Wu (2025)
+
+NeuroCLIP: brain-inspired prompt tuning for eeg-to-image multimodal contrastive learning.
+
+arXiv preprint arXiv:2511.09250.
+
+Cited by: §1,
+§1.
+
+[21]
+H. Wu, Q. Li, C. Zhang, Z. He, and X. Ying (2025)
+
+Bridging the vision-brain gap with an uncertainty-aware blur prior.
+
+In 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+
+Vol. , pp. 2246–2257.
+
+External Links: Document
+
+Cited by: §1,
+Table 1.
+
+[22]
+W. Zhang, S. Wang, Y. Su, X. Li, C. Zhang, and S. Zhong (2026)
+
+Neurobridge: bio-inspired self-supervised eeg-to-image decoding via cognitive priors and bidirectional semantic alignment.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 40, pp. 18028–18036.
+
+Cited by: §1,
+Table 1.
+
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+
+        L
+        A
+        T
+        E
+
+      xml
+
+    .
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+Click the "Report Issue" (
+
+          ) button, located in the page header.
+
+Tip: You can select the relevant text first, to include it in your report.
+
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+        We gratefully acknowledge support from
+        our major funders,
+        member institutions, ,
+        and all contributors.
+
+        About
+        ·
+        Help
+        ·
+        Contact
+        ·
+        Subscribe
+        ·
+        Copyright
+        ·
+        Privacy
+        ·
+        Accessibility
+        ·
+        Operational Status (opens in new tab)
+
+Major funding support from
+

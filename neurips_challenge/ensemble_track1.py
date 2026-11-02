@@ -51,7 +51,7 @@ def score_matrix(run_dir: str, device) -> tuple[np.ndarray, np.ndarray]:
             model, eeg_projector, img_projector = build_modules(cfg, checkpoint, dataset, device, n_times)
             targets = torch.tensor(dataset.image_features[:, 0, :], dtype=torch.float32, device=device)
             gallery = torch.tensor(_normalize(img_projector(targets).float().cpu().numpy()), device=device)
-        for eeg, _, _, subject_batch, object_idx, _, _ in DataLoader(dataset, batch_size=512):
+        for eeg, _, _, subject_batch, object_idx, _, _ in DataLoader(dataset, batch_size=128):
             eeg = eeg.to(device)
             if eeg.shape[-1] != n_times:
                 eeg = torch.nn.functional.interpolate(eeg, size=n_times, mode="linear", align_corners=False)
@@ -75,6 +75,9 @@ def main() -> None:
     parser.add_argument("--sizes", type=int, nargs="+", default=[2, 3, 4, 5, 6])
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--out", default=os.path.join(RESULTS, "ensembles/sweep.csv"))
+    parser.add_argument("--cached_only", action="store_true", help="skip members whose score matrix is not cached yet")
+    parser.add_argument("--greedy", type=int, default=0,
+                        help="instead of the exhaustive sweep: forward-select this many members, then swap-refine")
     args = parser.parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
@@ -82,7 +85,7 @@ def main() -> None:
     for path in glob.glob(os.path.join(RESULTS, "**/track1_score.json"), recursive=True):
         with open(path) as handle:
             top5 = json.load(handle)["per_epoch"]["top5"]
-        if top5 > args.min_top5:
+        if top5 > args.min_top5 and not (args.cached_only and not os.path.exists(os.path.join(os.path.dirname(path), CACHE))):
             run_dir = os.path.dirname(path)
             members.append((os.path.relpath(run_dir, RESULTS).split(os.sep)[1], run_dir, top5))  # the run tag
     members.sort(key=lambda m: -m[2])
@@ -106,6 +109,32 @@ def main() -> None:
         # The cached matrix must reproduce the recorded grader score, or the sweep is meaningless.
         _, check = top_k(scores[name], labels)
         assert abs(check - top5) < 2e-4, f"{name}: {check:.4f} != recorded {top5:.4f}"
+
+    if args.greedy:
+        chosen, pool = [], [m[0] for m in members]
+        while len(chosen) < args.greedy:
+            best = max((n for n in pool if n not in chosen),
+                       key=lambda n: top_k(sum(scores[c] for c in chosen + [n]), labels)[1])
+            chosen.append(best)
+            print(f"  + {best}: top5 {top_k(sum(scores[c] for c in chosen), labels)[1]:.4f}", flush=True)
+        improved = True
+        while improved:  # swap any member for any outsider while that helps
+            improved = False
+            current = top_k(sum(scores[c] for c in chosen), labels)[1]
+            for i, out in enumerate(list(chosen)):
+                for n in pool:
+                    if n in chosen:
+                        continue
+                    trial = chosen[:i] + [n] + chosen[i + 1:]
+                    t5 = top_k(sum(scores[c] for c in trial), labels)[1]
+                    if t5 > current:
+                        chosen, current, improved = trial, t5, True
+                        print(f"  swap {out} -> {n}: top5 {t5:.4f}", flush=True)
+                        break
+                if improved:
+                    break
+        print(f"greedy {args.greedy}: top5 {current:.4f}  {'+'.join(chosen)}")
+        return
 
     rows = []
     for size in args.sizes:

@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from module.eeg_encoder.model import ResidualAdd
+from module.eeg_encoder.model import DomainBatchNorm2d, ResidualAdd
 
 
 def _head(in_dim, feature_dim, dropout=0.5):
@@ -46,7 +46,7 @@ class _ConformerFeedForward(nn.Module):
 
 
 class _ConformerConvModule(nn.Module):
-    def __init__(self, d_model, kernel_size, drop):
+    def __init__(self, d_model, kernel_size, drop, domain_bn_boundary=0):
         super().__init__()
         if kernel_size % 2 == 0:
             raise ValueError("Conformer convolution kernel must be odd")
@@ -56,15 +56,16 @@ class _ConformerConvModule(nn.Module):
             d_model, d_model, kernel_size,
             padding=kernel_size // 2, groups=d_model,
         )
-        self.bn = nn.BatchNorm1d(d_model)
+        self.bn = (DomainBatchNorm2d(d_model, domain_bn_boundary, nn.BatchNorm1d) if domain_bn_boundary > 0
+                   else nn.BatchNorm1d(d_model))
         self.pointwise_out = nn.Conv1d(d_model, d_model, 1)
         self.drop = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x, subject_ids=None):
         z = self.norm(x).transpose(1, 2)
         z = nn.functional.glu(self.pointwise_in(z), dim=1)
         z = self.depthwise(z)
-        z = nn.functional.silu(self.bn(z))
+        z = nn.functional.silu(self.bn(z, subject_ids) if isinstance(self.bn, DomainBatchNorm2d) else self.bn(z))
         z = self.pointwise_out(z).transpose(1, 2)
         return self.drop(z)
 
@@ -137,18 +138,19 @@ class _FastSelfAttention(nn.Module):
 
 
 class _FastSqueezeformerBlock(nn.Module):
-    def __init__(self, d_model, heads, conv_kernel, expansion, drop):
+    def __init__(self, d_model, heads, conv_kernel, expansion, drop, domain_bn_boundary=0, ffn=True):
         super().__init__()
         self.attn_norm = nn.LayerNorm(d_model)
         self.attn = _FastSelfAttention(d_model, heads, drop)
-        self.conv = _ConformerConvModule(d_model, conv_kernel, drop)
-        self.ffn = _ConformerFeedForward(d_model, expansion, drop)
+        self.conv = _ConformerConvModule(d_model, conv_kernel, drop, domain_bn_boundary)
+        self.ffn = _ConformerFeedForward(d_model, expansion, drop) if ffn else None
         self.final_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x):
+    def forward(self, x, subject_ids=None):
         x = x + self.attn(self.attn_norm(x))
-        x = x + self.conv(x)
-        x = x + self.ffn(x)
+        x = x + self.conv(x, subject_ids)
+        if self.ffn is not None:
+            x = x + self.ffn(x)
         return self.final_norm(x)
 
 
@@ -162,22 +164,29 @@ class FastTSConvSqueezeformer(nn.Module):
 
     def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63,
                  d_model=160, depth=3, heads=4, conv_kernel=15,
-                 expansion=2, drop=0.15, stem_filters=40):
+                 expansion=2, drop=0.15, stem_filters=40,
+                 pool_kernel=51, pool_stride=5, backbone_dim=0, power_branch=False, domain_bn_boundary=0, ffn=True):
+        # domain_bn_boundary > 0: every BatchNorm keeps separate statistics for subject IDs at or above it
+        # (THINGS-EEG2 mapped onto Alljoined); unseen subjects take the primary path (cf. TSConv's)
+        # pool_kernel/pool_stride: 51/5 is the 250 Hz design (10 tokens at 120 Hz); 25/2 keeps
+        # its durations at 120 Hz. backbone_dim > 0: TSConv's trunk (head at backbone_dim,
+        # then Linear -> feature_dim). Defaults reproduce every existing checkpoint.
         super().__init__()
         self.temporal = _FusedTemporalConvPool(
             out_channels=stem_filters,
             temporal_kernel=25,
-            pool_kernel=51,
-            pool_stride=5,
+            pool_kernel=pool_kernel,
+            pool_stride=pool_stride,
         )
-        max_tokens = (eeg_sample_points - self.temporal.effective_kernel) // 5 + 1
+        max_tokens = (eeg_sample_points - self.temporal.effective_kernel) // pool_stride + 1
         if max_tokens <= 0:
             raise ValueError("EEG window is too short for the fused TSConv stem")
+        bn2d = (lambda c: DomainBatchNorm2d(c, domain_bn_boundary)) if domain_bn_boundary > 0 else nn.BatchNorm2d
         self.stem_after_pool = nn.Sequential(
-            nn.BatchNorm2d(stem_filters),
+            bn2d(stem_filters),
             nn.ELU(),
             nn.Conv2d(stem_filters, stem_filters, (channels_num, 1), (1, 1)),
-            nn.BatchNorm2d(stem_filters),
+            bn2d(stem_filters),
             nn.ELU(),
             nn.Dropout(drop),
         )
@@ -194,6 +203,8 @@ class FastTSConvSqueezeformer(nn.Module):
                 conv_kernel=conv_kernel,
                 expansion=expansion,
                 drop=drop,
+                domain_bn_boundary=domain_bn_boundary,
+                ffn=ffn,
             )
             for _ in range(depth)
         ])
@@ -203,20 +214,153 @@ class FastTSConvSqueezeformer(nn.Module):
             nn.Tanh(),
             nn.Linear(d_model // 2, 1),
         )
-        self.head = _head(2 * d_model, feature_dim)
+        # TSConv's band-power branch (+0.037 there), made cheap: its temporal filter bank and
+        # spatial conv have no nonlinearity between them, so they compose into one 63->filters
+        # Conv1d of the same 25 taps -- the same function class (rank <= 25 <= filters) without
+        # the filters x channels x time intermediate. Then BN -> square -> pool -> log, flattened
+        # into the head next to the attentive statistics.
+        self.power_branch = nn.Sequential(
+            nn.Conv1d(channels_num, stem_filters, 25, bias=False),
+            nn.BatchNorm1d(stem_filters),
+        ) if power_branch else None
+        self.power_pool = nn.AvgPool1d(pool_kernel, pool_stride)
+        self.power_dropout = nn.Dropout(drop)
+        power_dim = 0
+        if power_branch:
+            with torch.no_grad():
+                power_dim = self._power_features(torch.zeros(2, channels_num, eeg_sample_points)).shape[1]
+        trunk_dim = backbone_dim or feature_dim
+        self.head = _head(2 * d_model + power_dim, trunk_dim)
+        if trunk_dim != feature_dim:
+            self.head.append(nn.Linear(trunk_dim, feature_dim))
 
-    def forward(self, x):
+    def forward(self, x, subject_ids=None):
         z = self.temporal(x.unsqueeze(1))
-        z = self.stem_after_pool(z).squeeze(2).transpose(1, 2)
+        for layer in self.stem_after_pool:
+            z = layer(z, subject_ids) if isinstance(layer, DomainBatchNorm2d) else layer(z)
+        z = z.squeeze(2).transpose(1, 2)
         z = self.token_projection(z) + self.position[:, :z.shape[1]]
         for block in self.blocks:
-            z = block(z)
+            z = block(z, subject_ids)
 
         weights = self.pool_score(z).softmax(dim=1)
         mean = (weights * z).sum(dim=1)
         variance = (weights * (z - mean.unsqueeze(1)).square()).sum(dim=1)
         pooled = torch.cat([mean, variance.clamp_min(1e-6).sqrt()], dim=-1)
+        if self.power_branch is not None:
+            pooled = torch.cat([pooled, self._power_features(x)], dim=-1)
         return self.head(pooled)
+
+    def _power_features(self, x):
+        power = self.power_pool(self.power_branch(x).square())
+        return self.power_dropout(power.clamp_min(1e-6).log().flatten(1))
+
+
+class _FactorizedSTBlock(nn.Module):
+    """Divided space-time attention (TimeSformer): attend across electrodes at every time step, then across time for
+    every electrode, then a per-token feed-forward. z: (B, C, T, d)."""
+
+    def __init__(self, d_model, heads, expansion, drop, time_attn=True):
+        super().__init__()
+        self.space_norm, self.time_norm = nn.LayerNorm(d_model), nn.LayerNorm(d_model)
+        self.space = _FastSelfAttention(d_model, heads, drop)
+        self.time = _FastSelfAttention(d_model, heads, drop) if time_attn else None
+        self.ffn = _ConformerFeedForward(d_model, expansion, drop)
+
+    def forward(self, z):
+        B, C, T, d = z.shape
+        s = z.transpose(1, 2).reshape(B * T, C, d)
+        s = s + self.space(self.space_norm(s))
+        t = s.reshape(B, T, C, d).transpose(1, 2).reshape(B * C, T, d)
+        if self.time is not None:
+            t = t + self.time(self.time_norm(t))
+        t = t + self.ffn(t)
+        return t.reshape(B, C, T, d)
+
+
+class FactorizedSTFormer(nn.Module):
+    """Squeezeformer with attention BEFORE the spatial collapse (A22 idea 2): the same fused TSConv temporal stem, but
+    applied per electrode and never mixed by a spatial conv; electrode x time tokens (C x T, 32 x 36 at 120 Hz) go
+    through factorised space/time attention blocks. Readout: softmax weights over electrodes at each time step, then
+    SQF's attentive statistics over time, then the TSConv/SQF head."""
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63, d_model=64, depth=3, heads=4,
+                 expansion=2, drop=0.1, stem_filters=40, pool_kernel=25, pool_stride=2, backbone_dim=512,
+                 domain_bn_boundary=0, time_attn=True, readout='stats'):
+        # time_attn=False + readout='flatten': "conv along time, attention along space" -- electrodes interact only through
+        # attention at each time step (no temporal mixing after the stem) and the readout is TSConv's time-locked flatten
+        super().__init__()
+        self.temporal = _FusedTemporalConvPool(out_channels=stem_filters, temporal_kernel=25, pool_kernel=pool_kernel,
+                                               pool_stride=pool_stride)
+        n_time = (eeg_sample_points - self.temporal.effective_kernel) // pool_stride + 1
+        self.stem_norm = (DomainBatchNorm2d(stem_filters, domain_bn_boundary) if domain_bn_boundary > 0
+                          else nn.BatchNorm2d(stem_filters))
+        self.token = nn.Sequential(nn.ELU(), nn.Linear(stem_filters, d_model), nn.LayerNorm(d_model))
+        self.chan_pos = nn.Parameter(torch.zeros(1, channels_num, 1, d_model))
+        self.time_pos = nn.Parameter(torch.zeros(1, 1, n_time, d_model))
+        nn.init.trunc_normal_(self.chan_pos, std=0.02)
+        nn.init.trunc_normal_(self.time_pos, std=0.02)
+        self.blocks = nn.ModuleList([_FactorizedSTBlock(d_model, heads, expansion, drop, time_attn) for _ in range(depth)])
+        self.readout = readout
+        self.chan_score = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, 1))
+        self.pool_score = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, d_model // 2), nn.Tanh(),
+                                        nn.Linear(d_model // 2, 1))
+        trunk_dim = backbone_dim or feature_dim
+        self.head = _head(n_time * d_model if readout == 'flatten' else 2 * d_model, trunk_dim)
+        if trunk_dim != feature_dim:
+            self.head.append(nn.Linear(trunk_dim, feature_dim))
+
+    def forward(self, x, subject_ids=None):
+        z = self.temporal(x.unsqueeze(1))                                   # (B, F, C, T)
+        z = self.stem_norm(z, subject_ids) if isinstance(self.stem_norm, DomainBatchNorm2d) else self.stem_norm(z)
+        z = self.token(z.permute(0, 2, 3, 1)) + self.chan_pos + self.time_pos  # (B, C, T, d)
+        for block in self.blocks:
+            z = block(z)
+        z = (self.chan_score(z).softmax(dim=1) * z).sum(dim=1)              # (B, T, d)
+        if self.readout == 'flatten':
+            return self.head(z.flatten(1))
+        w = self.pool_score(z).softmax(dim=1)
+        mean = (w * z).sum(dim=1)
+        std = (w * (z - mean.unsqueeze(1)).square()).sum(dim=1).clamp_min(1e-6).sqrt()
+        return self.head(torch.cat([mean, std], dim=-1))
+
+
+class ElectrodeTokenTSConv(nn.Module):
+    """TSConv's step 4 (the spatial conv) replaced by REVE-style attention across electrodes: the fused temporal stem
+    per electrode, then ONE token per electrode = its 40 filters x T pooled samples (time-locked, linearly embedded),
+    + a learned electrode embedding, `depth` pre-norm attention/FFN blocks across the 32 electrode tokens, softmax
+    pooling over electrodes, the TSConv/SQF head."""
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63, d_model=128, depth=4, heads=4,
+                 expansion=2, drop=0.1, stem_filters=40, pool_kernel=25, pool_stride=2, backbone_dim=512,
+                 domain_bn_boundary=0):
+        super().__init__()
+        self.temporal = _FusedTemporalConvPool(out_channels=stem_filters, temporal_kernel=25, pool_kernel=pool_kernel,
+                                               pool_stride=pool_stride)
+        n_time = (eeg_sample_points - self.temporal.effective_kernel) // pool_stride + 1
+        self.stem_norm = (DomainBatchNorm2d(stem_filters, domain_bn_boundary) if domain_bn_boundary > 0
+                          else nn.BatchNorm2d(stem_filters))
+        self.token = nn.Sequential(nn.ELU(), nn.Dropout(drop), nn.Linear(stem_filters * n_time, d_model),
+                                   nn.LayerNorm(d_model))
+        self.chan_pos = nn.Parameter(torch.zeros(1, channels_num, d_model))
+        nn.init.trunc_normal_(self.chan_pos, std=0.02)
+        self.attn_norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(depth)])
+        self.attns = nn.ModuleList([_FastSelfAttention(d_model, heads, drop) for _ in range(depth)])
+        self.ffns = nn.ModuleList([_ConformerFeedForward(d_model, expansion, drop) for _ in range(depth)])
+        self.chan_score = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, 1))
+        trunk_dim = backbone_dim or feature_dim
+        self.head = _head(d_model, trunk_dim)
+        if trunk_dim != feature_dim:
+            self.head.append(nn.Linear(trunk_dim, feature_dim))
+
+    def forward(self, x, subject_ids=None):
+        z = self.temporal(x.unsqueeze(1))                                   # (B, F, C, T)
+        z = self.stem_norm(z, subject_ids) if isinstance(self.stem_norm, DomainBatchNorm2d) else self.stem_norm(z)
+        z = self.token(z.permute(0, 2, 1, 3).flatten(2)) + self.chan_pos    # (B, C, d): one token per electrode
+        for norm, attn, ffn in zip(self.attn_norms, self.attns, self.ffns):
+            z = z + attn(norm(z))
+            z = z + ffn(z)
+        return self.head((self.chan_score(z).softmax(dim=1) * z).sum(dim=1))
 
 
 class TinySqueezeformer(FastTSConvSqueezeformer):
@@ -747,8 +891,103 @@ class TinyGraphDiffusionNet(nn.Module):
         return self.head(readout)
 
 
+class _SPDLog(torch.autograd.Function):
+    """Matrix log of SPD matrices with the Daleckii-Krein backward.
+
+    The divided difference (log a - log b)/(a - b) is finite for (near-)equal eigenvalues,
+    unlike eigh's own backward, which divides by a - b.
+    """
+
+    @staticmethod
+    def forward(ctx, c):
+        eigenvalues, u = torch.linalg.eigh(c)
+        eigenvalues = eigenvalues.clamp_min(1e-6)
+        ctx.save_for_backward(eigenvalues, u)
+        return u @ torch.diag_embed(eigenvalues.log()) @ u.transpose(-1, -2)
+
+    @staticmethod
+    def backward(ctx, grad):
+        eigenvalues, u = ctx.saved_tensors
+        a, b = eigenvalues.unsqueeze(-1), eigenvalues.unsqueeze(-2)
+        close = (a - b).abs() < 1e-5 * a.clamp_min(b)
+        divided = torch.where(close, 1 / a, (a.log() - b.log()) / torch.where(close, 1.0, a - b))
+        inner = u.transpose(-1, -2) @ (0.5 * (grad + grad.transpose(-1, -2))) @ u
+        return u @ (divided * inner) @ u.transpose(-1, -2)
+
+
+class FilterBankTangentNet(nn.Module):
+    """Second-order encoder: learned filter bank -> per-band spatial covariance -> tangent space.
+
+    Per band k: temporal FIR (25 taps) -> spatial projection 63 -> proj; the projected signal is
+    stacked with learned evoked templates (Barachant's ERP-covariance: the cross block Z P^T is
+    the phase-locked, first-order response, the Z Z^T block is band power and its spatial
+    structure). log-Euclidean map of each (proj + templates)^2 covariance, upper triangle ->
+    trunk. No attention or pooling over time: the whole trial enters through its moments.
+    """
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63,
+                 bands=8, proj=16, templates=8, taps=25, drop=0.25, backbone_dim=512, windows=1):
+        # windows > 1: one covariance per half-overlapping sub-window (time-resolved moments).
+        super().__init__()
+        self.window = 2 * eeg_sample_points // (windows + 1)
+        self.stride = max(1, self.window // 2)
+        self.temporal = nn.Conv2d(1, bands, (1, taps), padding=(0, taps // 2), bias=False)
+        self.spatial = nn.Parameter(torch.randn(bands, proj, channels_num) / math.sqrt(channels_num))
+        self.norm = nn.BatchNorm2d(bands)
+        self.templates = nn.Parameter(torch.randn(bands, templates, eeg_sample_points))
+        n = proj + templates
+        if n > 32:  # cuSOLVER's batched eigh (syevjBatched) stops at 32; beyond it is ~500x slower
+            raise ValueError(f'proj + templates must be <= 32, got {n}')
+        rows, cols = torch.triu_indices(n, n)
+        self.register_buffer('rows', rows, persistent=False)
+        self.register_buffer('cols', cols, persistent=False)
+        self.register_buffer('offdiag', torch.where(rows == cols, 1.0, math.sqrt(2)), persistent=False)
+        in_dim = bands * windows * len(rows)
+        self.feature_norm = nn.LayerNorm(in_dim)
+        self.dropout = nn.Dropout(drop)
+        self.head = _head(in_dim, backbone_dim or feature_dim)
+        if backbone_dim and backbone_dim != feature_dim:
+            self.head.append(nn.Linear(backbone_dim, feature_dim))
+
+    def forward(self, x):
+        z = torch.einsum('bkct,kpc->bkpt', self.temporal(x.unsqueeze(1)), self.spatial)
+        z = self.norm(z)
+        y = torch.cat([z, self.templates.unsqueeze(0).expand(len(z), -1, -1, -1)], dim=2)
+        with torch.autocast(x.device.type, enabled=False):
+            y = y.float().unfold(-1, self.window, self.stride).transpose(2, 3)  # (B, K, W, n, L)
+            cov = y @ y.transpose(-1, -2) / y.shape[-1]
+            n = cov.shape[-1]
+            trace = cov.diagonal(dim1=-2, dim2=-1).mean(-1, keepdim=True).unsqueeze(-1)
+            cov = cov + (1e-3 * trace + 1e-5) * torch.eye(n, device=x.device)
+            log_cov = _SPDLog.apply(cov)
+        features = (log_cov[..., self.rows, self.cols] * self.offdiag).flatten(1)
+        return self.head(self.dropout(self.feature_norm(features)))
+
+
+class SqueezeTangentHybrid(nn.Module):
+    """Squeezeformer+power and FBTN side by side, outputs summed (late fusion in one model).
+
+    The two scratch strains are complementary on single trials (their 2-model ensemble: 0.428
+    vs 0.376/0.377 alone), so one model carries both inductive biases.
+    """
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63, backbone_dim=512, **fbtn):
+        super().__init__()
+        self.squeeze = FastTSConvSqueezeformer(feature_dim, eeg_sample_points, channels_num, pool_kernel=25,
+                                               pool_stride=2, backbone_dim=backbone_dim, power_branch=True)
+        self.tangent = FilterBankTangentNet(feature_dim, eeg_sample_points, channels_num,
+                                            backbone_dim=backbone_dim, **fbtn)
+
+    def forward(self, x):
+        return self.squeeze(x) + self.tangent(x)
+
+
 _REGISTRY = {
+    'SqueezeTangentHybrid': SqueezeTangentHybrid,
+    'FilterBankTangentNet': FilterBankTangentNet,
     'FastTSConvSqueezeformer': FastTSConvSqueezeformer,
+    'FactorizedSTFormer': FactorizedSTFormer,
+    'ElectrodeTokenTSConv': ElectrodeTokenTSConv,
     'TinySqueezeformer': TinySqueezeformer,
     'MultiScaleTSMixer': MultiScaleTSMixer,
     'TinyMultiScaleTSMixer': TinyMultiScaleTSMixer,
@@ -756,6 +995,20 @@ _REGISTRY = {
     'TinyDifferentialChannelTransformer': TinyDifferentialChannelTransformer,
     'TinyGraphDiffusionNet': TinyGraphDiffusionNet,
 }
+from ensemble_experiments.architectures.alljoined_encoders import (  # noqa: E402
+    BridgeTransformer, DualStreamNet, ScaleRobustChannelTransformer, SourceTokenTransformer,
+)
+_REGISTRY.update(DualStreamNet=DualStreamNet, ScaleRobustChannelTransformer=ScaleRobustChannelTransformer,
+                 SourceTokenTransformer=SourceTokenTransformer, BridgeTransformer=BridgeTransformer)
+from ensemble_experiments.architectures.hybrid_encoders import HYBRIDS  # noqa: E402
+_REGISTRY.update(HYBRIDS)
+from ensemble_experiments.architectures.braindecode_encoders import Braindecode  # noqa: E402
+_REGISTRY.update(Braindecode=Braindecode)
+from ensemble_experiments.architectures.recurrent_encoders import GRUEncoder  # noqa: E402
+_REGISTRY.update(GRUEncoder=GRUEncoder)
+from ensemble_experiments.architectures.own_encoders import DilatedConvNeXt1D, FourierFormer, SpecPatchFormer, DualDomainFormer  # noqa: E402
+_REGISTRY.update(FourierFormer=FourierFormer, DilatedConvNeXt1D=DilatedConvNeXt1D, SpecPatchFormer=SpecPatchFormer,
+                 DualDomainFormer=DualDomainFormer)
 
 
 def canonical_encoder_name(name):
@@ -767,7 +1020,7 @@ def is_architecture_encoder(name):
     return canonical_encoder_name(name) in _REGISTRY
 
 
-def build_architecture_encoder(name, feature_dim, eeg_sample_points, channels_num):
+def build_architecture_encoder(name, feature_dim, eeg_sample_points, channels_num, **kwargs):
     canonical_name = canonical_encoder_name(name)
     if canonical_name not in _REGISTRY:
         raise ValueError(
@@ -777,4 +1030,5 @@ def build_architecture_encoder(name, feature_dim, eeg_sample_points, channels_nu
         feature_dim=feature_dim,
         eeg_sample_points=eeg_sample_points,
         channels_num=channels_num,
+        **kwargs,
     )

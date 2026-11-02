@@ -2,6 +2,8 @@
 
 This file is for **AI coding agents** (and humans) who need to work in this repo without a long discovery phase. For the scientific narrative and paper-facing detail, read [`technical_overview.md`](technical_overview.md). For a short human intro, see [`README.md`](README.md).
 
+**Writing paper text?** Read [`.agents/skills/paper-prose/SKILL.md`](.agents/skills/paper-prose/SKILL.md) first. The authors reject LLM-sounding headings and sentences, and that file lists the patterns to avoid.
+
 ---
 
 ## What this repo does
@@ -16,6 +18,7 @@ Pipeline in one sentence:
 4. At test time: **200-way closed-set retrieval**; optional **transductive adaptation** (SAW / CSLS / Sinkhorn / soft Procrustes) for much higher accuracy.
 
 A parallel track exists for **THINGS-MEG** (`scripts/things_meg/`, `preprocess_meg.py`) and **AllJoined** (`scripts/alljoined/`). The mainline work is **THINGS-EEG**.
+NeurIPS 2026 Track 1 sealed-phase work (Alljoined-1.6M, new subjects + new images) is evaluated only under the 4×5-subject cross-validation protocol in `neurips_challenge/CV4_PROTOCOL.md` (`cv4.sh`, `cv4_summary.py`).
 
 ---
 
@@ -59,6 +62,7 @@ source .venv/bin/activate
 | [`results/`](results/) | Experiment outputs (gitignored) |
 | [`papers/`](papers/) | Markdown notes on related methods (SATTC, SSL, Sparse CLIP, …) |
 | [`technical_overview.md`](technical_overview.md) | Long-form methods + result families + caveats |
+| [`CVPR_paper/`](CVPR_paper/) | CVPR 2027 rewrite (transductive-calibration paradigm paper): `paper.tex` skeleton, `checklist.md` (decisions, protocol P-clean, experiments), `EXPERIMENT_LOG.md` |
 
 ---
 
@@ -256,10 +260,14 @@ nowhere in the paper. Current numbers:
 
 | Number | What it is |
 |---|---|
-| **77.2** | paper headline — ATM encoder after SAGE-TTA (TSConv 68.5, EEGConformer 65.0) |
-| **68.30** | TSConv + SubjectMix + TTA under *blind* hyperparameter selection — the honest, no-leak figure |
+| **77.2** | NeurIPS paper headline — ATM after SAGE-TTA; **single seed**, best of 5 image encoders, TTA config tuned on TSConv's test set, test-selected checkpoint |
+| 68.1 / 68.8 / 68.3 | TSConv + SubjectMix + TTA: 3-seed paper mean / seed 3300 in May / same seed re-run in July (code-path drift). Config = argmax of **test** top-1; checkpoint selected on test |
 | 72.75 | same, with test-oracle hyperparameters (upper bound, not quotable) |
-| 67.30 | same, joint-argmax LOSO CV — pessimistic, overfits a flat axis |
+| 67.30 | same checkpoint, joint-argmax LOSO re-selection over a grid centred on the test optimum |
+| **63.6** | LOSO-val (val-selected checkpoint + val-selected TTA, but k and τ frozen at test-tuned values) — the least leaky NeurIPS number |
+
+None of these is fully clean. The CVPR rewrite (`CVPR_paper/`) regenerates every number under
+protocol P-clean (`CVPR_paper/checklist.md`); log new runs in `CVPR_paper/EXPERIMENT_LOG.md`.
 
 **Caveats for agents writing docs or papers:**
 
@@ -288,10 +296,14 @@ deleting anything under `results/`.
 
 Three facts that follow, and that change how you plan work:
 
-1. **The SATTC/SAGE paper track has no checkpoints and never did.** The 70 `sattc_*` and 5 `tta_*`
-   sessions (31,150 runs) were trained without `--save_weights`. So `evaluate.py` cannot reproduce
-   the ~71%/68.3 headline from disk — those numbers exist only in `result.csv`, and re-deriving it means
-   retraining. This predates the cleanup.
+1. **The SATTC/SAGE paper track cannot be replayed from disk — its base checkpoints were deleted.**
+   The 70 `sattc_*` and 5 `tta_*` sessions (31,150 runs) are evaluate-only runs: they hold no weights
+   of their own and loaded the base models in `inter-subjects/tsconv_dropout_sweep_20260429-{190741,170207}`
+   and `eeg_encoder_architecture_sweep_mixup_20260429-221100`, whose `.pth` were **deleted in the
+   September 2026 cleanup**. The same `tsconv_dropout_sweep_20260429-190741/...seed3300` base is the
+   `DEFAULT_SOURCE_RUN_DIR` of every `scripts/things_eeg/tta_rebuttal/` experiment. So the 68.x/77.2
+   numbers exist only in `result.csv`; re-deriving them means retraining. Surviving clean weights:
+   `tsconv_val_best_20260501-170237` (LOSO-val TSConv, 3 seeds) and `honest_ensemble/*_valcon` (ValCon).
 2. **The ensemble line replays from score dumps, not weights.**
    `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` holds 2,010 npz (1.2 GB) = 235 arms
    × 10 folds, and each dump carries the **raw 200×128 EEG and image embeddings** (plus

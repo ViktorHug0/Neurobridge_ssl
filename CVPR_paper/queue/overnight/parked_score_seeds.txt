@@ -1,0 +1,21 @@
+# PARKED 2026-10-22 01:50: SCORE (original) seeds 3301/3302 with the current reimplementation (does not reproduce SCORE training gain). Re-queue only with a fixed version.
+bash CVPR_paper/scripts/samga_fold.sh score 3301 1 > logs/cvpr/samga_score_3301_1.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 2 > logs/cvpr/samga_score_3301_2.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 3 > logs/cvpr/samga_score_3301_3.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 4 > logs/cvpr/samga_score_3301_4.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 5 > logs/cvpr/samga_score_3301_5.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 6 > logs/cvpr/samga_score_3301_6.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 7 > logs/cvpr/samga_score_3301_7.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 8 > logs/cvpr/samga_score_3301_8.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 9 > logs/cvpr/samga_score_3301_9.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3301 10 > logs/cvpr/samga_score_3301_10.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 1 > logs/cvpr/samga_score_3302_1.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 2 > logs/cvpr/samga_score_3302_2.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 3 > logs/cvpr/samga_score_3302_3.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 4 > logs/cvpr/samga_score_3302_4.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 5 > logs/cvpr/samga_score_3302_5.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 6 > logs/cvpr/samga_score_3302_6.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 7 > logs/cvpr/samga_score_3302_7.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 8 > logs/cvpr/samga_score_3302_8.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 9 > logs/cvpr/samga_score_3302_9.log 2>&1
+bash CVPR_paper/scripts/samga_fold.sh score 3302 10 > logs/cvpr/samga_score_3302_10.log 2>&1

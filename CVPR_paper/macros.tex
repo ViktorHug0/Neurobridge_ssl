@@ -1,0 +1,528 @@
+% !TeX root = 000main.tex
+% needed for compilation in TeXworks 
+%\pagestyle{myheadings}
+
+%\usepackage{amsmath,amsfonts,amssymb,rotating}
+\usepackage{amssymb,amsmath,amsfonts,epsfig,mdframed,rotating,cancel,mathtools}
+
+
+
+
+
+\usepackage{bbm}
+
+\usepackage{comment} % To create a block comment
+
+
+
+\newcommand{\insertfig}[3]{
+\begin{figure}[tbp]\begin{center}\begin{picture}(120,90)
+\put(0,-5){\includegraphics[width=12cm,height=9cm,clip=]{#1.eps}}\end{picture}\end{center}
+\caption{#2}\label{#3}\end{figure}}
+
+%
+\newcommand{\inserttwofig}[4]{
+\begin{figure}\begin{center}\begin{picture}(150,170)
+\put(10,80){\includegraphics[with=8.5cm]{#1.ps}}
+\put(10, 0){\includegraphics[with=8.5cm]{#2.ps}}
+\end{picture}\end{center}
+\caption{#3}\label{#4}\end{figure}}
+
+
+%% Commentaires/Discussions
+\newcommand{\jc}[1]{{ \color{blue} #1}}
+%\newcommand{\jc}[1]{#1}
+
+\newcommand \mqp[1]{{\color{blue}{#1}}}
+%\newcommand \mqp[1]{#1}
+
+
+%% Pour faire des parentheses et crochets corrects plus vite
+\renewcommand{\(}{\left(}
+\renewcommand{\)}{\right)}
+\renewcommand{\[}{\left[}
+\renewcommand{\]}{\right]}
+\newcommand{\lb}{\llbracket}
+%\newcommand{\rb}{\rrbracket}
+
+
+% bb font symbols
+%%new
+\def\Q{{\mathbb Q}}
+\def\C{{\mathbb C}}
+\def\N{{\mathbb N}}
+\def\Z{{\mathbb Z}}
+\def\R{{\mathbb R}}
+\def\E{{\mathbb E}}
+\def\F{{\mathbb F}}
+\def\P{{\mathbb P}}
+
+%%old
+\newfont{\bbb}{msbm10 scaled 500}
+\newcommand{\CCC}{\mbox{\bbb C}}
+
+\newfont{\bb}{msbm10 scaled 1100}
+\newcommand{\CC}{\mbox{\bb C}}
+\newcommand{\RR}{\mbox{\bb R}}
+\newcommand{\ZZ}{\mbox{\bb Z}}
+\newcommand{\FF}{\mbox{\bb F}}
+\newcommand{\GG}{\mbox{\bb G}}
+\newcommand{\LL}{\mbox{\bb L}}
+\newcommand{\NN}{\mbox{\bb N}}
+\newcommand{\PP}{\mbox{\bb P}}
+\newcommand{\EE}{\mbox{\bb E}}
+ 
+
+
+% Paging
+\def\nn{\noindent}
+
+
+% Math environnement
+%\newcommand{\ds}{{\displaystyle}}
+\newcommand{\D}{\displaystyle}
+\newcommand{\tr}{{^{\triangle}}}
+
+\providecommand{\ie}{{\emph{i.e.}}}
+
+
+% Math Operator
+\DeclareMathOperator{\ind}{1}
+\def\i{\perp\!\!\!\perp} % independendent
+
+% Vectors
+
+\newcommand{\av}{{\bf a}}
+\newcommand{\bv}{{\bf b}}
+\newcommand{\cv}{{\bf c}}
+\newcommand{\dv}{{\bf d}}
+\newcommand{\ev}{{\bf e}}
+\newcommand{\fv}{{\bf f}}
+\newcommand{\gv}{{\bf g}}
+\newcommand{\hv}{{\bf h}}
+\newcommand{\iv}{{\bf i}}
+\newcommand{\jv}{{\bf j}}
+\newcommand{\kv}{{\bf k}}
+\newcommand{\lv}{{\bf l}}
+\newcommand{\mv}{{\bf m}}
+\newcommand{\nv}{{\bf n}}
+\newcommand{\ov}{{\bf o}}
+\newcommand{\pv}{{\bf p}}
+\newcommand{\qv}{{\bf q}}
+\newcommand{\rv}{{\bf r}}
+\newcommand{\sv}{{\bf s}}
+\newcommand{\tv}{{\bf t}}
+\newcommand{\uv}{{\bf u}}
+\newcommand{\wv}{{\bf w}}
+\newcommand{\vv}{{\bf v}}
+\newcommand{\xv}{{\bf x}}
+\newcommand{\yv}{{\bf y}}
+\newcommand{\zv}{{\bf z}}
+\newcommand{\zerov}{{\bf 0}}
+\newcommand{\onev}{{\mathbbm 1}}
+\newcommand{\Vv}{{\bf V}}   % random vector
+\newcommand{\Xv}{{\bf X}}   % random vector
+\newcommand{\Yv}{{\bf Y}}   % random vector
+\newcommand{\Zv}{{\bf Z}}   % random vector
+
+% Vectors with hat
+
+\newcommand{\avh}{{\bf \hat a}}
+\newcommand{\bvh}{{\bf \hat b}}
+\newcommand{\cvh}{{\bf \hat c}}
+\newcommand{\dvh}{{\bf \hat d}}
+\newcommand{\evh}{{\bf \hat e}}
+\newcommand{\fvh}{{\bf \hat f}}
+\newcommand{\gvh}{{\bf \hat g}}
+\newcommand{\hvh}{{\bf \hat h}}
+\newcommand{\ivh}{{\bf \hat i}}
+\newcommand{\jvh}{{\bf \hat j}}
+\newcommand{\kvh}{{\bf \hat k}}
+\newcommand{\lvh}{{\bf \hat l}}
+\newcommand{\mvh}{{\bf \hat m}}
+\newcommand{\nvh}{{\bf \hat n}}
+\newcommand{\ovh}{{\bf \hat o}}
+\newcommand{\pvh}{{\bf \hat p}}
+\newcommand{\qvh}{{\bf \hat q}}
+\newcommand{\rvh}{{\bf \hat r}}
+\newcommand{\svh}{{\bf \hat s}}
+\newcommand{\tvh}{{\bf \hat t}}
+\newcommand{\uvh}{{\bf \hat u}}
+\newcommand{\wvh}{{\bf \hat w}}
+\newcommand{\vvh}{{\bf \hat v}}
+\newcommand{\xvh}{{\bf \hat x}}
+\newcommand{\yvh}{{\bf \hat y}}
+\newcommand{\zvh}{{\bf \hat z}}
+\newcommand{\zerovh}{{\bf \hat 0}}
+\newcommand{\onevh}{{\bf \hat 1}}
+
+% Matrices
+
+\newcommand{\Am}{{\bf A}}
+\newcommand{\Bm}{{\bf B}}
+\newcommand{\Cm}{{\bf C}}
+\newcommand{\Dm}{{\bf D}}
+\newcommand{\Em}{{\bf E}}
+\newcommand{\Fm}{{\bf F}}
+\newcommand{\Gm}{{\bf G}}
+\newcommand{\Hm}{{\bf H}}
+\newcommand{\Id}{{\bf I}}
+\newcommand{\Jm}{{\bf J}}
+\newcommand{\Km}{{\bf K}}
+\newcommand{\Lm}{{\bf L}}
+\newcommand{\Mm}{{\bf M}}
+\newcommand{\Nm}{{\bf N}}
+\newcommand{\Om}{{\bf O}}
+\newcommand{\Pm}{{\bf P}}
+\newcommand{\Qm}{{\bf Q}}
+\newcommand{\Rm}{{\bf R}}
+\newcommand{\Sm}{{\bf S}}
+\newcommand{\Tm}{{\bf T}}
+\newcommand{\Um}{{\bf U}}
+\newcommand{\Wm}{{\bf W}}
+\newcommand{\Vm}{{\bf V}}
+\newcommand{\Xm}{{\bf X}}
+\newcommand{\Ym}{{\bf Y}}
+\newcommand{\Zm}{{\bf Z}}
+\newcommand{\Sigm}{{\bf \Sigma}}
+
+% Calligraphic
+
+\newcommand{\Ac}{{\cal A}}
+\newcommand{\Bc}{{\cal B}}
+\newcommand{\Cc}{{\cal C}}
+\newcommand{\Dc}{{\cal D}}
+\newcommand{\Ec}{{\cal E}}
+\newcommand{\Fc}{{\cal F}}
+\newcommand{\Gc}{{\cal G}}
+\newcommand{\Hc}{{\cal H}}
+\newcommand{\Ic}{{\cal I}}
+\newcommand{\Jc}{{\cal J}}
+\newcommand{\Kc}{{\cal K}}
+\newcommand{\Lc}{{\cal L}}
+\newcommand{\Mc}{{\cal M}}
+\newcommand{\Nc}{{\cal N}}
+\newcommand{\Oc}{{\cal O}}
+\newcommand{\Pc}{{\cal P}}
+\newcommand{\Qc}{{\cal Q}}
+\newcommand{\Rc}{{\cal R}}
+\newcommand{\Sc}{{\cal S}}
+\newcommand{\Tc}{{\cal T}}
+\newcommand{\Uc}{{\cal U}}
+\newcommand{\Wc}{{\cal W}}
+\newcommand{\Vc}{{\cal V}}
+\newcommand{\Xc}{{\cal X}}
+\newcommand{\Yc}{{\cal Y}}
+\newcommand{\Zc}{{\cal Z}}
+
+% Bold greek letters
+% for non italic greek letters use package \usepackage{upgreek} and \boldsymbol\uptheta
+
+\newcommand{\alphav}{\hbox{\boldmath$\alpha$}}
+\newcommand{\betav}{\hbox{\boldmath$\beta$}}
+\newcommand{\gammav}{\hbox{\boldmath$\gamma$}}
+\newcommand{\deltav}{\hbox{\boldmath$\delta$}}
+\newcommand{\etav}{\hbox{\boldmath$\eta$}}
+\newcommand{\lambdav}{\hbox{\boldmath$\lambda$}}
+\newcommand{\epsilonv}{\hbox{\boldmath$\epsilon$}}
+\newcommand{\nuv}{\hbox{\boldmath$\nu$}}
+\newcommand{\muv}{\hbox{\boldmath$\mu$}}
+\newcommand{\zetav}{\hbox{\boldmath$\zeta$}}
+\newcommand{\phiv}{\hbox{\boldmath$\phi$}}
+\newcommand{\psiv}{\hbox{\boldmath$\psi$}}
+\newcommand{\thetav}{\hbox{\boldmath$\theta$}}
+\newcommand{\tauv}{\hbox{\boldmath$\tau$}}
+\newcommand{\omegav}{\hbox{\boldmath$\omega$}}
+\newcommand{\xiv}{\hbox{\boldmath$\xi$}}
+\newcommand{\sigmav}{\hbox{\boldmath$\sigma$}}
+\newcommand{\piv}{\hbox{\boldmath$\pi$}}
+\newcommand{\rhov}{\hbox{\boldmath$\rho$}}
+
+\newcommand{\Gammam}{\hbox{\boldmath$\Gamma$}}
+\newcommand{\Lambdam}{\hbox{\boldmath$\Lambda$}}
+\newcommand{\Deltam}{\hbox{\boldmath$\Delta$}}
+\newcommand{\Sigmam}{\hbox{\boldmath$\Sigma$}}
+\newcommand{\Phim}{\hbox{\boldmath$\Phi$}}
+\newcommand{\Pim}{\hbox{\boldmath$\Pi$}}
+\newcommand{\Psim}{\hbox{\boldmath$\Psi$}}
+\newcommand{\Thetam}{\hbox{\boldmath$\Theta$}}
+\newcommand{\Omegam}{\hbox{\boldmath$\Omega$}}
+\newcommand{\Xim}{\hbox{\boldmath$\Xi$}}
+
+% intercomm notation
+
+\newcommand{\js}{(j^*)}%previous request
+\renewcommand{\j}{(j)}%one arbitrary previous request
+\renewcommand{\k}{(k)}%one arbitrary current request
+\renewcommand{\l}{(l)}%current request
+\renewcommand{\L}{(L)}%current request
+\newcommand{\Ejs}{\Ec^*}%{\Ec_{j^*}}%set
+
+\newcommand{\jm}{{(j_{m})}}% source indices of the true previous request in the set
+
+
+\newcommand{\jms}{{j_{m^*}}}% indices of the true previous request in the set
+
+%\newcommand{\Xset}{\mathcal{X}}%set of source
+\newcommand{\Xl}{X_{(l)}}%arbitrary source
+\newcommand{\Xone}{X_{(1)}}% first source
+\newcommand{\Xk}{X_{(k)}}%requested source
+\newcommand{\Xjs}{X_{(j^*)}}%previous requested source
+\newcommand{\Xj}{X_{(j)}}% arbitrary previous source
+\newcommand{\XJk}{X_{(J_{\k})}}% arbitrary previous source
+\newcommand{\Xjone}{X_{(j_1)}}% first possible previously requested source
+\newcommand{\XjM}{X_{(j_M)}}% last possible previously requested source
+\newcommand{\XjMk}{X_{({j_M}_{\tiny (k)})}}% last possible previously requested source
+\newcommand{\Xjm}{X_{(j_m)}}% arbitrary possible previously requested source
+
+
+\newcommand{\Jsetk}{\mathcal{J}_{(k)}}%possible set of previous requested sources 
+\newcommand{\Jsetkd}{\mathcal{\widetilde{J}}_{(k)}}%possible set of previous requested sources (lossy case)
+
+\newcommand{\Mk}{M_{(k)}}%Number of possible previous requests (either  number of possible indicies or number of possible set of indices)
+\newcommand{\M}{M}%Number of possible previous requests (either  number of possible indicies or number of possible set of indices)
+\newcommand{\Ssetl}{\mathcal{S}_{(l)}}%possible set of previous requested sources 
+\newcommand{\Rkjs}{R_{(k)|(j^*)}}%rate
+\newcommand{\RkEjs}{R_{(k)|\Ec^*}}%rate
+\newcommand{\Ffamk}{\mathcal{F}_{(k)}}% family of subset of possible previous requested sources
+\newcommand{\sigA}{\pi}	% Ordering application
+\newcommand{\Sk}{S_{(k)}}%storage
+
+\newcommand{\Pset}{\mathscr{P}}
+\newcommand{\Ppmf}{\mathcal{P}}
+
+\newcommand{\xJxj}{_{\xv^n,\xv_{\j}^n}}  % fro the types
+\newcommand{\xxj}{_{\xv^n|\xv_{\j}^n}}
+\newcommand{\xxjs}{_{\xv^n|\xv_{\js}^n}}
+
+\newcommand{\xkJxj}{_{\xv_{\k}^n,\xv_{\j}^n}}
+\newcommand{\xkxj}{_{\xv_{\k}^n|\xv_{\j}^n}}
+\newcommand{\xkxjs}{_{\xv_{\k}^n|\xv_{\js}^n}}
+
+
+% Unknown statistics, non iid case
+\newcommand{\SetET}{\boldsymbol{\hat{\theta}}^{(u_n)}}
+\newcommand{\SetETR}{\boldsymbol{\widehat{\Theta}}^{(u_n)}}
+\newcommand{\SetE}{\boldsymbol{\hat{\theta}}}
+\newcommand{\SetER}{\boldsymbol{\widehat{\Theta}}}
+\newcommand{\An}{A_{n}(\mathbf{X}^{n},\Xv_{\j}^{n})}
+\newcommand{\Bn}{B_{n}(\mathbf{X}^{n},\Xv_{\j}^{n})}
+\newcommand{\Vn}{V_{n}(\mathbf{X}^{n},\Xv_{\j}^{n})}
+\newcommand{\Anx}{A_{n}(\mathbf{x}^{n},\xv_{\j}^{n})}
+\newcommand{\Bnx}{B_{n}(\mathbf{x}^{n},\xv_{\j}^{n})}
+\newcommand{\Vnx}{V_{n}(\mathbf{x}^{n},\xv_{\j}^{n})}
+\newcommand{\Pt}{Q}
+\newcommand{\pt}{q}
+
+% to remove: no more used
+\newcommand{\Fk}{F_{(k)}}%Number of family of subset of possible previous requested sources 
+\newcommand{\Jk}{J_{(k)}}%Number of possible set of previous requested sources 
+
+
+
+\newcommand{\tp}{\theta}
+\newcommand{\Tp}{\Theta}
+\newcommand{\Etp}{\mathcal{T}}
+\newcommand{\tpe}{\hat{\theta}}
+\newcommand{\Hs}{\overline{H}}
+\newcommand{\plim}{\text{p}\text{ - }\underset{n\rightarrow \infty}{\lim\sup}~}
+\newcommand{\prlim}{\text{p}\text{ -}\underset{n\rightarrow \infty}{\lim}~}
+
+\newcommand{\sigx}{\sigma_k}
+\newcommand{\sigy}{\sigma_j}
+\newcommand{\cc}{\rho_{k,j}}
+\newcommand{\Ckj}{\Sigma_{(k,j)}}
+\newcommand{\sigkj}{\sigma_{k,j}}
+\newcommand{\sigkjs}{\sigma_{k,j^{*}}}
+\newcommand{\Un}{\mathbf{U}^n}
+\newcommand{\un}{\mathbf{u}^n}
+
+\newcommand{\Reqset}{\mathcal{K}} % the request set
+\newcommand{\Reqvec}{\mathbf{K}} % the request vec
+\newcommand{\NReq}{K} % the number of request 
+\newcommand{\reqZero}{(k_0)} % the first request index
+\newcommand{\reqOne}{(k_1)} % the first request index
+\newcommand{\reqNReq}{(k_{\NReq})} % the Kth request index
+\newcommand{\reqt}{(k_t)} % the t-th request index
+\newcommand{\reqtprev}{(k_{t-1})} % the t-1-th request index
+
+\newcommand{\G}{\mathcal{G}} % the graph
+\newcommand{\V}{\mathcal{V}} % the graph
+%\newcommand{\Edge}{\mathcal{E}} % the graph
+
+
+% mixed symbols
+
+\newcommand{\sinc}{{\hbox{sinc}}}
+\newcommand{\diag}{{\hbox{diag}}}
+\renewcommand{\det}{{\hbox{det}}}
+\newcommand{\trace}{{\hbox{tr}}}
+\newcommand{\sign}{{\hbox{sign}}}
+\renewcommand{\arg}{{\hbox{\rm arg}}}
+\newcommand{\var}{{\hbox{var}}}
+\newcommand{\SINR}{\hbox{SINR}}
+\newcommand{\SNR}{\hbox{SNR}}
+\newcommand{\Ei}{{\rm E}_{\rm i}}
+\renewcommand{\Re}{{\rm Re}}
+\renewcommand{\Im}{{\rm Im}}
+%\newcommand{\eqdef}{\stackrel{\Delta}{=}}
+% use \triangleq instead in amsmath amssymb
+\newcommand{\eqe}{\stackrel{.}{=}}
+\newcommand{\<}{\left\langle}
+\renewcommand{\>}{\right\rangle}
+\newcommand{\smaller}{\negthickspace > \negthickspace}
+\newcommand{\bit}{\mbox{ bit }}
+\newcommand{\bits}{\mbox{ bits }}
+\newcommand{\ifm}{\mbox{ if }}
+\newcommand{\SW}{{\rm SW}}
+\newcommand{\Ca}{{\rm C}}
+\newcommand{\qqquad}{\qquad \quad}
+
+\newcommand{\setN}{\{1,\,\ldots,\, N\}}
+\newcommand{\setM}{\{1,\,\ldots,\, M\}}
+\newcommand{\setK}{\{1,\,\ldots,\, K\}}
+% math symbol
+
+\def\<{\langle}
+\def\>{\rangle}
+\newcommand{\foralls}{\forall \ }
+\newcommand{\indep}{\quad \begin{rotate}{90}{$\models$}\end{rotate} \quad}
+
+
+\newcommand{\conv}{\ensuremath{\operatorname{conv}}}
+\newcommand{\vol}{\ensuremath{\operatorname{vol}}}
+\newcommand{\cut}{\ensuremath{\operatorname{cut}}}
+\newcommand{\ncut}{\ensuremath{\operatorname{Ncut}}}
+\newcommand{\assoc}{\ensuremath{\operatorname{assoc}}}
+\newcommand{\nassoc}{\ensuremath{\operatorname{Nassoc}}}
+%\newcommand{\I}{\ensuremath{\operatorname{\textbf{I}}}}
+
+\newcommand{\I}{{\bf I}}
+
+
+\newcommand{\Diag}{\ensuremath{\operatorname{Diag}}}
+\newcommand{\cost}{\ensuremath{\operatorname{cost}}}
+
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator{\amin}{argmin}
+%\newcommand{\sign}{\ensuremath{\operatorname{sign}}}
+\newcommand{\minimize}[2]{\underset{{#1}}{\text{minimize}}\;{#2}}
+\newcommand{\argmin}[1]{\underset{{#1}}{\text{argmin}}}
+\newcommand{\argmax}[1]{\underset{{#1}}{\text{argmax}}}
+\newcommand{\dom}{\ensuremath{\mathrm{dom}\,}}
+\newcommand{\rank}{\ensuremath{\mathrm{rank}\,}}
+\newcommand{\sri}{\ensuremath{\mathrm{sri}\,}}
+\newcommand{\ri}{\ensuremath{\mathrm{ri}\,}}
+%\newcommand{\Id}{\ensuremath{\mathrm{Id}}}
+\newcommand{\prox}{\ensuremath{\operatorname{prox}}}
+\newcommand{\proj}{\ensuremath{\operatorname{proj}}}
+\newcommand{\fastMU}{\ensuremath{\operatorname{fastMU}}}
+
+
+
+% ----- new macros 
+\newcommand{\fid}{\ensuremath{\operatorname{fid}}}
+\newcommand{\prior}{\ensuremath{\operatorname{prior}}}
+
+\newcommand{\Jfid}{J_{\mathrm{fid}}}
+\newcommand{\Jprior}{J_{\mathrm{prior}}}
+
+\newcommand{\thetaG}{\thetav_\Gamma}
+\newcommand{\thetaC}{\thetav_C}
+
+\newcommand{\Gammatheta}{\Gamma_{\thetav_\Gamma}}
+\newcommand{\Ctheta}{C_{\thetav_C}}  
+\newcommand{\Phitheta}{\Phi_{\thetav_\Phi}}  
+\newcommand{\Rtheta}{R_{\thetav_R}}  
+
+\newcommand{\Ttheta}{T_{\thetav}}
+\newcommand{\gphi}{g_{\phiv}}
+
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\losstraj}{\mathcal{L}_{\mathrm{traj}}}
+\newcommand{\lossfinal}{\mathcal{L}_{\mathrm{final}}}
+\newcommand{\losssmooth}{\mathcal{L}_{\mathrm{smooth}}}
+\newcommand{\lossstep}{\mathcal{L}_{\mathrm{step}}}
+
+
+
+
+
+% ----------
+
+\newcommand{\fastMUmin}{\ensuremath{\operatorname{fastMUmin}}}
+\newcommand{\MU}{\ensuremath{\operatorname{MU}}}
+\newcommand{\kmax}{\ensuremath{K_\text{max}}}
+
+
+
+\DeclarePairedDelimiter\ceil{\lceil}{\rceil}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+
+ 		
+
+
+
+%\renewenvironment{proof}{\textbf{Proof}}{\qed}
+
+%%% tikz for graph 
+
+\usepackage{tikz,tkz-tab}
+
+\usetikzlibrary{fit,automata,positioning,calc,shapes}
+\usepackage{ifthen}
+
+\ifdefined\circlenode
+\else
+\newcommand{\circlenode}[3]{
+	\node [draw, circle, inner sep=2pt, #1] (#2) {#3};
+}
+\fi
+\ifdefined\sqnode
+\else
+\newcommand{\sqnode}[3]{
+	\node [draw, rectangle, inner sep=2pt, #1] (#2) {#3};
+}
+\fi
+
+
+
+%%% index
+
+\newcommand{\iopt}{\overline{i}}
+\newcommand{\jopt}{\overline{j}}
+\newcommand{\topt}{\overline{t}}
+%\usepackage{amsthm} % Load theorem package
+
+ 
+
+%%%%% color definition 
+\definecolor{darkgreen}{rgb}{0.1,0.5,0}
+\definecolor{Midnightblue}{rgb}{.2,.2,.7}
+\definecolor{mypink3}{cmyk}{0, 0.7808, 0.4429, 0.1412}
+
+\def\blue#1{\textcolor{Midnightblue}{#1}}
+
+\def\bblue#1{\textbf{\textcolor{Midnightblue}{#1}}}
+
+\definecolor{amber}{rgb}{1.0, 0.49, 0.0}
+
+\def\oran#1{\textcolor{amber}{#1}}
+
+\def\redm#1{\textcolor{mypink3}{#1}}
+
+\def\boran#1{\textbf{\textcolor{amber}{#1}}}
+\def\green#1{\textcolor{darkgreen}{#1}}
+
+
+% remove/comment the sentence 
+
+\newcommand \remove[1]{ }
+
+ 
+
+
+
+
+ 
+

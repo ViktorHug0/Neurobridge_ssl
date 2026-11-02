@@ -327,11 +327,81 @@ def build_train_dataset(eval_args, subject_id: int, average: bool | None = None)
     )
 
 
+SAMGA_ROOT = "/nasbrain/p20fores/SAMGA"  # official SAMGA code (branch score_repro adds SCORE's training, score_lib.py)
+
+
+def _is_samga(train_cfg: dict) -> bool:
+    return "use_multilayer_router" in train_cfg and "stage1_mmd_start" in train_cfg
+
+
+def _samga_eval_args(eval_args, eval_cfg: dict):
+    """SAMGA runs: the gallery is the run's stacked multi-layer cache [N, 1, K, D], and the encoder is SAMGA's own
+    (relabelled so that run_eeg_backbone falls through to model(eeg))."""
+    eval_args.samga = True
+    eval_args.samga_encoder_type = eval_args.eeg_encoder_type
+    eval_args.eeg_encoder_type = "SAMGA"
+    eval_args.image_feature_dir = eval_cfg["effective_image_feature_dir"]
+    return eval_args
+
+
+def _load_by_path(name, path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_samga_modules(eval_args, checkpoint_path: str, device):
+    """Rebuild a trained SAMGA model behind this repo's (model, eeg_projector, img_projector) interface, exactly as
+    SAMGA's own test loop composes it: EEG = share(eeg_proj(enc(x))); image = share(sum_l w_l proj_l(pre(x_l))) with the
+    router's GLOBAL weights (--router_eval_mode global, the subject-agnostic inference)."""
+    m = _load_by_path("samga_model", os.path.join(SAMGA_ROOT, "module/eeg_encoder/model.py"))
+    pj = _load_by_path("samga_projector", os.path.join(SAMGA_ROOT, "module/projector.py"))
+    sl = _load_by_path("samga_score_lib", os.path.join(SAMGA_ROOT, "score_lib.py"))
+    a = eval_args
+    if a.projector != "linear" or not a.use_multilayer_router or a.samga_encoder_type not in ("TSConv", "EEGProject"):
+        raise ValueError("adapter covers SAMGA's inter.sh / intra.sh configurations (TSConv / EEGProject, linear projectors, "
+                         "multi-layer router)")
+    ck = torch.load(checkpoint_path, map_location=device)
+    a.feature_dim = ck["eeg_projector_state_dict"]["linear.weight"].shape[0]  # SAMGA's evaluate_config overwrites it
+    enc = getattr(m, a.samga_encoder_type)(feature_dim=a.eeg_feature_dim, eeg_sample_points=a.eeg_sample_points,
+                                           channels_num=len(a.selected_channels) or 63)
+    enc.load_state_dict(ck["model_state_dict"])
+    eeg_proj, pre = pj.ProjectorLinear(a.eeg_feature_dim, a.feature_dim), pj.ProjectorLinear(3200, a.image_mid_dim)
+    layer_proj = torch.nn.ModuleList([pj.ProjectorLinear(a.image_mid_dim, a.feature_dim) for _ in a.layer_ids])
+    share = pj.ShareEncoder(a.feature_dim, a.feature_dim)
+    router = sl.SubjectAwareLayerMixer(a.layer_ids, max(a.train_subject_ids + a.test_subject_ids) + 1, a.layer_prior_center,
+                                       a.layer_prior_strength, a.router_temperature, a.router_subject_dropout)
+    eeg_proj.load_state_dict(ck["eeg_projector_state_dict"])
+    pre.load_state_dict(ck["img_pre_projector_state_dict"])
+    layer_proj.load_state_dict(ck["img_projectors_state_dict"])
+    share.load_state_dict(ck["share_enc_state_dict"])
+    router.load_state_dict(ck["layer_router_state_dict"])
+
+    class Image(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.pre, self.layers, self.share, self.router = pre, layer_proj, share, router
+
+        def forward(self, x):  # x [B, K, D] (stacked layers)
+            z = torch.stack([self.layers[i](self.pre(x[:, i])) for i in range(x.shape[1])], dim=1)
+            return self.share((z * self.router.get_global_weights()[None, :, None]).sum(1))
+
+    eeg_projector = torch.nn.Sequential(eeg_proj, share)
+    mods = {"model": enc.to(device).eval(), "eeg_projector": eeg_projector.to(device).eval(),
+            "img_projector": Image().to(device).eval(), "device": device}
+    return mods
+
+
 def load_modules(eval_args, checkpoint_dir: str, test_dataset):
-    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_test_best.pth")
+    # ValCon runs keep the test-selected epoch in checkpoint_testsel_best.pth; pick it with this env var
+    checkpoint_path = os.path.join(checkpoint_dir, os.environ.get("SAGE_CHECKPOINT_NAME", "checkpoint_test_best.pth"))
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Could not find checkpoint at '{checkpoint_path}'.")
     device = torch.device(eval_args.device if torch.cuda.is_available() else "cpu")
+    if getattr(eval_args, "samga", False):
+        return load_samga_modules(eval_args, checkpoint_path, device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     image_feature_dim = test_dataset.image_features.shape[-1]
     backbone_feature_dim = getattr(eval_args, "eeg_backbone_dim", 0) or image_feature_dim
@@ -355,6 +425,8 @@ def load_subject_context(source_run_dir: str, runtime_args, subject_id: int, ave
     train_cfg = load_json(os.path.join(checkpoint_dir, "train_config.json"))
     eval_cfg = load_json(os.path.join(checkpoint_dir, "evaluate_config.json"))
     eval_args = build_eval_args(train_cfg, eval_cfg, runtime_args, subject_id)
+    if _is_samga(train_cfg):
+        eval_args = _samga_eval_args(eval_args, eval_cfg)
     dataset = build_test_dataset(eval_args, subject_id, average=average)
     modules = load_modules(eval_args, checkpoint_dir, dataset)
     return checkpoint_dir, eval_args, dataset, modules
@@ -365,6 +437,8 @@ def load_subject_train_test_context(source_run_dir: str, runtime_args, subject_i
     train_cfg = load_json(os.path.join(checkpoint_dir, "train_config.json"))
     eval_cfg = load_json(os.path.join(checkpoint_dir, "evaluate_config.json"))
     eval_args = build_eval_args(train_cfg, eval_cfg, runtime_args, subject_id)
+    if _is_samga(train_cfg):
+        eval_args = _samga_eval_args(eval_args, eval_cfg)
     test_dataset = build_test_dataset(eval_args, subject_id, average=average)
     train_dataset = build_train_dataset(eval_args, subject_id, average=average)
     modules = load_modules(eval_args, checkpoint_dir, test_dataset)
@@ -433,8 +507,8 @@ def encode_indexed_average_features(eval_args, modules, dataset):
 
 def _test_image_matrix(dataset):
     image_features = np.asarray(dataset.image_features)
-    if image_features.ndim == 3:
-        image_features = image_features[:, 0, :]
+    if image_features.ndim >= 3:  # [N, 1, D], or SAMGA's stacked layers [N, 1, K, D]
+        image_features = image_features[:, 0]
     return image_features.astype(np.float32, copy=False)
 
 

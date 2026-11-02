@@ -1,6 +1,7 @@
 import math
 import random
-from torch.utils.data import BatchSampler
+from torch.utils.data import BatchSampler, Sampler
+import numpy as np
 
 
 class GroupedImageBatchSampler(BatchSampler):
@@ -101,3 +102,70 @@ class GroupedImageBatchSampler(BatchSampler):
         if self.drop_last:
             return total_encounters // self.images_per_batch
         return math.ceil(total_encounters / self.images_per_batch)
+
+
+class RepeatGroupBatchSampler(Sampler):
+    """Batches of whole (subject, image) repeat groups, for --repeat_mean_loss. An un-averaged, deterministic
+    EEGPreImageDataset lays out index = group * reps + rep, group = (subject, object, image), so each batch holds
+    batch_size // reps groups with all of their repeats."""
+
+    def __init__(self, n_items, reps, batch_size, seed=0):
+        if n_items % reps:
+            raise ValueError(f"{n_items} items are not whole groups of {reps} repeats")
+        self.reps, self.groups_per_batch, self.n_groups = reps, batch_size // reps, n_items // reps
+        self.seed, self.epoch = seed, 0
+
+    def __iter__(self):
+        order = np.random.default_rng(self.seed + self.epoch).permutation(self.n_groups)
+        self.epoch += 1
+        for b in range(len(self)):
+            groups = order[b * self.groups_per_batch:(b + 1) * self.groups_per_batch]
+            yield (groups[:, None] * self.reps + np.arange(self.reps)).ravel().tolist()
+
+    def __len__(self):
+        return self.n_groups // self.groups_per_batch
+
+
+class NeighbourBatchSampler(Sampler):
+    """With probability p a batch is batch_size distinct images from one k-means cluster of the image targets (one
+    random trial each: fine-grained negatives); otherwise an ordinary random batch. keys[i] = image id of row i."""
+
+    def __init__(self, keys, image_feats, batch_size, p, seed=0, iters=15):
+        import torch
+        self.batch_size, self.p, self.seed, self.epoch = batch_size, p, seed, 0
+        keys = np.asarray(keys)
+        self.n = len(keys)
+        self.order = np.argsort(keys, kind='stable')
+        self.count = np.bincount(keys, minlength=len(image_feats))
+        self.start = np.concatenate([[0], np.cumsum(self.count)[:-1]])
+        x = torch.nn.functional.normalize(torch.as_tensor(np.asarray(image_feats, dtype=np.float32)), dim=1)
+        g = torch.Generator().manual_seed(seed)
+        c = x[torch.randperm(len(x), generator=g)[:max(1, len(x) // batch_size)]].clone()
+        for _ in range(iters):  # spherical k-means
+            a = (x @ c.T).argmax(1)
+            for j in range(len(c)):
+                if (a == j).any():
+                    c[j] = torch.nn.functional.normalize(x[a == j].sum(0), dim=0)
+        a = (x @ c.T).argmax(1).numpy()
+        self.clusters = [np.flatnonzero((a == j) & (self.count > 0)) for j in range(len(c))]
+        self.clusters = [cl for cl in self.clusters if len(cl)]
+        self.weights = np.array([len(cl) for cl in self.clusters], dtype=float)
+        self.weights /= self.weights.sum()
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed + self.epoch)
+        self.epoch += 1
+        perm, ptr = rng.permutation(self.n), 0
+        for _ in range(len(self)):
+            if rng.random() < self.p:
+                cl = self.clusters[rng.choice(len(self.clusters), p=self.weights)]
+                ks = rng.choice(cl, min(self.batch_size, len(cl)), replace=False)
+                batch = self.order[self.start[ks] + rng.integers(0, self.count[ks])]
+                fill = self.batch_size - len(batch)
+                batch = np.concatenate([batch, perm[ptr:ptr + fill]]); ptr += fill
+            else:
+                batch = perm[ptr:ptr + self.batch_size]; ptr += self.batch_size
+            yield batch.tolist()
+
+    def __len__(self):
+        return self.n // self.batch_size

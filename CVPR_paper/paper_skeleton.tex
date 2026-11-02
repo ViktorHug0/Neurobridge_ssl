@@ -1,0 +1,254 @@
+% CVPR 2027 submission skeleton (structure + intended content). NOT a draft of the prose.
+% Deadlines (official CFP): enrollment 2026-11-10, paper 2026-11-16, supplementary 2026-11-23 (AoE).
+% Every number below is a placeholder (XX). Old NeurIPS numbers appear only in %-comments, tagged OLD,
+% because they were produced with test-selected checkpoints and/or test-tuned TTA configs and must be
+% regenerated under protocol P-clean (see checklist.md). Experiment IDs (E*.*) refer to checklist.md.
+\documentclass[10pt,twocolumn,letterpaper]{article}
+% The official author kit is not in the repo yet (checklist.md, P0.1). Until it is, fall back to plain article.
+\IfFileExists{cvpr.sty}{\usepackage[review]{cvpr}}{\usepackage[margin=0.75in]{geometry}}
+\usepackage{amsmath,amssymb,booktabs,graphicx,xcolor,hyperref}
+\newcommand{\todo}[1]{{\color{red}[TODO: #1]}}
+\newcommand{\XX}{{\color{red}XX}}
+
+\title{Calibrate on the Fly: Label-Free Transductive Subject Adaptation\\
+for EEG-to-Image Decoding --- a Protocol, its Pitfalls, and a Method}
+% Title is a placeholder. Decide whether to keep the name SAGE (checklist.md, open question Q3).
+\author{Anonymous CVPR submission}
+
+\begin{document}
+\maketitle
+
+%=====================================================================
+\begin{abstract}
+% ~180 words. Arc: (1) cross-subject EEG-to-image retrieval stays far below intra-subject accuracy
+% (\XX{} vs \XX{} top-1, 200-way); (2) every deployed BCI receives an unlabeled stream from its user and
+% always knows its candidate options, yet benchmarks measure only zero-shot and fully supervised
+% extremes; (3) we formalize label-free transductive subject-and-session calibration, name its hidden
+% assumptions, and give a protocol (regimes, budgets, metrics, selection rules); (4) we audit pitfalls,
+% including test-peeking checkpoint/hyperparameter selection, that inflate reported numbers; (5) we
+% re-evaluate SATTC, SCORE and SVTL under the protocol; (6) SAGE-TTA, a gallery-anchored iterative
+% Sinkhorn--Procrustes calibration, reaches \XX{} top-1 under clean selection and stays positive in
+% streaming / partial-coverage regimes, on EEG, MEG and fMRI.
+\todo{write last}
+\end{abstract}
+
+%=====================================================================
+\section{Introduction}
+\label{sec:intro}
+% P1. Problem. Intra-subject 200-way top-1 is \XX{} (single inductive model; OLD 85.2/87.85), cross-subject
+%     LOSO \XX{} (OLD 35.9, test-selected; prior art: Shallow Alignment 22.4, SVTL 35.3). Inductive progress
+%     since Shallow Alignment is incremental; we do not claim a hard ceiling, we claim the gap is large and
+%     that the regime between zero-shot and full supervision is unmeasured.
+% P2. Deployment reality. A deployed BCI (i) always knows its candidate set --- exactly as the zero-shot
+%     benchmark already assumes --- and (ii) continuously receives UNLABELED signal from its user, while
+%     confident labels are unobtainable during use, so labeled retraining/fine-tuning is not an option.
+%     The only thing it can learn from on the fly is the unlabeled stream.
+% P3. BCI practice vs benchmark blind spot. Unsupervised target re-centering (Euclidean Alignment,
+%     Riemannian re-centering, T-TIME) is routine in classical BCI; EEG-to-image benchmarks ignore it,
+%     and the few label-free methods (SATTC, SCORE, SVTL) each pick their own unstated test regime.
+% P4. What is specific to retrieval: the gallery is a SECOND point cloud. EA/RPA align the target to
+%     itself or to source statistics; here the target is aligned cross-modally to the known stimuli.
+% P5. Evaluation hygiene: test-peeking selection (checkpoint on test-subject loss, TTA hyper-parameters
+%     on test accuracy) is widespread in cross-subject EEG decoding and inflates numbers by \XX{} pts.
+% Contributions (bullets):
+%  C1 Formalization of label-free transductive subject-and-session calibration for brain-to-image
+%     retrieval; four named hidden assumptions (Sec.~\ref{sec:assumptions}).
+%  C2 An evaluation protocol: regimes R1--R4, budget curves, harm rate, label-equivalence, and
+%     selection rules that never touch the target subject (Sec.~\ref{sec:protocol}).
+%  C3 A quantified audit of pitfalls (Sec.~\ref{sec:pitfalls}).
+%  C4 SAGE-TTA (Sec.~\ref{sec:method}) and a re-evaluation of SATTC/SCORE/SVTL in their own conditions
+%     and under the protocol (Sec.~\ref{sec:exp}); EEG (2 datasets), MEG, fMRI; cross- and intra-subject.
+\todo{draft}
+
+%=====================================================================
+\section{Related Work}
+\label{sec:related}
+% (a) EEG-to-image decoding: NICE, ATM, UBP (CVPR'25), NeuroBridge, Shallow Alignment, ENIGMA, SAMGA, SVTL.
+% (b) Unlabeled adaptation in BCI: EA (He & Wu 2020), Riemannian re-centering (Zanini 2018), RPA
+%     (Rodrigues 2019), SPDDSMBN (Kobler 2022), T-TIME, label-proportion ERP spellers (Kindermans,
+%     Huebner) = calibration from KNOWN STIMULUS STRUCTURE, the closest classical analogue.
+% (c) Label-free calibration for EEG-to-image: SATTC (CVPR'26), SCORE (arXiv 2608.19134, prior work),
+%     SVTL refinement (arXiv 2609.36971, contemporaneous). Position: none fixes a regime or selection rule.
+% (d) Transductive / test-time adaptation in vision and VLMs: TENT, SHOT, T3A, EM-Dirichlet (CVPR'24),
+%     TransCLIP (NeurIPS'24), TDA, ZLaP; realism critiques: Veilleux et al. (NeurIPS'21), TTAB (ICML'23),
+%     Alfarra et al. (ICML'24), StatA (CVPR'25) --- our protocol is their analogue for brain decoding.
+% (e) Unsupervised embedding alignment: MUSE/CSLS, Wasserstein Procrustes (Grave'19), Gromov-Wasserstein,
+%     hubness; unbalanced/partial OT. Brain functional alignment: hyperalignment, SRM, FUGW, MindEye2.
+\todo{draft}
+
+%=====================================================================
+\section{Label-Free Transductive Subject Calibration}
+\label{sec:setting}
+
+\subsection{Setting and notation}
+% Frozen encoder f trained on source subjects. Target subject s* (unseen), session e. Known gallery
+% G = {v_1..v_K} (image embeddings). Unlabeled query stream x_1, x_2, ... ; at time t the calibration
+% c_t = A(f(x_1..x_t), G) is a function of unlabeled queries and the gallery only. Decoding of the
+% buffer (transductive) is the primary readout. A calibration is a subject-and-session-specific
+% correction learned on the fly (here: mean, whitening, rotation, hubness terms).
+\todo{draft}
+
+\subsection{What is (and is not) an extra assumption}
+\label{sec:assumptions}
+% Clarify: the closed, known gallery is NOT an extra assumption --- zero-shot retrieval already uses it.
+% The hidden assumptions of transductive calibration are:
+%  A1 Joint access: unlabeled target queries are pooled (batch, or a growing stream buffer).
+%  A2 Correspondence structure: how queries cover the gallery (bijective / many-to-one / partial
+%     coverage / imbalanced). Balanced Sinkhorn silently assumes full balanced coverage.
+%  A3 Label-free selection: checkpoint and calibration hyper-parameters chosen without target labels.
+%  A4 Query SNR: number of averaged repetitions per query (80 in THINGS-EEG-2 test) changes both the
+%     base accuracy and the calibration gain; budgets must be reported in repetitions and seconds.
+\todo{draft}
+
+\subsection{Evaluation protocol}
+\label{sec:protocol}
+% Regimes (all transductive w.r.t. the unlabeled target data, gallery fixed and known):
+%  R0 zero-shot inductive reference (no calibration).
+%  R1 batch, bijective: the standard 200x200 THINGS-EEG-2 test (comparable to SATTC/SCORE/SVTL).
+%  R2 streaming: queries arrive one at a time in random order from a K-item menu (K in {25..200}),
+%     q-repetition averages (q in {5,10,20,40}); re-calibrate every m arrivals; score the buffer.
+%  R3 coverage / multiplicity: U of K items present, Dirichlet-imbalanced counts (Veilleux et al.),
+%     many-to-one R.
+%  R4 open gallery: K + D distractor images never queried.
+%  Secondary: carry-over (calibration frozen and applied to fresh trials, Exp A), reported as a
+%  property of the learned correction, not as the main regime.
+%  References: supervised few-shot calibration with n labeled target trials; intra-subject model.
+% Metrics: top-1/top-5 vs budget (trials, repetitions, stimulus-seconds), area under the adaptation
+%  curve, crossover budget, per-subject harm rate (fraction of subjects below R0), label-equivalence
+%  n* (labeled trials matching the unlabeled calibration), compute.
+% Selection rules (P-clean): checkpoint by ValCon or LOSO-val (never the target subject); calibration
+%  hyper-parameters by cross-fold selection on other folds' targets or on the validation subject;
+%  >=3 seeds, mean +- std, paired tests over subjects.
+\todo{draft; Table: regime x assumption matrix; Fig: protocol diagram}
+
+%=====================================================================
+\section{Pitfalls}
+\label{sec:pitfalls}
+% Quantified on our own pipeline (all to be recomputed, E8.*):
+%  P1 Test-peeking checkpoint selection: zero-shot 36.0 (test-sel) vs 33.35 (val-sel) = +2.7 inflation; but
+%     after SAGE the CLEAN checkpoint is >= (84.2 vs 82.3, n.s.) -> honest protocol costs nothing (atm31_valcon).
+%     (OLD: 35.9 vs 31.7; 68.1 vs 63.6.)  Community-wide issue; cite which papers do it.
+%  P2 Test-tuned calibration hyper-parameters: oracle 86.15 / cross-fold 82.30 / best label-free 81.15 (final atm128).
+%     (OLD: 72.75 / 67.3 / 58.6.)
+%  P3 Correspondence prior: balanced OT on bijective tests vs partial coverage (TTA < R0 below U~100; U=25 -15.6, 10/10 harmed).
+%  P4 Open gallery: TTA < R0 beyond D~800 distractors (D=1654 -1.6, 6/10 harmed; SCORE stays > R0).
+%  P5 Query-SNR confound: comparing calibrations at different repetition counts (OLD: ~14 of 18 pts).
+%     FINAL: SAGE-R0 = +15.1 at q=10 vs +47.1 at q=80 (3x overstatement if q=80 is quoted for q=10).
+%  P6 Cold start: undamped rotation at tiny budgets is a regression (OLD: 4.8 vs 26.8 at t=20).
+%     FINAL: first refit 17.9 vs R0 39.5 (intra 29.7 vs 82.2); full damping u/(u+3): +1.9 over R0.
+%  P7 Mean-only reporting hides per-subject harm.
+%     FINAL: D=800 mean -0.3 (a "tie") but 5/10 subjects lose, worst -12.0.
+%  P8 (NEW, user-approved framing) Crediting the prior to the method: under R1 the bijection alone is worth
+%     +28 pts with NO adaptation (plain cosine + Hungarian decode 64.5, ~= SCORE 65.2 on the same
+%     embeddings). Any R1 calibration must be reported against this prior-only control; SAGE adds +17.8 on top.
+%     FINAL atm128: prior-only 66.2 ~= SCORE 65.6; SAGE 82.3 = +16.1 over the prior.
+%  ("Hungarian beats SAGE" stays dropped: Hungarian decode 64.5 vs SAGE 82.3, EXPERIMENT_LOG 2026-10-20.)
+% E8.1 table (all numbers, P-clean): EXPERIMENT_LOG 2026-10-21 (04:35).
+\todo{draft; Table: pitfall | assumption violated | inflation (pts) | fix}
+
+%=====================================================================
+\section{SAGE-TTA}
+\label{sec:method}
+% Gallery-anchored calibration, label-free:
+%  (i) shrinkage whitening of target embeddings (re-centering, BCI-standard; SAW is a fitting aid,
+%      useless alone --- OLD streaming no-whiten ablation);
+%  (ii) CSLS hubness correction;
+%  (iii) Sinkhorn soft correspondence with a tunable column marginal (rho: balanced -> free) for R3/R4;
+%  (iv) iterated soft-Procrustes with rotation shrinkage alpha (OLD finding: alpha*~0.6, loop over-rotates)
+%       and a budget-dependent damping schedule (cold-start safety): ONE alpha = u/(u+3), u = buffer/menu, interpolates the WHOLE pipeline (whitening blend, geodesic rotation, cos->CSLS) from plain cosine (alpha=0) to SAGE (alpha=1); E4.2b: removes cold-start harm intra and inter (log 2026-10-21 01:25);
+%  (v) streaming update: re-fit on the growing buffer, warm-started.
+% Differences to SCORE (one Procrustes step on CSLS mutual-NN landmarks) and SATTC (no geometry):
+% iteration + soft OT + budget-aware damping. Must be shown by ablation (E3.6).
+\todo{draft; Algorithm box}
+
+%=====================================================================
+\section{Experiments}
+\label{sec:exp}
+\subsection{Setup}
+% THINGS-EEG-2 (10 subj, 63 ch, 200 test concepts x 80 reps), Alljoined-1.6M (20 subj, 32 ch),
+% THINGS-MEG (4 subj), NSD via MindEye2 (fMRI, post hoc). Encoders: TSConv, ATM, EEGConformer,
+% EEGNet, EEGProject, Squeezeformer, rmix (TokenREVE mixed), REVE-from-scratch, LaBraM full-FT.
+% Image targets: InternViT-6B layer 28 (best for every EEG encoder in the OLD grid).
+\todo{draft}
+
+\subsection{Standard regime R1 (200x200) and comparison with prior label-free methods}
+% Table A: methods x encoders, clean protocol, mean+-std over seeds:
+%   R0 plain | CSLS | EA | SATTC | SCORE | SVTL-refine | EM-Dirichlet | TransCLIP | Hungarian | SAGE-TTA
+% Table B: SATTC/SCORE/SVTL reproduced in THEIR conditions (their bases/protocols) vs reported numbers.
+% Headline target: best encoder after SAGE-TTA (OLD ATM 77.2, single seed, test-tuned) -> aim >= 80.
+% FRAMING (user-approved 2026-10-20, MUST appear in text + table): "Prior only" row = plain cosine decoded
+% with a Hungarian bijection, no adaptation: 64.5 on ATM-L31 (vs plain 36.1, SCORE 65.2, SATTC 45.4).
+% The one-to-one prior alone explains SCORE-level accuracy; SAGE adds +17.8 on top of it (82.3), and
+% Hungarian-decoding SAGE's own scores adds nothing (81.6). Say this in the intro contributions too:
+% "we separate what the correspondence prior gives from what calibration adds".
+% FINAL MODEL (atm128 s3300, P-main, log 2026-10-21 04:10): plain 35.2 | CSLS-3 47.5 | SATTC 45.45 | SVTL 63.9 |
+%   SCORE 65.6 | Prior only 66.2 | SAGE 82.3 (+16.1 over prior only; 10/10 vs SCORE, p=0.002; harm 0/10) | +HP-ens 83.95.
+\begin{table}[t]\centering\small
+\caption{\todo{R1 main table (E2.2, E3.*)}. 200-way top-1 (\%), THINGS-EEG-2 LOSO, P-clean.}
+\begin{tabular}{lcccc}\toprule
+Method & TSConv & ATM & \todo{best new} & \dots\\\midrule
+Zero-shot (R0) & \XX & \XX & \XX & \\
+Prior only (R0 + Hungarian decode) & \XX & \XX & \XX & \\
+SATTC & \XX & \XX & \XX & \\
+SCORE & \XX & \XX & \XX & \\
+SAGE-TTA & \XX & \XX & \XX & \\\bottomrule
+\end{tabular}\end{table}
+
+\subsection{Streaming (R2)}
+% Fig: top-1 on the buffer vs stimulus-seconds, K x q grid; crossover and final gain; damping on/off;
+% SAGE vs SATTC/SCORE under the same stream. (OLD acausal_menu_grid used alpha=1, test-tuned config.)
+\todo{E4.1}
+
+\subsection{Coverage, multiplicity and open galleries (R3, R4)}
+% Fig: top-1 vs U/K, Dirichlet imbalance, distractors D; balanced vs free vs adaptive rho; oracle support.
+% RESULTS atm31 (EXPERIMENT_LOG night 6/8) -> REGIME MAP figure. SAGE wins only under a declared bijection / full
+% coverage (R1 82.3 vs SCORE 65.2; R3 U=200 41.8 vs 38.3); below plain for U<=100 (U=25: 11.8 vs 25.7) and below
+% SCORE at every D>0 (D=1654: 10.2 vs 26.4). No label-free fix found (3 grids): moment matching + MNN-weighted
+% iteration ties SCORE (38.2 mean), SCORE-shortlisted support ties too. Oracle support = 82.3 at every D ->
+% support estimation is THE open problem (+56 pts at D=1654). Label-free regime statistics overlap (R1 vs U=100),
+% so the switch must be the declared protocol. Frame: "which calibration for which correspondence prior".
+\todo{E4.2, E4.3}
+
+\subsection{How many labels is unlabeled calibration worth?}
+% Fig: supervised calibration with n labeled target trials vs SAGE-TTA with unlabeled budget; n*.
+% OLD-style (cosine) supervised rotation from ALL 16,540 labeled 4-rep train trials: 67.2 < SAGE 82.3 (unlabeled 200).
+% DONE 10 subj (label_equiv2, matched CSLS): sup rotation n=50/200/1000/5000/16540 -> 24.2/50.6/71.1/78.7/80.6;
+% unlabeled SAGE 82.3 TIES the map fitted on the ENTIRE labeled session (p=0.49) -> n* >= 16,540 pairs (66k trials).
+% labels+SAGE 90.6 (+8.4, 10/10): complementary. Caveat: linear map class only; no encoder fine-tuning.
+\todo{E5.1}
+
+\subsection{Calibration gain grows with base quality}
+% Fig: gain vs R0 accuracy across encoders x seeds x repetitions (complementarity with inductive work);
+% LaBraM 2x2; per-subject scatter with honest correlation statistics.
+\todo{E8.2}
+
+\subsection{Intra-subject and cross-session}
+% Intra-subject near saturation (OLD 85.25 -> 99.05, test-selected): ceiling / correspondence-prior demo.
+% Cross-session within subject (new session = new geometry), if session indices are recoverable.
+\todo{E6.*}
+
+\subsection{Other datasets and modalities}
+% Alljoined (consumer 32-ch headset), THINGS-MEG, NSD/MindEye2 (fit-on-1000, CV-selected tau).
+\todo{E7.*}
+
+\subsection{Ablations}
+% DONE atm31 (E2.5/2.6/3.6): full 82.3 | -procrustes 53.9 | -csls 64.3 | 1 step 68.8 | -whiten 72.7 |
+%   plan softmax 71.2 / top5 70.6 / Hungarian 63.3 / MNN 60.2 / argmax 56.4 | MNN 1-step 59.5 | alpha 0.6-1 flat.
+% Component ablation (correctly labelled: Sinkhorn-only vs Sinkhorn+Procrustes), correspondence
+% estimators (Sinkhorn/softmax/top-k/argmax/Hungarian), alpha shrinkage, iterations, sensitivity.
+\todo{E2.5, E2.6}
+
+%=====================================================================
+\section{Limitations}
+% Dataset-level: RSVP at 5 Hz, 100 ms stimuli -> overlapping responses, epoch boundaries ambiguous;
+% test queries are multi-repetition averages of one exemplar per concept; 10 subjects; stimulus-time
+% minutes ignore breaks; streaming is an offline replay. Method-level: needs a known candidate set
+% (shared with zero-shot retrieval), weak at low SNR / low coverage / many distractors; label-free
+% hyper-parameter selection remains open.
+\todo{draft}
+
+\section{Conclusion}
+\todo{draft}
+
+{\small\bibliographystyle{ieee_fullname}\bibliography{../Neurips_paper_and_rebuttal/references}}
+\end{document}

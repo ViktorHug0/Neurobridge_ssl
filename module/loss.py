@@ -17,8 +17,15 @@ class ContrastiveLoss(nn.Module):
         logit_scale_max=None,
         mse_on_raw: bool = False,
         asymmetric: bool = False,
+        soft_target_tau: float = 0.0,
+        soft_mix_beta: float = 0.0,
     ):
         super(ContrastiveLoss, self).__init__()
+        # > 0: EEG->image targets are softmax(image-image cosine / tau) instead of one-hot, so
+        # near-identical images (and same-image duplicates in the batch) are not hard negatives.
+        self.soft_target_tau = soft_target_tau
+        # > 0 (NeuroCLIP): target = (1 - beta) one-hot + beta softmax(image-image cos / tau), a mild similarity smoothing
+        self.soft_mix_beta = soft_mix_beta
         self.alpha = alpha
         self.beta = beta
         self.eeg_l2norm = eeg_l2norm
@@ -142,6 +149,59 @@ class ContrastiveLoss(nn.Module):
         return kl.sum(dim=1).mean()
 
     @staticmethod
+    def rsa_loss(eeg_feature, image_feature, same_image_mask):
+        """1 - RSA: Pearson correlation between the off-diagonal EEG-EEG and image-image cosine matrices of the batch,
+        both clouds mean-centred first (the CVPR E8.4 diagnostic, error_decomposition.py `rsa`). Pairs showing the
+        same image (same_image_mask, incl. the diagonal) are dropped: with grouped batches they would dominate."""
+        ze = F.normalize(eeg_feature - eeg_feature.mean(0), p=2, dim=1)
+        zi = F.normalize((image_feature - image_feature.mean(0)).detach(), p=2, dim=1)
+        keep = ~same_image_mask
+        a, b = (ze @ ze.T)[keep], (zi @ zi.T)[keep]
+        a, b = a - a.mean(), b - b.mean()
+        return 1 - (a * b).sum() / (a.norm() * b.norm() + 1e-8)
+
+    @staticmethod
+    def isometry_loss(eeg_feature, image_idx, subject_id):
+        """Mean over source-subject pairs of the residual of the best rotation between their embeddings of the batch's
+        shared images (CVPR E8.11), split-half: R = U V^T from the SVD of A1^T B1 on half of the images (detached), scored
+        as 1 - tr(R^T A2^T B2) / (|A2| |B2|) on the other half, both ways. A and B are row-normalised then centred.
+        In-sample it would be near zero for any pair: a batch holds fewer shared images (~113) than dimensions."""
+        subs = subject_id.unique().tolist()
+        if len(subs) < 2:
+            return eeg_feature.new_zeros(())
+        rows = {}
+        for s in subs:
+            idx = (subject_id == s).nonzero(as_tuple=True)[0]
+            rows[s] = {int(im): int(r) for im, r in zip(image_idx[idx].tolist(), idx.tolist())}  # ponytail: last row wins on duplicate images
+        common = sorted(set.intersection(*(set(r) for r in rows.values())))
+        if len(common) < 3:
+            return eeg_feature.new_zeros(())
+        z = F.normalize(eeg_feature, p=2, dim=1)
+        clouds = {s: z[[rows[s][im] for im in common]] for s in subs}
+        clouds = {s: c - c.mean(0) for s, c in clouds.items()}
+        perm = torch.randperm(len(common), device=eeg_feature.device)
+        halves = (perm[: len(common) // 2], perm[len(common) // 2:])
+        losses = []
+        for i, s in enumerate(subs):
+            for t in subs[i + 1:]:
+                for fit, ev in (halves, halves[::-1]):
+                    a, b = clouds[s][fit], clouds[t][fit]
+                    u, _, vt = torch.linalg.svd((a.T @ b).detach().float())
+                    r = (u @ vt).to(a.dtype)
+                    a, b = clouds[s][ev], clouds[t][ev]
+                    losses.append(1 - (a @ r * b).sum() / (a.norm() * b.norm() + 1e-8))
+        return torch.stack(losses).mean()
+
+    @staticmethod
+    def collapse_penalty(eeg_feature, pr_floor):
+        """relu(1/PR - 1/pr_floor) of the row-normalised, centred batch EEG cloud, PR = tr(C)^2 / tr(C^2) its
+        participation ratio (effective dimension). Guards the E8.11 geometric losses, which both collapse the cloud."""
+        z = F.normalize(eeg_feature, p=2, dim=1)
+        z = z - z.mean(0)
+        c = z.T @ z / z.shape[0]
+        return F.relu((c * c).sum() / torch.diagonal(c).sum().pow(2) - 1.0 / pr_floor)
+
+    @staticmethod
     def mk_mmd(x, y, scales=(0.25, 0.5, 1.0, 2.0, 4.0)):
         """Multi-kernel RBF MMD between the EEG and image point clouds in the shared space.
 
@@ -179,7 +239,15 @@ class ContrastiveLoss(nn.Module):
         labels = torch.arange(eeg_feature.shape[0], device=eeg_feature.device)
 
         # Calculate two parts of the loss
-        loss_eeg_ie = self.criterion_cls(similarity_matrix_ie_q, labels)
+        if self.soft_target_tau > 0:
+            with torch.no_grad():
+                target = F.normalize(image_feature, dim=1)
+                target = torch.softmax(target @ target.T / self.soft_target_tau, dim=1)
+                if self.soft_mix_beta > 0:
+                    target = (1 - self.soft_mix_beta) * torch.eye(len(target), device=target.device) + self.soft_mix_beta * target
+            loss_eeg_ie = -(target * F.log_softmax(similarity_matrix_ie_q, dim=1)).sum(1).mean()
+        else:
+            loss_eeg_ie = self.criterion_cls(similarity_matrix_ie_q, labels)
         loss_img_ie = self.criterion_cls(similarity_matrix_ie.T, labels)
         if self.beta != 1.0:
             loss_eeg_te = self.criterion_cls(similarity_matrix_te_q, labels)

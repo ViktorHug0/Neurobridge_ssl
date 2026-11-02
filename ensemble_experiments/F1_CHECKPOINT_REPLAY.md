@@ -58,3 +58,24 @@ Entry points: `f1_checkpoint_replay.py`, `f1_checkpoint_replay_preflight.py`,
 Launch: tmux `f1-checkpoint-replay-513` on513; Slurm job53560 on514.
 Monitor `status_worker0.json`, `status_worker1.json`, and per-subject logs under
 the new output root. Both workers depend on the passed preflight source hashes.
+
+## Three-GPU recovery
+
+The original queues completed subjects1 and2, then halted on source hashing:
+commit2ebb195 added unrelated foundation-encoder support to live `train.py`.
+The original source is available in commit34292e1 and matches the preflight
+SHA256 `22e3eb1d166c58c99a747d63f9b6a7e427c47317c57ca6391fb89515874872fb`.
+No completed results or live repository code were reverted.
+
+`f1_replay_snapshot/launch.py` validates every original source and explicitly
+loads `f1_replay_snapshot/train_original.py` as the imported `train` module.
+The snapshot matches that original hash exactly. Logical experiment provenance
+continues to describe the executed original sources; separate physical paths,
+live-source hashes and launcher hash are saved in `relaunch_provenance.json`.
+The launcher rejects any further physical-source change after that approval.
+
+The recovery assigns one fold per3080: subject3 in tmux `f1-replay-sub3-513`,
+subjects4 and5 as separate Slurm array tasks. Monitor
+`status_relaunch_sub{3,4,5}.json` and `relaunch-sub-*.log`; original worker status
+files refer to the stopped old queues. The same production fold directories,
+resume protocol and five predeclared selection policies are retained.

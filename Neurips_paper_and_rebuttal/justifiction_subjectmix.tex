@@ -1,0 +1,168 @@
+\subsection{Theoretical Analysis of SubjectMix: Convex-Hull Invariance and Subject Disentanglement}
+\label{sec:ana_subjectmix}
+
+The combined effect of (i) the one-sided SubjectMix augmentation can be made
+precise under a mild local-linearity assumption on the encoder and (ii) the multi-positive contrastive loss with frozen
+image targets. The
+analysis below shows that, at any minimizer of the loss, the
+subject-dependent component of the embedding is forced to collapse to a
+constant, while the stimulus-dependent component is rigidly anchored to
+the image manifold and therefore preserved.
+
+Under the generative model \eqref{eq:genmodel} we write, in a
+neighborhood of the training distribution,
+\begin{equation}\label{eq:decomp}
+    E_\theta(\xv_{s,i})=\Phi(\zv_i)+\Psi(\mathbf{u}_s)+\xiv_{s,i},
+\end{equation}
+where $\Phi: \Zc \to\R^{d}$ captures the
+stimulus-dependent content, $\Psi:\Uc\to\R^{d}$ captures
+subject-specific bias, and $\xiv_{s,i}$ is a zero-mean residual absorbing higher-order interactions and measurement noise. This decomposition is the first-order Taylor expansion of $E_\theta\circ g$ around the population subject
+$\bar{\uv}$, and is exact for any encoder if $\Phi$ and $\Psi$
+are allowed to depend on the marginal distributions of
+$\zv$ and $\uv$.
+\paragraph{What multi-positive InfoNCE alone enforces}
+The bidirectional multi-positive loss
+$\Lc_{\mathrm{ctr}}$ (Eqs.~\eqref{eq:loss1}--\eqref{eq:loss2})
+admits, at zero temperature and infinite batch, the population minimizer
+\begin{equation}
+    E_\theta(\xv_{s,i})\;=\;\vv_i,
+    \quad\forall\,s\in\Sc,\;i\in\Ic.
+    \label{eq:anchor-orig}
+\end{equation}
+Combined with Eq.~\eqref{eq:decomp} and absorbing residuals,
+\eqref{eq:anchor-orig} forces
+$\Psi(\uv_s)=\vv_i-\Phi(\zv_i)$, whose right-hand
+side does not depend on $s$. Hence $\Psi$ is constant across subjects,
+and the constant can be folded into $\Phi$, giving the disentangled
+fixed point $\Psi\equiv\mathbf{0}$, $\Phi(\zv_i)=\vv_i$.
+\emph{This is a population statement.} In practice, the empirical loss
+only sees the values of $\Psi$ at the finite set
+$\{\uv_s\}_{s\in\Sc}$, and any encoder that satisfies
+Eq.~\eqref{eq:anchor-orig} pointwise on this discrete set is admissible
+- including encoders for which $\Psi$ is highly oscillatory between
+training subjects and uncontrolled at any unseen $\uv_{s^\star}$.
+The cross-subject probe in Appendix~\ref{app:probes} confirms that, without
+SubjectMix, the empirical minimizer does in fact preserve a substantial
+amount of subject-specific information.
+
+\paragraph{What SubjectMix adds: a convex-hull invariance.}
+SubjectMix replaces the $K$ discrete alignment constraints per stimulus
+with a continuum of constraints. Recall Eq. \ref{eq:subjmix},
+$$\widetilde{\xv}_{s,s',i}
+   =\lambda\xv_{s,i}+(1-\lambda)\xv_{s',i},\; \lambda\sim\mathrm{Beta}(\alpha_{\mathrm{mix}},\alpha_{\mathrm{mix}}).$$
+The temporal/spatial front-end $T_{\theta_t}\!\circ S_{\theta_s}$ is a
+stack of linear operators followed by pointwise nonlinearities; for
+inputs sharing the same stimulus and differing only in subject identity,
+both EEG segments lie in the same operating regime, so a first-order
+expansion gives
+\begin{equation}
+    E_\theta(\widetilde{\xv}_{s,s',i})
+    \;=\;
+    \lambda\,E_\theta(\xv_{s,i})
+    +(1-\lambda)\,E_\theta(\xv_{s',i})
+    + {\deltav}_{\lambda,s,s',i},
+    \label{eq:mix-linearity}
+\end{equation}
+with ${\deltav}_{\lambda,s,s',i}$ a curvature term. Treating
+$\widetilde{\xv}_{s,s',i}$ as a positive of $\mathbf{v}_i$
+imposes
+\begin{equation}
+    E_\theta(\widetilde{\xv}_{s,s',i})\;=\;\vv_i
+    \quad\forall\,(s,s')\in\widetilde{\Sc},\;\forall\lambda
+    \in\mathrm{supp}(\mathrm{Beta}(\alpha_{\mathrm{mix}},\alpha_{\mathrm{mix}})).
+    \label{eq:anchor-mix}
+\end{equation}
+Combining \eqref{eq:anchor-orig}--\eqref{eq:anchor-mix} along the chord
+$\gamma_{s,s',i}(\lambda)
+ =\lambda\xv_{s,i}+(1-\lambda)\xv_{s',i}$,
+\begin{equation*}
+    E_\theta\bigl(\gamma_{s,s',i}(\lambda)\bigr)\;=\;\vv_i,
+    \qquad\text{for almost every }\lambda\in[0,1].
+\end{equation*}
+Because $\mathrm{Beta}(\alpha_{\mathrm{mix}},\alpha_{\mathrm{mix}})$
+charges every open subset of $(0,1)$, we conclude that, on the chord
+$\gamma_{s,s',i}$,
+\begin{equation}
+    \frac{\mathrm{d}}{\mathrm{d}\lambda}\,
+    E_\theta\bigl(\gamma_{s,s',i}(\lambda)\bigr)\;=\;\mathbf{0},
+    \label{eq:directional}
+\end{equation}
+i.e., $E_\theta$ is approximately constant along the chord. By the chain
+rule,
+\begin{equation*}
+    \nabla E_\theta\bigl(\gamma_{s,s',i}(\lambda)\bigr)\,
+    (\xv_{s',i}-\xv_{s,i})\;\approx\;\mathbf{0},
+\end{equation*}
+so the directional derivative of $E_\theta$ along the
+\emph{subject-difference vector} vanishes throughout the chord.
+
+\paragraph{From chord-wise invariance to convex-hull invariance.}
+Iterating Eq.~\eqref{eq:directional} over all pairs
+$(s,s')\in\widetilde{\Sc}$ for a given stimulus $i$, the encoder
+is constrained to be approximately constant on every chord connecting
+two training-subject inputs. Since the training subject inputs span the
+finite set $\Xc_i=\{\xv_{s,i}\}_{s\in\Sc}$,
+chord-wise invariance is equivalent (to first order) to invariance on
+the convex hull
+$\mathrm{conv}(\Xc_i)$. Substituting
+Eq.~\eqref{eq:decomp} into Eq.~\eqref{eq:directional} shows that
+this invariance is carried entirely by $\Psi$: the stimulus component
+$\Phi(\mathbf{z}_i)$ is shared across the chord, so chord-wise variation
+can only be due to the subject component. The empirical effect of
+SubjectMix is therefore to enforce
+\begin{equation}
+    \Psi\bigl(\uv\bigr)\approx\mathrm{const},
+    \quad\forall\,\uv\in\mathrm{conv}\{\uv_s\}_{s\in\Sc},
+    \label{eq:hull-invariance}
+\end{equation}
+a strictly stronger empirical condition than the discrete invariance
+$\Psi(\uv_s)=\mathrm{const}$ implied by
+Eq.~\eqref{eq:anchor-orig} alone.
+\paragraph{Why this matters for cross-subject generalization.}
+Eq.~\eqref{eq:hull-invariance} is precisely the condition relevant to a
+held-out subject $s^\star$: provided $\mathbf{u}_{s^\star}$ lies near
+$\mathrm{conv}\{\mathbf{u}_s\}_{s\in\mathcal{S}}$; a mild assumption
+given that all subjects are healthy adults performing the same visual
+task; continuity of $\Psi$ then yields
+$\Psi(\mathbf{u}_{s^\star})\approx\mathrm{const}$, and consequently
+$E_\theta(\mathbf{x}_{s^\star,i})\approx\mathbf{v}_i$. The standard
+multi-positive loss provides this guarantee only at the $K$ seen
+subject points and is silent everywhere else; SubjectMix extends it to
+an entire convex region.
+
+\paragraph{Image representation is preserved by construction.}
+The image embeddings $\{\vv_i\}$ are extracted from a frozen
+pretrained vision model. SubjectMix only perturbs the EEG side and
+never interpolates the target $\vv_i$; the loss therefore demands
+invariance, not interpolation. As a consequence, the stimulus axis
+$\Phi$ is rigidly anchored to the fixed image geometry, while the
+chord-wise constraint
+\eqref{eq:hull-invariance} acts \emph{exclusively} on $\Psi$. This
+asymmetry distinguishes SubjectMix from vanilla
+Mixup~\cite{zhang2018mixup}, in which the simultaneous interpolation of
+inputs and labels encourages smooth interpolation of representations
+rather than invariance.
+
+\paragraph{Soft (finite-$\tau$) variance interpretation.}
+At finite temperature, exact equality is replaced by a soft alignment
+penalty. Standard alignment-uniformity bounds for InfoNCE give, up to
+constants,
+\begin{equation*}
+    \Lc_{\mathrm{ctr}}
+    \;\geq\;
+    \frac{1}{\tau}\,
+    \E_{i,\,p,p'\in\mathcal{P}_i}\!
+    \bigl\|E_\theta(p)-E_\theta(p')\bigr\|^{2}
+    \;-\;\mathcal{U}_\theta,
+\end{equation*}
+where $\mathcal{P}_i$ is the set of positives for stimulus $i$.
+Including SubjectMix samples expands $\Pc_i$ from
+$\{\xv_{s,i}\}_{s\in\Sc}$ to
+$\{\xv_{s,i}\}\cup\{\widetilde{\xv}_{s,s',i}\}$, replacing
+a sum of $K$ pairwise variance terms by an integral over chords. The
+penalty therefore controls a continuous functional of $\Psi$ on
+$\mathrm{conv}\{\uv_s\}$ rather than its values at the discrete
+training subjects, which is the soft-loss analogue of
+Eq.~\eqref{eq:hull-invariance}. Empirically, this is consistent with the
+slower rise of the subject-identity probe under SubjectMix
+(Appendix~\ref{app:probes}).

@@ -157,7 +157,8 @@ def select(df: pd.DataFrame, args, base_params):
         val = df[df["subject_id"] == val_id]
 
         picks = {"oracle_test": own["test_top1"].idxmax()}
-        picks["loso_fold_cv"] = others.groupby(config_cols)["test_top1"].mean().idxmax()
+        if len(others):  # undefined with a single subject (one-fold screens report oracle/label-free only)
+            picks["loso_fold_cv"] = others.groupby(config_cols)["test_top1"].mean().idxmax()
         if len(val):
             picks["val_subject"] = val.set_index(config_cols)["test_top1"].idxmax()
         for name in LABEL_FREE:

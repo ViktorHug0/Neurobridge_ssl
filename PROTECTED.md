@@ -4,6 +4,8 @@ Established 2026-09-15 during the repo weight cleanup. Anything listed here back
 **SAGE paper (NeurIPS sub 28770)** or its **author response / rebuttal**, or is the live head of an
 ongoing line. Check this file before any deletion round.
 
+`results/things_eeg/cvpr/loso/*/seed3302` (partial, ditched 2026-10-21) is NOT protected.
+
 Rule applied throughout the cleanup: **`.pth` only is ever deleted.** `result.csv`,
 `train_config.json`, `train.log`, `training_metrics.png`, tfevents and every `*summary*.csv` are
 kept everywhere, so all recorded numbers stay readable even where weights are gone.
@@ -19,7 +21,18 @@ kept everywhere, so all recorded numbers stay readable even where weights are go
 | `results/things_meg/` | 30 / 1.9 | **paper dataset 3 of 3** (THINGS-MEG, 4 subjects/271 ch; appendix `alljoined-meg-results`) — the "generalizes across recording modalities" claim rests on this |
 | `results/things_eeg/tta_rebuttal/` | 0 / 0 | Exp A/B, honest TTA selection, open-gallery, partial coverage (+ablations), streaming refit, alpha sweeps |
 | `results/things_eeg/nsd_sage/` | 0 / 0 | `nsd_sage_technical_report.md`; SAGE→fMRI transfer |
-| `results/things_eeg/inter-subjects/sattc_*`, `tta_*` | 0 / 0 | **the entire SATTC paper track — 75 sessions, 31,150 runs, already weightless** (ran without `--save_weights`) |
+| `results/things_eeg/inter-subjects/sattc_*`, `tta_*` | 0 / 0 | **the entire SATTC paper track — 75 sessions, 31,150 runs.** Evaluate-only runs: their base checkpoints (`tsconv_dropout_sweep_20260429-{190741,170207}`, `eeg_encoder_architecture_sweep_mixup_20260429-221100`) were **deleted in the 2026-09 cleanup**, so these numbers cannot be replayed without retraining (corrected 2026-10-20; earlier text said they "never had checkpoints") |
+| `results/things_eeg/inter-subjects/tsconv_val_best_20260501-170237/` | 30 | LOSO-val TSConv (seeds 3300–3302) — paper Table 2 and the clean CVPR rerun base |
+| `results/things_eeg/honest_ensemble/*_valcon` | — | ValCon checkpoints (ATM 33.40, Squeezeformer, TSConv) — clean CVPR rerun bases |
+| `CVPR_paper/` | — | CVPR 2027 rewrite: skeleton, checklist, experiment log |
+| `results/things_eeg/cvpr/loso/atm128/seed330{0,1}` | 20 / 0.23 | **CVPR main model** (ATM bb128/fd128, 100 ep, test-selected `checkpoint_test_best.pth`): main table, every final-model analysis (added 2026-10-21) |
+| `results/things_eeg/honest_ensemble/atm_iv_valcon/seed3300` | 10 / 0.41 | **CVPR P-clean counterpart of the main model** (ATM bb128/fd128, 100 ep, ValCon: `checkpoint_test_best.pth` = VAL-selected, `checkpoint_testsel_best.pth` = test-selected); full battery as `cvpr/loso/atm128_valcon` (symlink) (added 2026-10-21) |
+| `results/things_eeg/cvpr/loso/tsconv/seed330{0,1}` | 20 / 0.49 | CVPR second encoder (TSConv, 50 ep): main table + final battery |
+| `results/things_eeg/cvpr/loso/atm/seed3300` | 10 / 0.32 | CVPR ATM fd512 (NeurIPS shape): same-encoder dimension test |
+| `results/things_eeg/cvpr/intra/{atm128_oc,atm_oc}/seed2025` | 20 / 0.43 | CVPR intra-subject (99.1 SAGE; regimes; streaming) |
+| `results/things_eeg/cvpr/loso/{atm128_l31,reve6,reve6m,rmix,rmixm,sqf}` | — / 0.6 | CVPR encoder screens (folds 1/3/8; E1.3–E1.5, E1.7) |
+| `results/things_eeg/cvpr/{final,tta_screen_loso,tta_screen_intra,intra_analyses,regimes*,stream*,emb_cache,...}` | 0 | every CVPR analysis output (CSVs; `emb_cache` = 80-rep embeddings, replay without the model) |
+| `results/things_eeg/cvpr/competitors/sattc/own_conditions_seed3300` + `/nasbrain/p20fores/SATTC-CVPR2026/Retrieval/models/contrast/run_sattc_loso_sattc/` | — | SATTC under its own protocol (11.39 top-1) and the wrapper-validation checkpoints |
 | `results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300` | 10 / 0.6 | current best base model, 37.0 |
 | `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` | 0 / 1.2 GB npz | 2,010 score dumps = 235 arms × 10 folds; the whole ensemble analysis replays from here |
 | `results/things_eeg/synthetic_subjects/layer_sweep/` | 122 / 5.2 | arm-naming reference (`*_ch17` = electrode ablation) |
