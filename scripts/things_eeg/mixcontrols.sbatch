@@ -10,6 +10,6 @@
 #SBATCH --output=/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/subjectmix_rebuttal/%x_%j.log
 
 # One arm, one GPU, 10 LOSO folds sequentially. Submit one job per arm.
-#   sbatch --job-name=fixed_mean_k3 scripts/things_eeg/fixedmean.sbatch fixed_mean_k3
+#   sbatch --job-name=<arm> scripts/things_eeg/mixcontrols.sbatch <arm>
 cd /nasbrain/p20fores/Neurobridge_SSL
 srun ./run_mixcontrols_paperbase.sh "$1" 1 2 3 4 5 6 7 8 9 10
