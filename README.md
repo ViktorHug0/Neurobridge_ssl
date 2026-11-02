@@ -88,7 +88,7 @@ If you just want the main pieces, start here:
 
 - `train.py` — training entrypoint (LOSO loop, loss, per-epoch eval, checkpoints)
 - `evaluate.py` — standalone eval from `checkpoint_test_best.pth`, including the full SAGE/SATTC refinement
-- `module/dataset.py`, `module/loss.py`, `module/sampler.py`
+- `module/dataset.py`, `module/loss.py`, `module/dataset.py`
 - `module/util.py` — SAW, CSLS, Sinkhorn, soft Procrustes, retrieval
 - `module/eeg_encoder/model.py` — TSConv, EEGNet, EEGConformer, …
 - `module/eeg_encoder/foundation.py` — LaBraM / CBraMod full fine-tuning

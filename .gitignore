@@ -37,3 +37,9 @@ CVPR_paper/queue/*started.txt
 CVPR_paper/queue/*done.txt
 !CVPR_paper/queue/vc_driver_done.txt
 CVPR_paper/queue/failed.txt
+CVPR_paper/*.blg
+CVPR_paper/*.brf
+CVPR_paper/*.fdb_latexmk
+CVPR_paper/*.fls
+CVPR_paper/*.log
+CVPR_paper/*.out

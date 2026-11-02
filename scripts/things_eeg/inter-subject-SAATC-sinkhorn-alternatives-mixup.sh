@@ -193,7 +193,7 @@ run_variant() {
         python3 "${REPO_ROOT}/evaluate.py" "${EXTRA_ARGS[@]}"
     done
 
-    python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
+    python3 "${REPO_ROOT}/scripts/data/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
     append_average_row "$variant" "$mixup" "$description" "$eval_mode" "$use_saw" "$use_csls" "$use_sinkhorn" "$use_soft" "$config_run_dir" "$source_config"
 }
 

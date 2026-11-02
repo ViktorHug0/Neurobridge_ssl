@@ -144,7 +144,7 @@ do
             $EXTRA_ARGS
     done
 
-    python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
+    python3 "${REPO_ROOT}/scripts/data/compute_avg_results.py" --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
     append_average_row "${CONFIG_NAME}_seed${SEED}" "$CONFIG_RUN_DIR"
 done
 

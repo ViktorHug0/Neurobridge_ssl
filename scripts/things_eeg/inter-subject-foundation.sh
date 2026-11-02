@@ -89,7 +89,7 @@ for SUB_ID in $SUBJECTS; do
         $MIX_ARGS \
         --seed "$SEED"
 
-    "$PYTHON" compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
+    "$PYTHON" scripts/data/compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
 done
 
 echo "done: $RUN_DIR"

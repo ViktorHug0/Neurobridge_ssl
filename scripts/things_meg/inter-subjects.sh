@@ -50,12 +50,9 @@ do
         --device "$DEVICE"  \
         --output_dir "$RUN_DIR" \
         --selected_channels "${SELECTED_CHANNELS[@]}" \
-        --image_aug \
-        --aug_image_feature_dirs "./data/things_meg/image_feature/RN50/GaussianBlur-GaussianNoise-LowResolution-Mosaic" \
         --eeg_aug \
         --eeg_aug_type "smooth" \
         --frozen_eeg_prior \
-        --image_test_aug \
         --img_l2norm \
         --projector "$PROJECTOR" \
         --feature_dim "$FEATURE_DIM" \
@@ -64,5 +61,5 @@ do
         --seed 2025;
 
     # Dynamically update the summary CSV after each subject run
-    python compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
+    python scripts/data/compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
 done

@@ -10,7 +10,7 @@ pooling of `--model_type internvit --feature_source intermediate
     <output-template>/image_test.npy    (200, 1, D)   float16
 
 Example:
-    python extract_internvit_layers.py --layers 35 39 44 \
+    python scripts/data/extract_internvit_layers.py --layers 35 39 44 \
       --output-template ./data/things_eeg/image_feature/InternViT-6B_layer{layer}_mean_8bit
 """
 

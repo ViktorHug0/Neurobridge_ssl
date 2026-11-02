@@ -114,7 +114,7 @@ do
                 --sattc_saw_shrink "$SHRINK"
         done
 
-        python3 compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
+        python3 scripts/data/compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
         append_average_row "$CONFIG_NAME" "$CONFIG_RUN_DIR"
     done
 done

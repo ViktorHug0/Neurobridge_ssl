@@ -39,7 +39,7 @@ with torch.no_grad():
 print('domain BatchNorm squeezeformer ok')
 
 # ATM with per-dataset BatchNorm (the conv stem's two BNs)
-from module.eeg_encoder.atm.atm import ATMS
+from module.eeg_encoder.atm import ATMS
 torch.manual_seed(0)
 kw = dict(channels_num=32, feature_dim=1536, eeg_sample_points=120, subject_token=False, backbone_dim=1024, pool_kernel=25, pool_stride=2)
 base, dbn = ATMS(**kw), ATMS(**kw, domain_bn_boundary=21)

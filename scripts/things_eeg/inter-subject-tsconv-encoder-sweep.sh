@@ -136,7 +136,7 @@ do
                 $EXTRA_ARGS
         done
 
-        python3 compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
+        python3 scripts/data/compute_avg_results.py --result_dir "$RUN_DIR" --output_name "inter_subject_summary.csv"
         upsert_average_row "$CONFIG_NAME" "$RUN_DIR"
     done
 done

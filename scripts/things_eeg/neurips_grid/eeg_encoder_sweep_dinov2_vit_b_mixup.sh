@@ -142,9 +142,9 @@ do
                     --seed "${SEED}" \
                     ${BASE_EXTRA_ARGS}
 
-                python3 compute_avg_results.py --result_dir "${RUN_DIR}" --output_name "inter_subject_summary.csv"
+                python3 scripts/data/compute_avg_results.py --result_dir "${RUN_DIR}" --output_name "inter_subject_summary.csv"
             done
-            python3 compute_avg_results.py --result_dir "${RUN_DIR}" --output_name "inter_subject_summary.csv"
+            python3 scripts/data/compute_avg_results.py --result_dir "${RUN_DIR}" --output_name "inter_subject_summary.csv"
             append_average_row "${SESSION_SUMMARY}" "${CONFIG_NAME}" "${ARCH}" "${RUN_DIR}"
         done
     done

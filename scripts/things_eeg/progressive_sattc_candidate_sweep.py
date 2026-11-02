@@ -148,13 +148,10 @@ def _build_test_dataset(eval_args, subject_id):
         time_window=eval_args.time_window,
         image_feature_dir=eval_args.image_feature_dir,
         text_feature_dir=getattr(eval_args, "text_feature_dir", ""),
-        image_aug=False,
-        aug_image_feature_dirs=[],
         average=average,
         _random=False,
         eeg_transform=None,
         train=False,
-        image_test_aug=False,
         eeg_test_aug=False,
         frozen_eeg_prior=_to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
     )

@@ -61,5 +61,5 @@ done
 
 count=$(find "$OUT" -mindepth 2 -maxdepth 2 -name result.csv | wc -l)
 if [ "$count" -eq 10 ]; then
-  python compute_avg_results.py --result_dir "$OUT" --output_name inter_subject_summary.csv
+  python scripts/data/compute_avg_results.py --result_dir "$OUT" --output_name inter_subject_summary.csv
 fi

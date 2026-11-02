@@ -135,7 +135,7 @@ do
 
     # Compute average results for this run
     if [ "$(ls -A "$CONFIG_RUN_DIR")" ]; then
-        python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
+        python3 "${REPO_ROOT}/scripts/data/compute_avg_results.py" --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
         append_average_row "$SOURCE_LABEL" "$CONFIG_NAME" "$CONFIG_RUN_DIR"
     fi
 done

@@ -3,6 +3,8 @@ import os
 import sys
 import random
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # repo root, for module.*
+
 import mne
 import numpy as np
 from sklearn.utils import shuffle

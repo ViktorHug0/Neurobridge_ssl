@@ -1,12 +1,140 @@
+"""ATM (ATMS): iTransformer channel attention + ShallowNet-style conv readout.
+
+Only the parts of the Time-Series-Library layers that ATMS reaches are kept: inverted value
+embedding, one full-attention encoder layer, no masks, no time marks. Module and attribute
+names are unchanged so existing checkpoints load strictly.
+"""
+import math
+from math import sqrt
+
 import torch
 from torch import Tensor
 import torch.nn as nn
+import torch.nn.functional as F
 from einops.layers.torch import Rearrange
 
-from .subject_layers.Transformer_EncDec import Encoder, EncoderLayer
-from .subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
-from .subject_layers.Embed import DataEmbedding
-from ..model import DomainBatchNorm2d
+from module.eeg_encoder.model import DomainBatchNorm2d
+
+
+class PositionalEmbedding(nn.Module):  # never read (no time marks) but its buffer is in every checkpoint
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEmbedding, self).__init__()
+        pe = torch.zeros(max_len, d_model).float()
+        pe.require_grad = False
+        position = torch.arange(0, max_len).float().unsqueeze(1)
+        div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))
+
+
+class TimeFeatureEmbedding(nn.Module):  # never called, kept for checkpoint keys
+    def __init__(self, d_model, freq='h'):
+        super(TimeFeatureEmbedding, self).__init__()
+        freq_map = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
+        self.embed = nn.Linear(freq_map[freq], d_model, bias=False)
+
+
+class SubjectEmbedding(nn.Module):
+    def __init__(self, num_subjects, d_model):
+        super(SubjectEmbedding, self).__init__()
+        self.subject_embedding = nn.Embedding(num_subjects, d_model)
+        self.shared_embedding = nn.Parameter(torch.randn(1, d_model))  # Shared token for unknown subjects
+        self.mask_embedding = nn.Parameter(torch.randn(1, d_model))  # Mask token embedding
+
+    def forward(self, subject_ids):
+        if subject_ids[0] is None or torch.any(subject_ids >= self.subject_embedding.num_embeddings):
+            batch_size = subject_ids.size(0)
+            return self.shared_embedding.expand(batch_size, 1, -1)
+        else:
+            return self.subject_embedding(subject_ids).unsqueeze(1)
+
+
+class DataEmbedding(nn.Module):
+    def __init__(self, c_in, d_model, freq='h', dropout=0.1, num_subjects=None):
+        super(DataEmbedding, self).__init__()
+        self.value_embedding = nn.Linear(c_in, d_model)
+        self.position_embedding = PositionalEmbedding(d_model=d_model)
+        self.temporal_embedding = TimeFeatureEmbedding(d_model=d_model, freq=freq)
+        self.dropout = nn.Dropout(p=dropout)
+        self.subject_embedding = SubjectEmbedding(num_subjects, d_model) if num_subjects is not None else None
+        self.mask_token = nn.Parameter(torch.randn(1, d_model))  # Mask token embedding
+
+    def forward(self, x, subject_ids=None):
+        x = self.value_embedding(x)
+        if self.subject_embedding is not None:
+            subject_emb = self.subject_embedding(subject_ids)  # (batch_size, 1, d_model)
+            x = torch.cat([subject_emb, x], dim=1)  # prepend along the token axis: (batch_size, seq_len + 1, d_model)
+        return self.dropout(x)
+
+
+class FullAttention(nn.Module):
+    def __init__(self, attention_dropout=0.1):
+        super(FullAttention, self).__init__()
+        self.dropout = nn.Dropout(attention_dropout)
+
+    def forward(self, queries, keys, values):
+        E = queries.shape[-1]
+        scores = torch.einsum("blhe,bshe->bhls", queries, keys)
+        A = self.dropout(torch.softmax(1. / sqrt(E) * scores, dim=-1))
+        V = torch.einsum("bhls,bshd->blhd", A, values)
+        return V.contiguous()
+
+
+class AttentionLayer(nn.Module):
+    def __init__(self, attention, d_model, n_heads):
+        super(AttentionLayer, self).__init__()
+        d_keys = d_model // n_heads
+        self.inner_attention = attention
+        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.key_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.value_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.out_projection = nn.Linear(d_keys * n_heads, d_model)
+        self.n_heads = n_heads
+
+    def forward(self, x):
+        B, L, _ = x.shape
+        H = self.n_heads
+        queries = self.query_projection(x).view(B, L, H, -1)
+        keys = self.key_projection(x).view(B, L, H, -1)
+        values = self.value_projection(x).view(B, L, H, -1)
+        out = self.inner_attention(queries, keys, values).view(B, L, -1)
+        return self.out_projection(out)
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu"):
+        super(EncoderLayer, self).__init__()
+        d_ff = d_ff or 4 * d_model
+        self.attention = attention
+        self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
+        self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = F.relu if activation == "relu" else F.gelu
+
+    def forward(self, x):
+        x = x + self.dropout(self.attention(x))
+        y = x = self.norm1(x)
+        y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+        y = self.dropout(self.conv2(y).transpose(-1, 1))
+        return self.norm2(x + y)
+
+
+class Encoder(nn.Module):
+    def __init__(self, attn_layers, norm_layer=None):
+        super(Encoder, self).__init__()
+        self.attn_layers = nn.ModuleList(attn_layers)
+        self.norm = norm_layer
+
+    def forward(self, x):
+        for attn_layer in self.attn_layers:
+            x = attn_layer(x)
+        if self.norm is not None:
+            x = self.norm(x)
+        return x
+
 
 class Config:
     def __init__(
@@ -19,15 +147,10 @@ class Config:
         dropout=0.25,
         seq_len=250,
     ):
-        self.task_name = 'classification'  # Example task name
         self.seq_len = seq_len             # Sequence length (= EEG samples per epoch)
-        self.pred_len = 250                # Prediction length
-        self.output_attention = False      # Whether to output attention weights
         self.d_model = d_model             # Model dimension
-        self.embed = 'timeF'               # Time encoding method
         self.freq = 'h'                    # Time frequency
         self.dropout = dropout             # Dropout rate
-        self.factor = 1                    # Attention scaling factor
         self.n_heads = n_heads             # Number of attention heads
         self.e_layers = e_layers           # Number of encoder layers
         self.d_ff = d_ff                   # Feedforward network dimension
@@ -36,21 +159,17 @@ class Config:
 
 
 class iTransformer(nn.Module):
-    def __init__(self, configs, joint_train=False,  num_subjects=10):
+    def __init__(self, configs, num_subjects=10):
         super(iTransformer, self).__init__()
         self.configs = configs
-        self.task_name = configs.task_name
-        self.seq_len = configs.seq_len
-        self.pred_len = configs.pred_len
-        self.output_attention = configs.output_attention
         # Embedding
-        self.enc_embedding = DataEmbedding(configs.seq_len, configs.d_model, configs.embed, configs.freq, configs.dropout, joint_train=False, num_subjects=num_subjects)
+        self.enc_embedding = DataEmbedding(configs.seq_len, configs.d_model, configs.freq, configs.dropout, num_subjects=num_subjects)
         # Encoder
         self.encoder = Encoder(
             [
                 EncoderLayer(
                     AttentionLayer(
-                        FullAttention(False, configs.factor, attention_dropout=configs.dropout, output_attention=configs.output_attention),
+                        FullAttention(attention_dropout=configs.dropout),
                         configs.d_model, configs.n_heads
                     ),
                     configs.d_model,
@@ -62,14 +181,10 @@ class iTransformer(nn.Module):
             norm_layer=torch.nn.LayerNorm(configs.d_model)
         )
 
-    def forward(self, x_enc, x_mark_enc, subject_ids=None):
-        # Embedding
-        enc_out = self.enc_embedding(x_enc, x_mark_enc, subject_ids)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
-        enc_out = enc_out[:, :self.configs.enc_in, :]      
-        # print("enc_out", enc_out.shape)
-        return enc_out
-
+    def forward(self, x_enc, subject_ids=None):
+        enc_out = self.enc_embedding(x_enc, subject_ids)
+        enc_out = self.encoder(enc_out)
+        return enc_out[:, :self.configs.enc_in, :]
 
 
 class PatchEmbedding(nn.Module):
@@ -103,13 +218,9 @@ class PatchEmbedding(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        # b, _, _, _ = x.shape
-        x = x.unsqueeze(1)     
-        # print("x", x.shape)   
+        x = x.unsqueeze(1)
         x = self.tsconv(x)
-        # print("tsconv", x.shape)   
         x = self.projection(x)
-        # print("projection", x.shape)  
         return x
 
 
@@ -141,7 +252,7 @@ class Enc_eeg(nn.Sequential):
             FlattenHead()
         )
 
-        
+
 class Proj_eeg(nn.Sequential):
     def __init__(self, embedding_dim=1440, proj_dim=1024, drop_proj=0.5):
         super().__init__(
@@ -153,7 +264,8 @@ class Proj_eeg(nn.Sequential):
             )),
             nn.LayerNorm(proj_dim),
         )
-        
+
+
 class ATMS(nn.Module):
     def __init__(
         self,
@@ -229,16 +341,10 @@ class ATMS(nn.Module):
         self.proj_eeg = Proj_eeg(embedding_dim=embedding_dim, proj_dim=trunk_dim)
         if trunk_dim != feature_dim:
             self.proj_eeg.append(nn.Linear(trunk_dim, feature_dim))
-        # self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-        # self.loss_func = ClipLoss()       
-         
+
     def forward(self, x:Tensor, subject_ids):
         x = x.squeeze(1)
-        x = self.encoder(x, None, subject_ids)
-        # print(f'After attention shape: {x.shape}')
-        # print("x", x.shape)
-        # x = self.subject_wise_linear[0](x)
-        # print(f'After subject-specific linear transformation shape: {x.shape}')
+        x = self.encoder(x, subject_ids)
         if any(isinstance(layer, DomainBatchNorm2d) for layer in self.enc_eeg[0].tsconv):
             z = x.unsqueeze(1)
             for layer in self.enc_eeg[0].tsconv:
@@ -246,22 +352,6 @@ class ATMS(nn.Module):
             eeg_embedding = self.enc_eeg[1](self.enc_eeg[0].projection(z))
         else:
             eeg_embedding = self.enc_eeg(x)
-        
+
         out = self.proj_eeg(eeg_embedding)
         return out
-    
-    
-if __name__ == "__main__":
-    # Example usage
-    eeg_sample_points = 250
-    channels_num = 17
-    feature_dim = 768
-    model = ATMS(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
-    
-    # Create a dummy EEG input tensor with shape (batch_size, channels_num, eeg_sample_points)
-    batch_size = 8
-    dummy_eeg_input = torch.randn(batch_size, channels_num, eeg_sample_points)
-    
-    # Forward pass through the model
-    output = model(dummy_eeg_input)
-    print(output.shape)  # Expected output shape: (batch_size, feature_dim)

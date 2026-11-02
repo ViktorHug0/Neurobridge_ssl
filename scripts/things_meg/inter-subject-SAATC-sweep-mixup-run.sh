@@ -145,7 +145,7 @@ run_spec_for_source() {
             "${extra_args[@]}"
     done
 
-    python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
+    python3 "${REPO_ROOT}/scripts/data/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
     append_average_row "$source_label" "$config_name" "$config_run_dir"
 }
 

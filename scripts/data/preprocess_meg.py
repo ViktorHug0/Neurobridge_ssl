@@ -2,6 +2,9 @@ import os
 import shutil
 import argparse
 import gc
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # repo root, for module.*
 
 import mne
 import pandas as pd

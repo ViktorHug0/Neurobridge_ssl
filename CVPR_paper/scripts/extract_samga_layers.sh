@@ -7,7 +7,7 @@ cd /nasbrain/p20fores/Neurobridge_SSL
 export TRITON_CACHE_DIR=/tmp/$USER-triton-${SLURM_JOB_ID:-x}; mkdir -p $TRITON_CACHE_DIR
 PY=/nasbrain/p20fores/NeuroBridge/.venv/bin/python
 FEAT=data/things_eeg/image_feature
-$PY -u extract_internvit_layers.py --layers 20 24 28 32 36 --output-template "$FEAT/_stage_iv_layer{layer}" --batch-size 8
+$PY -u scripts/data/extract_internvit_layers.py --layers 20 24 28 32 36 --output-template "$FEAT/_stage_iv_layer{layer}" --batch-size 8
 $PY - <<'PY'
 import numpy as np
 a = np.load('data/things_eeg/image_feature/_stage_iv_layer28/image_test.npy')

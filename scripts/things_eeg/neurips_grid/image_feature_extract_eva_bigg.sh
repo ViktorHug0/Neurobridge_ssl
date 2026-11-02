@@ -6,7 +6,7 @@ export HF_HOME="/nasbrain/p20fores/.cache/huggingface"
 export TORCH_HOME="/nasbrain/p20fores/.cache/torch"
 mkdir -p "$HF_HOME" "$TORCH_HOME"
 
-# python3 extract_feature.py \
+# python3 scripts/data/extract_feature.py \
 #   --model_type open_clip \
 #   --backbone EVA02-E-14 \
 #   --pretrained laion2b_s4b_b115k \
@@ -17,7 +17,7 @@ mkdir -p "$HF_HOME" "$TORCH_HOME"
 #   --output_dir ./data/things_eeg/image_feature/EVA02-E-14_layer35_mean \
 #   --device cuda:0
 
-python3 extract_feature.py \
+python3 scripts/data/extract_feature.py \
   --model_type open_clip \
   --backbone ViT-bigG-14 \
   --pretrained laion2b_s39b_b160k \

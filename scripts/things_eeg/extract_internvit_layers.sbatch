@@ -27,7 +27,7 @@ python -c "import torch; assert torch.cuda.is_available(); print(torch.cuda.get_
 FEAT="$REPO_ROOT/data/things_eeg/image_feature"
 STAGE="$FEAT/_stage_iv_layer{layer}"
 
-python -u extract_internvit_layers.py \
+python -u scripts/data/extract_internvit_layers.py \
   --layers 33 35 39 44 \
   --output-template "$STAGE" \
   --batch-size 8 \

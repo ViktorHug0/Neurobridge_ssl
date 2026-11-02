@@ -24,20 +24,6 @@ from module.util import (
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
 
 
-def _zero_padded_time_shift(features, shifts):
-    """Shift each batch row along time; positive values delay the signal."""
-    time_points = features.shape[-1]
-    source_time = (
-        torch.arange(time_points, device=features.device).unsqueeze(0)
-        - shifts.to(device=features.device, dtype=torch.long).unsqueeze(1)
-    )
-    valid = (source_time >= 0) & (source_time < time_points)
-    shape = (features.shape[0],) + (1,) * (features.ndim - 2) + (time_points,)
-    gather_index = source_time.clamp(0, time_points - 1).view(shape).expand_as(features)
-    shifted = torch.gather(features, -1, gather_index)
-    return shifted * valid.view(shape).expand_as(features).to(features.dtype)
-
-
 def _load_json(path):
     if not os.path.isfile(path):
         return {}
@@ -221,8 +207,6 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["sattc_soft_procrustes_assignment_topk"] = cli_args.sattc_soft_procrustes_assignment_topk
     if cli_args.sattc_alignment_subspace_dim is not None:
         merged["sattc_alignment_subspace_dim"] = cli_args.sattc_alignment_subspace_dim
-    if cli_args.feature_dim is not None:
-        merged["feature_dim"] = cli_args.feature_dim
     # Some newer training entrypoints accept comma-separated dimensions and
     # therefore serialize a single dimension as a JSON string. Standalone
     # evaluation always reconstructs exactly one inference projector.
@@ -245,9 +229,7 @@ def _forward_feature(args, modules, eeg_backbone_batch):
     return modules["eeg_projector"](eeg_backbone_batch)
 
 
-def _encode_dataset_features(
-    eval_args, modules, model, img_projector, device, subject_ids, average, eeg_tta_shifts=None,
-):
+def _encode_dataset_features(eval_args, modules, model, img_projector, device, subject_ids, average):
     dataset = EEGPreImageDataset(
         subject_ids,
         eval_args.eeg_data_dir,
@@ -255,13 +237,10 @@ def _encode_dataset_features(
         eval_args.time_window,
         eval_args.image_feature_dir,
         getattr(eval_args, "text_feature_dir", ""),
-        False,
-        getattr(eval_args, "aug_image_feature_dirs", []),
         average,
         False,
         None,
         False,
-        _to_bool(getattr(eval_args, "image_test_aug", False)),
         False,
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
     )
@@ -286,36 +265,12 @@ def _encode_dataset_features(
             object_idx_batch = batch[4].to(device)
             image_idx_batch = batch[5].to(device)
 
-            tta_shifts = tuple(eeg_tta_shifts or (0,))
-            if tta_shifts == (0,):
-                eeg_backbone_batch = run_eeg_backbone(
-                    model, eval_args, eeg_batch, subject_id_batch
-                )
-                eeg_feature_batch = _forward_feature(
-                    eval_args, modules, eeg_backbone_batch
-                )
-            else:
-                shifted_features = []
-                for shift in tta_shifts:
-                    shifted_eeg = _zero_padded_time_shift(
-                        eeg_batch,
-                        torch.full(
-                            (eeg_batch.shape[0],),
-                            int(shift),
-                            device=eeg_batch.device,
-                            dtype=torch.long,
-                        ),
-                    )
-                    shifted_backbone = run_eeg_backbone(
-                        model, eval_args, shifted_eeg, subject_id_batch
-                    )
-                    shifted_feature = _forward_feature(
-                        eval_args, modules, shifted_backbone
-                    )
-                    shifted_features.append(
-                        torch.nn.functional.normalize(shifted_feature, dim=1)
-                    )
-                eeg_feature_batch = torch.stack(shifted_features, dim=0).mean(dim=0)
+            eeg_backbone_batch = run_eeg_backbone(
+                model, eval_args, eeg_batch, subject_id_batch
+            )
+            eeg_feature_batch = _forward_feature(
+                eval_args, modules, eeg_backbone_batch
+            )
             image_feature_proj = img_projector(image_feature_batch)
 
             eeg_feature_list.append(eeg_feature_batch.cpu().numpy())
@@ -337,7 +292,6 @@ def _encode_dataset_features(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory containing the checkpoint and train_config.json")
-    parser.add_argument("--checkpoint_name", default="checkpoint_test_best.pth", type=str, help="checkpoint filename inside --checkpoint_dir")
     parser.add_argument("--output_dir", required=True, type=str)
     parser.add_argument("--output_name", required=True, type=str)
     parser.add_argument("--eval_mode", required=True, type=str, choices=["plain_cosine", "saw", "csls", "saw_csls"])
@@ -347,7 +301,6 @@ def main():
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
-    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--sattc_saw_shrink", type=float, default=None)
     parser.add_argument("--sattc_saw_no_renorm", action="store_true")
     parser.add_argument("--sattc_csls_k", type=int, default=None)
@@ -366,30 +319,18 @@ def main():
     )
     parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
-    parser.add_argument("--feature_dim", type=int, default=None)
-    parser.add_argument(
-        "--eeg_tta_shifts",
-        type=int,
-        nargs="+",
-        default=None,
-        help=(
-            "deterministic zero-padded time shifts whose independently normalized "
-            "EEG embeddings are averaged per query (default: the exact shift-0 path)"
-        ),
-    )
     args = parser.parse_args()
 
     checkpoint_dir = os.path.abspath(args.checkpoint_dir)
-    checkpoint_path = os.path.join(checkpoint_dir, args.checkpoint_name)
+    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_test_best.pth")
     if not os.path.isfile(checkpoint_path):
-        raise FileNotFoundError(f"Could not find {args.checkpoint_name} in '{checkpoint_dir}'")
+        raise FileNotFoundError(f"Could not find checkpoint_test_best.pth in '{checkpoint_dir}'")
 
     train_cfg = _load_json(os.path.join(checkpoint_dir, "train_config.json"))
     eval_cfg = _load_json(os.path.join(checkpoint_dir, "evaluate_config.json"))
     eval_args = _build_eval_args(train_cfg, eval_cfg, args)
-    eval_args.eeg_tta_shifts = list(dict.fromkeys(args.eeg_tta_shifts or [0]))
 
-    seed_everything(seed=args.seed if args.seed is not None else train_cfg.get("seed"))
+    seed_everything(seed=train_cfg.get("seed"))
 
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
@@ -408,13 +349,10 @@ def main():
         eval_args.time_window,
         eval_args.image_feature_dir,
         getattr(eval_args, "text_feature_dir", ""),
-        _to_bool(getattr(eval_args, "image_aug", False)),
-        getattr(eval_args, "aug_image_feature_dirs", []),
         test_average,
         False,
         None,
         False,
-        _to_bool(getattr(eval_args, "image_test_aug", False)),
         False,
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
     )
@@ -478,7 +416,6 @@ def main():
         device,
         [eval_args.test_subject_id],
         average=test_average,
-        eeg_tta_shifts=eval_args.eeg_tta_shifts,
     )
 
     if sattc_params["soft_procrustes_enabled"] or sattc_params["sinkhorn_enabled"]:
@@ -526,7 +463,6 @@ def main():
         "checkpoint_path": checkpoint_path,
         "test_subject_id": int(eval_args.test_subject_id),
         "eval_mode": eval_args.eval_mode,
-        "eeg_tta_shifts": eval_args.eeg_tta_shifts,
         "top1_acc": top1_acc,
         "top5_acc": top5_acc,
     }
@@ -535,7 +471,7 @@ def main():
 
     print(
         f"eval_mode={eval_args.eval_mode} subject={eval_args.test_subject_id} "
-        f"eeg_tta_shifts={eval_args.eeg_tta_shifts} top1={top1_acc:.2f} "
+        f"top1={top1_acc:.2f} "
         f"top5={top5_acc:.2f} checkpoint_epoch={checkpoint.get('epoch', -1)}"
     )
 

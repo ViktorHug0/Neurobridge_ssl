@@ -147,7 +147,7 @@ run_eval_for_value() {
                 --sattc_soft_procrustes_steps "$soft_steps" \
                 --sattc_soft_procrustes_power "$soft_power"
         done
-        python3 "${REPO_ROOT}/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
+        python3 "${REPO_ROOT}/scripts/data/compute_avg_results.py" --result_dir "$config_run_dir" --output_name "inter_subject_summary.csv"
     done
 
     python3 - "$SUMMARY_CSV" "$SWEEP_DIM" "$sweep_val" "${RUN_ROOT}/dim_${SWEEP_DIM}/${val_dir}" "${SEEDS[*]}" <<'PY'

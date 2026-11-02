@@ -17,7 +17,7 @@ Pipeline in one sentence:
 3. **Contrastive** EEG–image loss with **grouped multi-positive** batches (same image, different subjects).
 4. At test time: **200-way closed-set retrieval**; optional **transductive adaptation** (SAW / CSLS / Sinkhorn / soft Procrustes) for much higher accuracy.
 
-A parallel track exists for **THINGS-MEG** (`scripts/things_meg/`, `preprocess_meg.py`) and **AllJoined** (`scripts/alljoined/`). The mainline work is **THINGS-EEG**.
+A parallel track exists for **THINGS-MEG** (`scripts/things_meg/`, `scripts/data/preprocess_meg.py`) and **AllJoined** (`scripts/alljoined/`). The mainline work is **THINGS-EEG**.
 NeurIPS 2026 Track 1 sealed-phase work (Alljoined-1.6M, new subjects + new images) is evaluated only under the 4×5-subject cross-validation protocol in `neurips_challenge/CV4_PROTOCOL.md` (`cv4.sh`, `cv4_summary.py`). The current pipeline and the best ensemble (optx5, cv4 44.25) are described in [`neurips_challenge/README.md`](neurips_challenge/README.md).
 
 ---
@@ -46,16 +46,16 @@ source .venv/bin/activate
 |------|------|
 | [`train.py`](train.py) | Main training entrypoint (~2.1k lines): LOSO loop, loss, eval during train, checkpoints |
 | [`evaluate.py`](evaluate.py) | Standalone eval from `checkpoint_test_best.pth` + SATTC-style refinement |
-| [`compute_avg_results.py`](compute_avg_results.py) | Aggregate per-subject `result.csv` → `inter_subject_summary.csv` |
-| [`extract_feature.py`](extract_feature.py) | Precompute image features (CLIP, OpenCLIP, InternViT, DINOv2, …) |
-| [`preprocess_eeg.py`](preprocess_eeg.py) / [`preprocess_meg.py`](preprocess_meg.py) | Dataset preprocessing (not the daily train path) |
+| [`scripts/data/compute_avg_results.py`](scripts/data/compute_avg_results.py) | Aggregate per-subject `result.csv` → `inter_subject_summary.csv` |
+| [`scripts/data/extract_feature.py`](scripts/data/extract_feature.py) | Precompute image features (CLIP, OpenCLIP, InternViT, DINOv2, …) |
+| [`scripts/data/preprocess_eeg.py`](scripts/data/preprocess_eeg.py) / [`scripts/data/preprocess_meg.py`](scripts/data/preprocess_meg.py) | Dataset preprocessing (not the daily train path) |
 | [`module/dataset.py`](module/dataset.py) | `EEGPreImageDataset` — EEG + image features, caching |
 | [`module/loss.py`](module/loss.py) | `ContrastiveLoss` (1-pos and multi-pos) |
-| [`module/sampler.py`](module/sampler.py) | `GroupedImageBatchSampler` |
+| [`module/dataset.py`](module/dataset.py) | `GroupedImageBatchSampler` |
 | [`module/util.py`](module/util.py) | Retrieval, SAW, CSLS, Sinkhorn, Procrustes, whitening |
 | [`module/projector.py`](module/projector.py) | `direct` / `linear` / `bottleneck` projectors |
 | [`module/eeg_encoder/model.py`](module/eeg_encoder/model.py) | TSConv, EEGNet, EEGConformer, … |
-| [`module/eeg_encoder/atm/`](module/eeg_encoder/atm/) | ATMS encoder |
+| [`module/eeg_encoder/atm.py`](module/eeg_encoder/atm.py) | ATMS encoder |
 | [`scripts/things_eeg/`](scripts/things_eeg/) | Bash sweeps + Python experiment drivers (28 `.sh`, 47 files at top level) |
 | [`scripts/things_meg/`](scripts/things_meg/) | MEG analogues |
 | [`data/`](data/) | Image features, etc. (gitignored; large) |
@@ -75,7 +75,7 @@ Paths are **hardcoded in scripts**; override with env vars where noted.
 | Per-subject layout | `{eeg_data_dir}/sub-01/` … `sub-10/` with `train.npy` / `test.npy` **or** NICE-EEG names `preprocessed_eeg_training.npy` / `preprocessed_eeg_test.npy` |
 | Image features | `/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/` |
 | Default image encoder dir | `InternViT-6B_layer28_mean_8bit` (also layers 25, 27, 29, 31 for ablations) |
-| THINGS images (for `extract_feature.py`) | Often `/nasbrain/ProCOM-EEG/NeuroBridge/NeuroBridge-main/data/things_eeg/image_set` |
+| THINGS images (for `scripts/data/extract_feature.py`) | Often `/nasbrain/ProCOM-EEG/NeuroBridge/NeuroBridge-main/data/things_eeg/image_set` |
 
 `module/dataset.py` supports both this repo’s `.npy` layout and NICE-EEG dict format; it writes processed EEG caches under `{eeg_data_dir}/.cache/neurobridge_eeg/`.
 
@@ -177,7 +177,7 @@ Under `{output_dir}/{timestamp}-{output_name}/` (e.g. `20260519-122936-sub-10/`)
 Aggregate subjects:
 
 ```bash
-python compute_avg_results.py --result_dir RUN_DIR --output_name inter_subject_summary.csv
+python scripts/data/compute_avg_results.py --result_dir RUN_DIR --output_name inter_subject_summary.csv
 ```
 
 ---
@@ -318,13 +318,13 @@ Three facts that follow, and that change how you plan work:
 
 The sparse CLIP, score-ensemble, reconstruction/caption, transfer and intra-subject lines were abandoned; their code is in tag `pre-cleanup-2026-11-02`.
 
-Bash scripts usually: `source .venv/bin/activate`, `cd` repo root, set `EEG_DATA_DIR` / `IMAGE_FEATURE_DIR` / `DEVICE`, loop subjects 1–10, call `compute_avg_results.py` after each config.
+Bash scripts usually: `source .venv/bin/activate`, `cd` repo root, set `EEG_DATA_DIR` / `IMAGE_FEATURE_DIR` / `DEVICE`, loop subjects 1–10, call `scripts/data/compute_avg_results.py` after each config.
 
 ---
 
 ## Image features
 
-Precompute with [`extract_feature.py`](extract_feature.py) (`--model_type internvit|open_clip|clip|...`). Features are stored as `.npy` per image under `data/things_eeg/image_feature/<encoder_name>/`.
+Precompute with [`scripts/data/extract_feature.py`](scripts/data/extract_feature.py) (`--model_type internvit|open_clip|clip|...`). Features are stored as `.npy` per image under `data/things_eeg/image_feature/<encoder_name>/`.
 
 Strong default: **InternViT-6B layer 28**, mean pool, 8-bit (`InternViT-6B_layer28_mean_8bit`). Layer ablations: 25, 27, 29, 31.
 
@@ -335,12 +335,6 @@ Strong default: **InternViT-6B layer 28**, mean pool, 8-bit (`InternViT-6B_layer
 [`papers/`](papers/) holds markdown digests (not build artifacts): `SATTC.md`, `SSL.md`, `Neurobridge.md`, `sparse_clip.md`, `subject_aware_alignment.md`, etc. Use the [arxiv-reader skill](.cursor/skills/arxiv-reader/SKILL.md) when fetching new arXiv sources.
 
 ---
-
-## Legacy / low priority
-
-- [`module/image_augmentation.py`](module/image_augmentation.py), [`module/eeg_augmentation.py`](module/eeg_augmentation.py) — used for aug feature paths, not mainline
-- [`fuse_feature.py`](fuse_feature.py) — ancillary (used by `scripts/things_meg/image_feature_extract.sh`)
-- README: “older utilities for augmentation and feature extraction are not the main path”
 
 ## EEG foundation-model encoders (LaBraM / CBraMod)
 
@@ -383,7 +377,7 @@ SATTC flags covers it.
 2. **Read** `train_config.json` in an existing run before changing hyperparameters.
 3. **Prefer** editing `train.py` / `module/*` only when the task requires it; many experiments are **script-only**.
 4. **Do not** assume `data/` or `results/` exist in git — check NAS paths.
-5. **Match** existing bash patterns: `set -e`, `REPO_ROOT`, `SESSION_DIR`, `compute_avg_results.py` aggregation.
+5. **Match** existing bash patterns: `set -e`, `REPO_ROOT`, `SESSION_DIR`, `scripts/data/compute_avg_results.py` aggregation.
 6. **Preserve** idempotent run directories (`result.csv` guard).
 7. **Distinguish** training accuracy vs SATTC-adapted accuracy when reporting or plotting.
 
@@ -407,7 +401,7 @@ python train.py \
 bash scripts/things_eeg/inter-subjects.sh
 
 # Aggregate
-python compute_avg_results.py --result_dir RESULTS/SESSION/featdim_64 --output_name inter_subject_summary.csv
+python scripts/data/compute_avg_results.py --result_dir RESULTS/SESSION/featdim_64 --output_name inter_subject_summary.csv
 ```
 
 ---

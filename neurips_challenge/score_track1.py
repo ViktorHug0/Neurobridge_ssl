@@ -77,12 +77,9 @@ def build_test_dataset(cfg, subject_ids):
         cfg.time_window,
         cfg.image_feature_dir,
         getattr(cfg, "text_feature_dir", ""),
-        False,
-        [],
         False,  # average=False -> one item per repetition, the grader's unit
         False,  # random=False  -> deterministic (subject, object, image, rep) indexing
         None,
-        False,
         False,
         False,
         False,

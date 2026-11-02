@@ -53,7 +53,7 @@ run_arm () {
             echo "### $arm seed$SEED $name ###"
             if [ -n "$DRY" ]; then echo "$cmd"; else eval "$cmd" || echo "FAILED: $arm seed$SEED $name (continuing)"; fi
         done
-        [ -z "$DRY" ] && python3 compute_avg_results.py --result_dir "$sess" --output_name "inter_subject_summary.csv"
+        [ -z "$DRY" ] && python3 scripts/data/compute_avg_results.py --result_dir "$sess" --output_name "inter_subject_summary.csv"
     done
 }
 

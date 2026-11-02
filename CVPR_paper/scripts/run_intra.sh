@@ -26,6 +26,6 @@ OUT=./results/things_eeg/cvpr/intra/$ARM/seed$SEED
 mkdir -p "$OUT"
 .venv/bin/python train.py --train_subject_ids $SUB --test_subject_ids $SUB --output_name "$(printf sub-%02d $SUB)" \
   --output_dir "$OUT" --device cuda:0 --seed $SEED --text_feature_dir "" $BASE $EXTRA $VC
-.venv/bin/python compute_avg_results.py --result_dir "$OUT" --output_name intra_subject_summary.csv
+.venv/bin/python scripts/data/compute_avg_results.py --result_dir "$OUT" --output_name intra_subject_summary.csv
 }
 main "$@"; exit $?

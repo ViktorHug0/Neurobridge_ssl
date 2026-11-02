@@ -1,4 +1,5 @@
 import glob
+import math
 import os
 import json
 import random
@@ -8,7 +9,7 @@ from collections import defaultdict
 
 import torch
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import BatchSampler, Dataset
 from tqdm import tqdm
 import gc
 
@@ -224,13 +225,10 @@ class EEGPreImageDataset(Dataset):
         time_window: list[int],
         image_feature_dir: str,
         text_feature_dir: str,
-        image_aug: bool, 
-        aug_image_feature_dirs: list[str], 
         average: bool = True, 
         _random: bool = False,
         eeg_transform=None,
         train=True,
-        image_test_aug=False,
         eeg_test_aug=False,
         frozen_eeg_prior=False,
         cross_subject_average=False,
@@ -245,8 +243,6 @@ class EEGPreImageDataset(Dataset):
         self.image_feature_dir = image_feature_dir
         self.text_feature_dir = text_feature_dir
         self.train = train
-        self.image_aug = image_aug
-        self.image_test_aug = image_test_aug
         self.eeg_test_aug = eeg_test_aug
         self.frozen_eeg_prior = frozen_eeg_prior
         self.cross_subject_average = cross_subject_average
@@ -367,16 +363,6 @@ class EEGPreImageDataset(Dataset):
         self.num_sample_points = eeg_data.shape[-1]
         self._image_group_indices = None
         
-        if self.image_aug:
-            self.aug_image_features = []
-            for aug_image_feature_dir in aug_image_feature_dirs:
-                if train:
-                    aug_image_feature_path = os.path.join(aug_image_feature_dir, "train.npy")
-                else:
-                    aug_image_feature_path = os.path.join(aug_image_feature_dir, "test.npy")
-                aug_image_feature = np.load(aug_image_feature_path)
-                self.aug_image_features.append(aug_image_feature)
-        
         split_file = "image_train.npy" if train else "image_test.npy"
         self.image_feature_path = os.path.join(self.image_feature_dir, split_file)
         if self.text_feature_dir is not None and self.text_feature_dir != '':
@@ -494,15 +480,7 @@ class EEGPreImageDataset(Dataset):
                 # copy: un-averaged trials are a read-only fp16 memmap and transforms write in place
                 eeg_data = self.eeg_transform(np.array(eeg_data, dtype=np.float32))
         
-        if self.image_aug:
-            if self.train or self.image_test_aug:
-                aug_idx = random.randint(0, len(self.aug_image_features) - 1)
-                rep_idx = random.randint(0, self.aug_image_features[0].shape[0] - 1)
-                image_feature = self.aug_image_features[aug_idx][rep_idx][object_idx][image_idx]
-            else:
-                image_feature = self.image_features[object_idx][image_idx]
-        else:
-            image_feature = self.image_features[object_idx][image_idx]
+        image_feature = self.image_features[object_idx][image_idx]
 
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             text_feature = self.text_features[object_idx][image_idx]
@@ -571,6 +549,109 @@ def _random_average_trial(pool, kmin, kmax, beta_a, beta_b):
     u = random.betavariate(beta_a, beta_b)
     k = max(kmin, min(int(round(kmin + u * (kmax - kmin))), kmax))
     return pool[random.sample(range(P), k)].mean(axis=0), k
+
+
+class RandomGaussianNoise:
+    """
+    Adds random Gaussian noise to the EEG signal.
+    std indicates the standard deviation of the noise.
+    """
+    def __init__(self, std=0.01):
+        self.std = std
+
+    def __call__(self, eeg_data: np.ndarray) -> np.ndarray:
+        noise = np.random.normal(0, self.std, size=eeg_data.shape)
+        return eeg_data + noise
+
+
+class RandomSmooth:
+    """
+    A simple smoothing operation, which can be understood as a simple convolution / moving average along the time axis.
+    kernel_size indicates the size of the moving average kernel.
+    """
+    def __init__(self, kernel_size=5, smooth_prob=0.5):
+        self.kernel_size = kernel_size
+        self.smooth_prob = smooth_prob
+
+    def __call__(self, eeg_data: np.ndarray) -> np.ndarray:
+        ch, time_len = eeg_data.shape
+        smoothed = np.copy(eeg_data)
+        # Ensure kernel size is odd
+        for c in range(ch):
+            if np.random.rand() < self.smooth_prob:
+                for t in range(time_len):
+                    left = max(0, t - self.kernel_size // 2)
+                    right = min(time_len, t + self.kernel_size // 2 + 1)
+                    smoothed[c, t] = np.mean(eeg_data[c, left:right])
+        return smoothed
+
+
+class GroupedImageBatchSampler(BatchSampler):
+    def __init__(self, dataset, batch_size, samples_per_image=4, drop_last=True, seed=0):
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        if samples_per_image <= 0:
+            raise ValueError("samples_per_image must be positive.")
+
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.seed = seed
+        self.epoch = 0
+
+        image_groups = dataset.get_image_group_indices()
+        if not image_groups:
+            raise ValueError("No grouped image indices found in dataset.")
+
+        self.group_keys = list(image_groups.keys())
+        self.image_groups = {key: list(indices) for key, indices in image_groups.items()}
+
+        smallest_group = min(len(indices) for indices in self.image_groups.values())
+        max_group = max(len(indices) for indices in self.image_groups.values())
+        self.samples_per_image = min(samples_per_image, smallest_group)
+        
+        # Calculate how many passes through the unique images are needed to see all samples
+        self.num_passes = math.ceil(max_group / self.samples_per_image)
+
+        if self.samples_per_image <= 0:
+            raise ValueError("Grouped sampler found an empty image group.")
+
+        self.images_per_batch = batch_size // self.samples_per_image
+        if self.images_per_batch <= 0:
+            raise ValueError(
+                f"batch_size={batch_size} is too small for samples_per_image={self.samples_per_image}."
+            )
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+
+        batch = []
+        groups_in_batch = 0
+
+        for _ in range(self.num_passes):
+            shuffled_keys = list(self.group_keys)
+            rng.shuffle(shuffled_keys)
+
+            for key in shuffled_keys:
+                group_indices = list(self.image_groups[key])
+                rng.shuffle(group_indices)
+                batch.extend(group_indices[:self.samples_per_image])
+                groups_in_batch += 1
+
+                if groups_in_batch == self.images_per_batch:
+                    yield batch
+                    batch = []
+                    groups_in_batch = 0
+
+        if batch and not self.drop_last:
+            yield batch
+
+    def __len__(self):
+        total_encounters = len(self.group_keys) * self.num_passes
+        if self.drop_last:
+            return total_encounters // self.images_per_batch
+        return math.ceil(total_encounters / self.images_per_batch)
 
 
 if __name__ == '__main__':

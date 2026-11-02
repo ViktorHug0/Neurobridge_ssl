@@ -20,8 +20,8 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
-from module.dataset import EEGPreImageDataset
-from module.eeg_encoder.atm.atm import ATMS
+from module.dataset import EEGPreImageDataset, GroupedImageBatchSampler, RandomGaussianNoise, RandomSmooth
+from module.eeg_encoder.atm import ATMS
 from module.eeg_encoder.model import (
     EEGNet,
     EEGProject,
@@ -32,9 +32,7 @@ from module.eeg_encoder.model import (
 from module.loss import ContrastiveLoss
 from module.util import retrieve_all
 from module.projector import *
-from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
-from module.eeg_augmentation import RandomGaussianNoise, RandomSmooth
 
 
 def seed_everything(seed: int = None):
@@ -520,8 +518,6 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
     parser.add_argument('--atm_d_model', default=250, type=int, help='ATM channel-token hidden dimension')
     parser.add_argument('--atm_d_ff', default=256, type=int, help='ATM feed-forward hidden dimension')
-    parser.add_argument('--image_aug', action='store_true')
-    parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
     parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'bottleneck'], default='direct')
     parser.add_argument(
@@ -540,7 +536,6 @@ if __name__ == '__main__':
     parser.add_argument('--feature_dim', type=str, default='512', help='shared alignment-space dimension when projector is not direct')
     parser.add_argument('--eeg_backbone_dim', type=int, default=0, help='EEG encoder output dimension (0 means use image feature dimension)')
     parser.add_argument('--image_feature_dir', default='/nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit', type=str, help='where your image feature are')
-    parser.add_argument('--aug_image_feature_dirs', default=[], nargs='+', type=str, help='where your augmentation image feature are')
     parser.add_argument('--text_feature_dir', default='./data/things_eeg/text_feature/BLIP2', type=str, help='where your text feature are')
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
@@ -655,13 +650,10 @@ if __name__ == '__main__':
         args.time_window,
         args.image_feature_dir,
         args.text_feature_dir,
-        args.image_aug,
-        args.aug_image_feature_dirs,
         args.data_average,
         False,
         eeg_transform,
         True,
-        args.image_test_aug,
         False,
         args.frozen_eeg_prior,
         cross_subject_average=args.cross_subject_average,
@@ -708,11 +700,10 @@ if __name__ == '__main__':
             if args.grouped_batch_sampler
             else Subset(train_dataset, main_train_indices)
         )
-        # Val scores against clean targets, as the test set does: a shallow copy shares every
-        # array but reads image_features instead of the --image_aug targets.
+        # Val scores clean EEG, as the test set does: a shallow copy shares every array
+        # but drops the transform (--eeg_aug is for training rows only).
         val_view = copy.copy(train_dataset)
-        val_view.image_aug = False
-        val_view.eeg_transform = None  # and clean EEG: --eeg_aug is for training rows only
+        val_view.eeg_transform = None
         concept_val_dataloader = DataLoader(
             Subset(val_view, concept_val_indices),
             batch_size=200, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory,
@@ -826,13 +817,10 @@ if __name__ == '__main__':
             args.time_window,
             args.image_feature_dir,
             args.text_feature_dir,
-            args.image_aug,
-            args.aug_image_feature_dirs,
             True,
             False,
             eeg_transform,
             False,
-            args.image_test_aug,
             False,
             args.frozen_eeg_prior,
         )
@@ -846,13 +834,10 @@ if __name__ == '__main__':
         args.time_window,
         args.image_feature_dir,
         args.text_feature_dir,
-        args.image_aug,
-        args.aug_image_feature_dirs,
         True,
         False,
         eeg_transform,
         False,
-        args.image_test_aug,
         False,
         args.frozen_eeg_prior,
     )
