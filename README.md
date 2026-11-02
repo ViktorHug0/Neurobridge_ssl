@@ -37,7 +37,7 @@ Evaluated on three datasets — THINGS-EEG-2, AllJoined-1.6M and THINGS-MEG — 
 
 ## Rebuttal / author-response results
 
-Everything here lives in `results/things_eeg/tta_rebuttal/` and `scripts/things_eeg/tta_rebuttal/`, with the narrative in `neurips_author_response_period/`.
+Everything here lives in `results/things_eeg/tta_rebuttal/` and `scripts/things_eeg/tta_rebuttal/`, with the narrative in `neurips_paper/`.
 
 **Hyperparameter selection is honest.** The published TTA config was originally the argmax of a grid scored on the held-out test subject. Re-selecting without touching test — freeze the three flat axes at their cross-fold marginal optima and LOSO-select only `tau` — reproduces the published number with no leak: **68.30 blind vs 72.75 test-oracle**. Joint-argmax cross-validation is *pessimistic* (67.30) because it overfits a flat axis. Label-free selection is insufficient, about 10 points short.
 

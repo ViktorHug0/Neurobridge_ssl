@@ -62,7 +62,7 @@ deliberate decision, not as cleanup.
 | `scripts/things_eeg/run_subjectmix_controls.sh`, `run_smooth_paperbase.sh`, `run_smooth_kernel_sweep.sh`, `run_mixcontrols_paperbase.sh`, `subjectmix_rebuttal.sh`, `mixcontrols*.sbatch` | SubjectMix / smoothing controls (moved from repo root 2026-09-15) |
 | `module/util.py` | `sinkhorn_normalize`, `csls_scores`, `fit_soft_assignment_procrustes` — the method itself |
 | `evaluate.py`, `train.py`, `compute_avg_results.py` | entrypoints |
-| `neurips_author_response_period/` (19 files) | paper.tex, answers.tex, reviews, deployment case, NSD report |
+| `neurips_paper/` | revised paper.tex (+ paper_submitted.tex), figures, answers.tex (rebuttal), reviews, deployment case, NSD report |
 
 ## The FM experiment's code — lost, then rebuilt (2026-09-15)
 

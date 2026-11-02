@@ -1,6 +1,6 @@
 ---
 name: paper-prose
-description: Rules for writing or editing academic paper text (LaTeX papers, rebuttals, abstracts, section titles, captions) so it reads as human-written rather than LLM-generated. Use whenever drafting, rewriting or reviewing prose in CVPR_paper/, Neurips_paper_and_rebuttal/ or any other paper in this repo.
+description: Rules for writing or editing academic paper text (LaTeX papers, rebuttals, abstracts, section titles, captions) so it reads as human-written rather than LLM-generated. Use whenever drafting, rewriting or reviewing prose in CVPR_paper/, neurips_paper/ or any other paper in this repo.
 ---
 
 # Writing paper prose that does not read as LLM-generated
@@ -46,7 +46,7 @@ Avoid these patterns. Each one is a strong LLM marker.
 
 ## Positive guidance
 
-- Match the register of the authors' own text. Copy their NeurIPS sentences when they exist (`Neurips_paper_and_rebuttal/paper.tex`).
+- Match the register of the authors' own text. Copy their NeurIPS sentences when they exist (`neurips_paper/paper_submitted.tex`).
 - Plain declarative sentences: subject, verb, result, with "thus" or "therefore" when a conclusion follows.
 - One idea per sentence. Split run-ons that chain three findings with commas.
 - Keep hedges factual ("on ATM", "over three seeds"), not rhetorical. Only hedge when necessary.
