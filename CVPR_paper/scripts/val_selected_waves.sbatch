@@ -37,7 +37,7 @@ case $SLURM_ARRAY_TASK_ID in
 esac
 
 ARM="${BASE}_valcon"
-RUNNER=ensemble_experiments/validation/run_concept_val.sh
+RUNNER=CVPR_paper/scripts/run_concept_val.sh
 
 export FOLDS="1 2 3 4 5 6 7 8 9 10" RUN_SEED=3300 NW=6
 export MAX_EPOCHS=100 EARLY_STOP_PATIENCE=20

@@ -1,6 +1,6 @@
 # Agent onboarding — Neurobridge_SSL
 
-This file is for **AI coding agents** (and humans) who need to work in this repo without a long discovery phase. For the scientific narrative and paper-facing detail, read [`technical_overview.md`](technical_overview.md). For a short human intro, see [`README.md`](README.md).
+This file is for **AI coding agents** (and humans) who need to work in this repo without a long discovery phase. For a short human intro, see [`README.md`](README.md).
 
 **Writing paper text?** Read [`.agents/skills/paper-prose/SKILL.md`](.agents/skills/paper-prose/SKILL.md) first. The authors reject LLM-sounding headings and sentences, and that file lists the patterns to avoid.
 
@@ -61,7 +61,6 @@ source .venv/bin/activate
 | [`data/`](data/) | Image features, etc. (gitignored; large) |
 | [`results/`](results/) | Experiment outputs (gitignored) |
 | [`papers/`](papers/) | Markdown notes on related methods (SATTC, SSL, Sparse CLIP, …) |
-| [`technical_overview.md`](technical_overview.md) | Long-form methods + result families + caveats |
 | [`CVPR_paper/`](CVPR_paper/) | CVPR 2027 rewrite (transductive-calibration paradigm paper): `paper.tex` skeleton, `checklist.md` (decisions, protocol P-clean, experiments), `EXPERIMENT_LOG.md` |
 
 ---
@@ -242,7 +241,7 @@ check `train_config.json` (`eval_mode`, `subject_mixup_mode`, `eeg_encoder_type`
 
 ## Result families (do not conflate)
 
-From [`technical_overview.md`](technical_overview.md) — **critical for correct claims**:
+**Critical for correct claims:**
 
 | Family | Typical top-1 | What it is |
 |--------|----------------|------------|
@@ -252,9 +251,7 @@ From [`technical_overview.md`](technical_overview.md) — **critical for correct
 | Split-test transfer | ~49% → ~59% | Fit adaptation on half of test, apply to other half; code in tag `pre-cleanup-2026-11-02` |
 | Score ensembling (inductive) | ~44% honest | nested-LOFO member selection; code in tag `pre-cleanup-2026-11-02` |
 
-**Which transductive number to quote.** The `~71%` that appears throughout
-[`technical_overview.md`](technical_overview.md) is the **April 2026** sweep figure and appears
-nowhere in the paper. Current numbers:
+**Which transductive number to quote.** The `~71%` April 2026 sweep figure appears nowhere in the paper. Current numbers:
 
 | Number | What it is |
 |---|---|
@@ -389,7 +386,6 @@ SATTC flags covers it.
 5. **Match** existing bash patterns: `set -e`, `REPO_ROOT`, `SESSION_DIR`, `compute_avg_results.py` aggregation.
 6. **Preserve** idempotent run directories (`result.csv` guard).
 7. **Distinguish** training accuracy vs SATTC-adapted accuracy when reporting or plotting.
-8. For deep method context, read **`technical_overview.md`** before implementing new adaptation logic.
 
 ---
 

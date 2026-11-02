@@ -73,7 +73,7 @@ class FineTunedReve(nn.Module):
         return self.probe(tokens if self.flatten_head else tokens.mean(dim=1))
 
 
-# ---- TSConv-Squeezeformer members (ensemble_experiments/architectures/ortho_encoders.py) ---
+# ---- TSConv-Squeezeformer members (module/eeg_encoder/ortho_encoders.py) ---
 
 class ResidualAdd(nn.Module):
     def __init__(self, f):

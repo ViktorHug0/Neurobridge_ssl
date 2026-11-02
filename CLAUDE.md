@@ -6,7 +6,6 @@ alwaysApply: true
 # Repo orientation (read these before exploring)
 
 - **AGENTS.md** — navigation: repo layout, data paths, training/eval recipes, result families. Start here.
-- **technical_overview.md** — methods + result families + caveats (paper-facing).
 - **Metric convention:** the reported number is **"best top1 acc"** (best-epoch top-1 on the LOSO
   held-out subject, 200-way). `evaluate.py` reproduces it from `checkpoint_test_best.pth`. Do not
   confuse it with `top1 acc` (last epoch).

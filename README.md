@@ -6,7 +6,7 @@ At a high level, the pipeline is pretty simple. EEG gets preprocessed, images ar
 
 At test time, the interesting part is the adaptation side. Besides plain cosine retrieval, the repo also has the SAW / CSLS / Sinkhorn / soft-Procrustes tools that reshape the held-out subject's query geometry and give a much stronger transductive evaluation setup.
 
-All accuracies below are **200-way closed-set top-1** on the LOSO held-out subject, averaged over the 10 THINGS-EEG-2 subjects unless stated otherwise. Read the protocol label on every number — `test-selected`, `ValCon` and `LOSO-val` are not interchangeable, and mixing them is the easiest way to overstate a result. `technical_overview.md` has the long version; `AGENTS.md` is the working map.
+All accuracies below are **200-way closed-set top-1** on the LOSO held-out subject, averaged over the 10 THINGS-EEG-2 subjects unless stated otherwise. Read the protocol label on every number — `test-selected`, `ValCon` and `LOSO-val` are not interchangeable, and mixing them is the easiest way to overstate a result. `AGENTS.md` is the working map.
 
 ---
 

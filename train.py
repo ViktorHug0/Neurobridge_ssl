@@ -194,7 +194,7 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             ch_names=getattr(args, 'selected_channels', None) or None,  # a channel subset names its electrodes
             arch_kwargs=json.loads(getattr(args, 'fm_arch_kwargs', None) or '{}'),
         )
-    from ensemble_experiments.architectures.ortho_encoders import (
+    from module.eeg_encoder.ortho_encoders import (
         build_architecture_encoder,
         is_architecture_encoder,
     )

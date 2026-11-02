@@ -21,7 +21,7 @@ assert all(b.auxiliary.weight.grad is not None for b in m.modules() if isinstanc
 print('domain BatchNorm TSConv ok')
 
 # Squeezeformer with per-dataset BatchNorm (stem + every conformer conv block)
-from ensemble_experiments.architectures.ortho_encoders import FastTSConvSqueezeformer
+from module.eeg_encoder.ortho_encoders import FastTSConvSqueezeformer
 torch.manual_seed(0)
 base = FastTSConvSqueezeformer(1536, 120, 32, pool_kernel=25, pool_stride=2)
 dbn = FastTSConvSqueezeformer(1536, 120, 32, pool_kernel=25, pool_stride=2, domain_bn_boundary=21)

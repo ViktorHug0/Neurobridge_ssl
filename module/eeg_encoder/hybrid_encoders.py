@@ -6,7 +6,7 @@ residual MLP, LayerNorm, Linear -> feature_dim).
 import torch
 import torch.nn as nn
 
-from ensemble_experiments.architectures.ortho_encoders import _FusedTemporalConvPool, _head
+from module.eeg_encoder.ortho_encoders import _FusedTemporalConvPool, _head
 from module.eeg_encoder.model import DomainBatchNorm2d
 
 
@@ -65,7 +65,7 @@ class TokenREVE(nn.Module):
                  tsc_pool=1, time_conv=0, attn='full', registers=0, elec_patch=0, type_ffn=False, tsc_axis='time',
                  elec_embed='linear', filt_tokens=False):
         super().__init__()
-        from ensemble_experiments.architectures.alljoined_encoders import _SwitchBlock
+        from module.eeg_encoder.alljoined_encoders import _SwitchBlock
         self.tokens, self.patch, self.readout = tokens, patch, readout
         self.stride, self.patch2, self.time_source, self.tsc_pool = stride or patch, patch2, time_source, tsc_pool
         pos = lambda n: nn.init.trunc_normal_(nn.Parameter(torch.zeros(1, n, d_model)), std=0.02)

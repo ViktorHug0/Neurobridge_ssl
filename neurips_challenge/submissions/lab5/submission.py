@@ -87,7 +87,7 @@ class FineTunedLabram(nn.Module):
         return self.probe(feats)
 
 
-# ---- TSConv-Squeezeformer members (ensemble_experiments/architectures/ortho_encoders.py) ---
+# ---- TSConv-Squeezeformer members (module/eeg_encoder/ortho_encoders.py) ---
 
 class ResidualAdd(nn.Module):
     def __init__(self, f):

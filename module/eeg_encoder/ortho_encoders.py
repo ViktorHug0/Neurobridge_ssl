@@ -363,7 +363,7 @@ _REGISTRY = {
     'FastTSConvSqueezeformer': FastTSConvSqueezeformer,
     'MultiScaleTSMixer': MultiScaleTSMixer,
 }
-from ensemble_experiments.architectures.hybrid_encoders import HYBRIDS  # noqa: E402
+from module.eeg_encoder.hybrid_encoders import HYBRIDS  # noqa: E402
 _REGISTRY.update(HYBRIDS)
 
 
