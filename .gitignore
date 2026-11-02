@@ -29,3 +29,11 @@ output
 reference
 exp
 TODO.md
+
+# CVPR queue run logs (append-only, recreated by the workers)
+CVPR_paper/queue/*.lock
+CVPR_paper/queue/*.tmp
+CVPR_paper/queue/*started.txt
+CVPR_paper/queue/*done.txt
+!CVPR_paper/queue/vc_driver_done.txt
+CVPR_paper/queue/failed.txt
