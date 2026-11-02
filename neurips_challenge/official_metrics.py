@@ -1,5 +1,5 @@
 # Verbatim copy of github.com/neural-interfaces26/2026-competition benchmark_utils/metrics.py @26d5baf (numpy only),
-# used by grader_sim.py to score with the official top-k / subject-aggregation code.
+# used by lean_tta.py to score with the official top-k / subject-aggregation code.
 """Metric helpers shared by the track objectives (numpy, sklearn-style).
 
 Kept dependency-light (numpy only) so objectives never need the neuralbench

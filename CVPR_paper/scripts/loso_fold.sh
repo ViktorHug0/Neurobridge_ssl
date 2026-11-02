@@ -16,7 +16,7 @@ BASE="--num_epochs 50 --batch_size 1024 --learning_rate 3e-4 --data_average --in
   --eeg_data_dir /nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/
   --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit"
 # ponytail: token models get the challenge's optimiser recipe (one-cycle 1e-3, wd 0.05, clip, EMA, bf16); later flags win
-TOK="--learning_rate 1e-3 --lr_scheduler onecycle --onecycle_pct_start 0.1 --weight_decay 0.05 --grad_clip 1.0
+TOK="--learning_rate 1e-3 --lr_scheduler onecycle --weight_decay 0.05 --grad_clip 1.0
   --ema_decay 0.999 --ema_warmup --amp_dtype bfloat16"
 case "$ARM" in
   tsconv) EXTRA="--eeg_encoder_type TSConv_parameterizable --tsconv_temporal_kernel 30 --tsconv_pool_kernel 51
@@ -27,7 +27,7 @@ case "$ARM" in
   rmix)   EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50} $TOK" ;;
   rmixm)  EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50}" ;;  # mainline optimiser, fp32
   reve6)  EXTRA="--eeg_encoder_type REVE --fm_no_pretrained --fm_arch_kwargs {\"depth\":6}
-            --reve_input_normalization trial_zscore --batch_size 504 $TOK" ;;
+            --batch_size 504 $TOK" ;;
   *) echo "unknown arm $ARM"; exit 1 ;;
 esac
 OUT=./results/things_eeg/cvpr/loso/$ARM/seed$SEED

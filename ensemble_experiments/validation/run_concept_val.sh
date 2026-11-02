@@ -55,7 +55,7 @@ for held in ${FOLDS:-1 2 3 4 5 6 7 8 9 10}; do
     --softplus --img_l2norm --projector linear --save_weights --text_feature_dir '' \
     --data_average --grouped_batch_sampler --samples_per_image 9 --multi_positive_loss \
     --subject_mixup_mode raw_eeg --mixup_type "$MIXUP_TYPE" \
-    --subject_mixup_alpha 0.5 --subject_mixup_prob 1.0 \
+    --subject_mixup_alpha 0.5 \
     --eval_mode plain_cosine --seed "$RUN_SEED"
 done
 

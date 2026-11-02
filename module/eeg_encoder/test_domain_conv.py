@@ -1,26 +1,24 @@
-# Self-check for per-dataset routing (TSConv spatial layer, TSConv + Squeezeformer BatchNorm): .venv/bin/python module/eeg_encoder/test_domain_conv.py
+# Self-check for per-dataset BatchNorm routing (TSConv, Squeezeformer, ATM): .venv/bin/python module/eeg_encoder/test_domain_conv.py
 import torch, sys
 sys.path.insert(0, '.')
-from module.eeg_encoder.model import TSConv_parameterizable, DomainConv2d, DomainBatchNorm2d
+from module.eeg_encoder.model import TSConv_parameterizable, DomainBatchNorm2d
 torch.manual_seed(0)
 m = TSConv_parameterizable(feature_dim=1536, eeg_sample_points=120, channels_num=32, pool_kernel=25, pool_stride=2,
-                           domain_spatial_boundary=21, domain_batch_norm_boundary=21).eval()
-sp = m.tsconv[4]; assert isinstance(sp, DomainConv2d)
+                           domain_batch_norm_boundary=21).eval()
+assert sum(isinstance(b, DomainBatchNorm2d) for b in m.modules()) == 2
 x = torch.randn(6, 32, 120); ids = torch.tensor([2, 22, 5, 30, 1, 21])
 out = m(x, subject_ids=ids)
-ref = TSConv_parameterizable(feature_dim=1536, eeg_sample_points=120, channels_num=32, pool_kernel=25, pool_stride=2,
-                             domain_spatial_boundary=21, domain_batch_norm_boundary=21).eval()
-ref.load_state_dict(m.state_dict())
-assert torch.allclose(out[ids < 21], ref(x[ids < 21], subject_ids=ids[ids < 21]), atol=1e-6)  # Alljoined rows: primary path
 assert torch.allclose(out[ids < 21], m(x, subject_ids=None)[ids < 21], atol=1e-6)            # no IDs = primary
-with torch.no_grad(): sp.auxiliary.weight.add_(1.0)
+with torch.no_grad():
+    for b in m.modules():
+        if isinstance(b, DomainBatchNorm2d): b.auxiliary.running_mean.add_(5.0)
 assert torch.allclose(out[ids < 21], m(x, subject_ids=ids)[ids < 21], atol=1e-6) and not torch.allclose(
     out[ids >= 21], m(x, subject_ids=ids)[ids >= 21])                                       # THINGS rows use auxiliary only
 unk = torch.full_like(ids, 10 ** 6)  # how score_track1 marks unseen subjects: must take the primary path
 assert torch.allclose(m(x, subject_ids=unk), m(x, subject_ids=None), atol=1e-6)
 m.train(); m(x, subject_ids=ids).sum().backward()
-assert sp.primary.weight.grad.abs().sum() > 0 and sp.auxiliary.weight.grad.abs().sum() > 0
-print('domain spatial conv ok')
+assert all(b.auxiliary.weight.grad is not None for b in m.modules() if isinstance(b, DomainBatchNorm2d))
+print('domain BatchNorm TSConv ok')
 
 # Squeezeformer with per-dataset BatchNorm (stem + every conformer conv block)
 from ensemble_experiments.architectures.ortho_encoders import FastTSConvSqueezeformer

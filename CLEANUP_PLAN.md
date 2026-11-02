@@ -153,6 +153,10 @@ Rule: a flag is dead when no kept code (optx5 + section-2 launchers + CVPR scrip
 - **`logs/`** (2.5 GB, 2,099 untracked slurm outputs) **[Q1]**.
 - **`results/things_eeg/neurips_track1/`** (31 GB, September warm-up) and **`neurips_challenge/submissions/`** (3.9 GB) **[Q2]**.
 
+- **Added 2026-11-02 (user):** the results of abandoned lines whose code is already deleted (~62 GB): `results/things_eeg/{decorrelated_models, subject_cohort_bagging, ensemble_arch_candidates, ensemble_mechanism_20260907, full_sharing_20260914, compact_valcon_20260908, gated_channel_transfer, tiny_sharing, ensemble_alignment_dim_frozen, caption, compact_followup_20260908, f1_checkpoint_replay_20260915, fusion_c012_20260915, fusion_three_20260915, nash_direction_20260909}`, `results/things_eeg1/`, `results/mixed/`.
+- **Added 2026-11-02 (user):** `tta_cache/` trimmed to `fold<k>.npz` + `<member>_f<k>.npy` for the 10 recipes (~11 GB, was 31 GB).
+- Expected result: results/ goes from 583 GB to ~175 GB.
+
 ## 6. Docs to update after the delete
 
 - `AGENTS.md` and `neurips_challenge/README.md`: point at the optx5 path only.

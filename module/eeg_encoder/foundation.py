@@ -12,7 +12,7 @@ Pretrained weights come from the Hugging Face Hub ids `braindecode/labram-pretra
 `braindecode/cbramod-pretrained`, both already in the local HF cache.
 
 The one thing the saved weights do NOT determine is how a 250-sample/250 Hz THINGS-EEG-2 epoch
-was reduced to the 200 samples the foundation models consume. `--fm_resample` selects it:
+was reduced to the 200 samples the foundation models consume. The `resample` argument selects it (train.py always uses the default):
 `resample` (default) treats both as the same one-second window and interpolates 250 Hz -> 200 Hz,
 which is what LaBraM's 200-sample (1 s at 200 Hz) patch size expects; `crop` takes the first 200
 samples (0.8 s). See `scripts/things_eeg/verify_fm_reconstruction.py` for the empirical check
@@ -60,20 +60,6 @@ _EMBED_DIMS = {'LaBraM': FM_EMBED_DIM, 'CBraMod': FM_EMBED_DIM, 'REVE': 512,
 REVE_CLIP_SD = 15.0
 
 
-class _DropPath(nn.Module):
-    """Stochastic depth for a residual branch whose caller adds the skip (x = branch(x) + x)."""
-    def __init__(self, branch, p):
-        super().__init__()
-        self.branch, self.p = branch, p
-
-    def forward(self, x):
-        y = self.branch(x)
-        if not self.training or self.p == 0:
-            return y
-        keep = (torch.rand(y.shape[0], *([1] * (y.dim() - 1)), device=y.device) >= self.p).to(y.dtype)
-        return y * keep / (1 - self.p)
-
-
 class _ChanLoRAPatchEmbed(nn.Module):
     """REVE's shared patch embedding plus a per-electrode low-rank correction: patches (B, C, n, P) ->
     base(p) + (p @ A[c]) @ B. A starts at zero, so training starts from the shared embedding."""
@@ -85,49 +71,6 @@ class _ChanLoRAPatchEmbed(nn.Module):
 
     def forward(self, p):
         return self.base(p) + torch.einsum('bcnp,cpr->bcnr', p, self.A) @ self.B
-
-
-class _ResidualMLP(nn.Module):
-    def __init__(self, width, dropout):
-        super().__init__()
-        self.f = nn.Sequential(nn.GELU(), nn.Linear(width, width), nn.Dropout(dropout))
-
-    def forward(self, x):
-        return x + self.f(x)
-
-
-class _AttnStatHead(nn.Module):
-    """Squeezeformer's pooling on foundation-model tokens: softmax token weights, weighted mean and std, linear."""
-    def __init__(self, width, feature_dim):
-        super().__init__()
-        self.score = nn.Sequential(nn.Linear(width, width // 2), nn.GELU(), nn.Linear(width // 2, 1))
-        self.linear = nn.Linear(2 * width, feature_dim)
-
-    def forward(self, tokens):  # (B, T, E)
-        w = self.score(tokens).softmax(dim=1)
-        mean = (w * tokens).sum(1)
-        std = (w * (tokens - mean[:, None]).square()).sum(1).clamp_min(1e-6).sqrt()
-        return self.linear(torch.cat([mean, std], -1))
-
-
-class ReveFlattenHead(nn.Module):
-    """REVE's own fine-tuning head (reve_eeg classifier.py, pooling "no"): one learned query
-    attention-pools the last-layer tokens, the pooled token is concatenated with every token,
-    then flatten -> RMSNorm -> dropout -> Linear. Unlike a token mean it keeps the channel layout."""
-
-    def __init__(self, n_tokens: int, embed_dim: int, feature_dim: int, dropout: float):
-        super().__init__()
-        self.query = nn.Parameter(torch.randn(1, 1, embed_dim) * embed_dim ** -0.5)
-        width = (n_tokens + 1) * embed_dim
-        self.norm = nn.RMSNorm(width)
-        self.dropout = nn.Dropout(dropout)
-        self.linear = nn.Linear(width, feature_dim)
-
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:  # (B, tokens, E)
-        scores = self.query @ tokens.transpose(1, 2) / tokens.shape[-1] ** 0.5
-        pooled = torch.softmax(scores, dim=-1) @ tokens  # (B, 1, E)
-        x = torch.cat([pooled, tokens], dim=1).flatten(1)
-        return self.linear(self.dropout(self.norm(x)))
 
 
 class FoundationEncoder(nn.Module):
@@ -146,10 +89,6 @@ class FoundationEncoder(nn.Module):
         pretrained: bool = True,
         resample: str = 'resample',
         ch_names: list[str] | None = None,
-        input_normalization: str = 'trial_zscore',
-        head: str = 'mean',
-        head_dropout: float = 0.0,
-        drop_path: float = 0.0,
         arch_kwargs: dict | None = None,
     ):
         super().__init__()
@@ -161,11 +100,6 @@ class FoundationEncoder(nn.Module):
         resized = bool(arch_kwargs)
         if arch_kwargs and pretrained:
             raise ValueError('arch_kwargs change the architecture: only valid with pretrained=False')
-        if input_normalization not in ('trial_zscore', 'none'):
-            raise ValueError(
-                f"input_normalization must be 'trial_zscore' or 'none', got {input_normalization!r}"
-            )
-        self.input_normalization = input_normalization
         if model_name not in _HUB_IDS:
             raise ValueError(f"Unknown foundation model {model_name!r}; expected one of {sorted(_HUB_IDS)}")
         if resample not in ('resample', 'crop'):
@@ -195,76 +129,20 @@ class FoundationEncoder(nn.Module):
         self.power = nn.Sequential(nn.Conv1d(channels_num, 40, 25, bias=False), nn.BatchNorm1d(40),
                                    ) if power else None
         self.power_pool, self.power_dropout = nn.AvgPool1d(25, 2), nn.Dropout(0.15)
-        self.fm = self._build(model_name, len(self.fm_names), pretrained, self.fm_names, drop_path, arch_kwargs)
+        self.fm = self._build(model_name, len(self.fm_names), pretrained, self.fm_names, arch_kwargs)
         if not final_norm:
             assert isinstance(self.fm.norm, nn.LayerNorm), f'{model_name} has no final LayerNorm to drop'
             self.fm.norm = nn.Identity()
-        self.head_type = head
-        if head == 'mean':
-            width = _EMBED_DIMS[model_name]
-            if resized:  # a resized model: LaBraM's token width follows its tokenizer, so measure it
-                self.head = nn.Identity()
-                with torch.no_grad():
-                    width = self.forward(torch.zeros(2, channels_num, FM_N_TIMES)).shape[-1]
-            self.head = nn.Linear(width, feature_dim)
-        elif head == 'attnstat':  # SQF-style pooling: attention-weighted mean + std over tokens -> linear
-            width = _EMBED_DIMS[model_name]
-            self.head = _AttnStatHead(width, feature_dim)
-        elif head == 'mlp':  # mean-pooled tokens -> the TSConv/SQF head trunk: Linear, residual GELU MLP, LayerNorm,
-            # then a free linear lift (output norm unconstrained)
-            width = _EMBED_DIMS[model_name]
-            self.head = nn.Sequential(nn.Linear(width, width), _ResidualMLP(width, head_dropout or 0.5),
-                                      nn.LayerNorm(width), nn.Linear(width, feature_dim))
-        elif head == 'flatten' and model_name == 'REVE':
-            size, overlap = self.fm.patch_size, self.fm.patch_overlap
-            n_patches = (FM_N_TIMES - size) // (size - overlap) + 1  # Tensor.unfold's count
-            self.head = ReveFlattenHead(channels_num * n_patches, _EMBED_DIMS[model_name],
-                                        feature_dim, head_dropout)
-            if pretrained:  # as the authors do: start the query from REVE's pretrained cls_query_token
-                from huggingface_hub import hf_hub_download
-                from safetensors.torch import load_file
-                self.head.query.data.copy_(
-                    load_file(hf_hub_download(_HUB_IDS['REVE'], 'model.safetensors'))['cls_query_token'])
-        elif head == 'flatten' and model_name == 'LaBraM':
-            # patch_size == FM_N_TIMES: one token per channel
-            self.head = ReveFlattenHead(channels_num, _EMBED_DIMS[model_name], feature_dim, head_dropout)
-        elif head == 'multilayer' and model_name == 'LaBraM':
-            # The usual pooled last layer plus the channel-token means of the 3 blocks before it.
-            self._taps = []
-            for block in self.fm.blocks[-4:-1]:
-                block.register_forward_hook(lambda _m, _i, out: self._taps.append(out[:, 1:].mean(1)))
-            width = 4 * _EMBED_DIMS[model_name]
-            self.head = nn.Sequential(nn.LayerNorm(width), nn.Dropout(head_dropout), nn.Linear(width, feature_dim))
-        else:
-            raise ValueError(f"head must be 'mean', 'mlp', 'flatten' (REVE/LaBraM) or 'multilayer' (LaBraM); got {head!r} (or 'attnstat')")
-
-    def unfreeze_last_k(self, k: int) -> int:
-        """Train only the last `k` backbone layers plus the head; freeze everything before.
-
-        A frozen probe is not a real option here: on this benchmark REVE head-only reaches 0.064
-        val batch top-5 against 0.499 for full fine-tuning, matching AdaBrain-Bench (arXiv
-        2507.09882). So the knob worth having is how much of the stack to open. REVE is 22 blocks
-        of 3,140,096 parameters, so k=4 is 13.3M trainable (19%) against 70.1M for a full tune.
-        """
-        if self.model_name != 'REVE':
-            raise NotImplementedError(
-                f"unfreeze_last_k is only wired for REVE's transformer.layers, not {self.model_name}"
-            )
-        layers = self.fm.transformer.layers
-        if not 0 < k <= len(layers):
-            raise ValueError(f"k must be in 1..{len(layers)}, got {k}")
-        for parameter in self.fm.parameters():
-            parameter.requires_grad_(False)
-        for block in layers[len(layers) - k:]:
-            for parameter in block.parameters():
-                parameter.requires_grad_(True)
-        for parameter in self.head.parameters():
-            parameter.requires_grad_(True)
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        width = _EMBED_DIMS[model_name]
+        if resized:  # a resized model: LaBraM's token width follows its tokenizer, so measure it
+            self.head = nn.Identity()
+            with torch.no_grad():
+                width = self.forward(torch.zeros(2, channels_num, FM_N_TIMES)).shape[-1]
+        self.head = nn.Linear(width, feature_dim)
 
     @staticmethod
     def _build(model_name: str, channels_num: int, pretrained: bool, ch_names: list[str],
-               drop_path: float = 0.0, arch_kwargs: dict | None = None) -> nn.Module:
+               arch_kwargs: dict | None = None) -> nn.Module:
         # Imported lazily: braindecode pulls in mne/mne-bids, so an unrelated run should not
         # pay for it (nor fail on it).
         from braindecode.models import Labram
@@ -283,11 +161,6 @@ class FoundationEncoder(nn.Module):
                 chs_info=[{'ch_name': name} for name in ch_names],
             ), **(arch_kwargs or {})}
             fm = REVE.from_pretrained(_HUB_IDS['REVE'], **kwargs) if pretrained else REVE(**kwargs)
-            if drop_path > 0:  # stochastic depth on every residual branch, rate linear in depth (DeiT)
-                layers = fm.transformer.layers
-                for i, pair in enumerate(layers):
-                    for j in range(2):
-                        pair[j] = _DropPath(pair[j], drop_path * i / max(1, len(layers) - 1))
             if chan_lora:
                 fm.to_patch_embedding = _ChanLoRAPatchEmbed(fm.to_patch_embedding, channels_num, fm.patch_size,
                                                             fm.embed_dim, chan_lora)
@@ -315,8 +188,8 @@ class FoundationEncoder(nn.Module):
             return model
 
         if model_name == 'LaBraM':
-            # n_outputs=0 -> final_layer is nn.Identity; drop_path is LaBraM's fine-tuning stochastic depth
-            cls, kwargs = Labram, dict(n_outputs=0, drop_path_prob=drop_path)
+            # n_outputs=0 -> final_layer is nn.Identity; no stochastic depth
+            cls, kwargs = Labram, dict(n_outputs=0, drop_path_prob=0.0)
             # LaBraM's Hub config carries its own 128-entry chs_info, which conflicts with any
             # n_chans we would pass, so the donor is built from that config untouched.
             donor_kwargs: dict = {}
@@ -375,27 +248,16 @@ class FoundationEncoder(nn.Module):
         if self.spatial is not None:
             x = self.spatial(x)
         if self.model_name == 'REVE':
-            if self.input_normalization == 'trial_zscore':
-                # REVE's pretraining convention (braindecode reve.py). Applied identically at
-                # train and inference, so it adds no mismatch -- but it is NOT what the 0.29
-                # checkpoint did: that run relied on the offline StandardScaler alone. Use
-                # 'none' to reproduce it.
-                mean = x.mean(dim=-1, keepdim=True)
-                std = x.std(dim=-1, keepdim=True).clamp_min(1e-5)
-                x = ((x - mean) / std).clamp(-REVE_CLIP_SD, REVE_CLIP_SD)
+            # REVE's pretraining convention (braindecode reve.py), applied identically at train
+            # and inference. (The 0.29 reference checkpoint skipped it and relied on the offline
+            # StandardScaler alone.)
+            mean = x.mean(dim=-1, keepdim=True)
+            std = x.std(dim=-1, keepdim=True).clamp_min(1e-5)
+            x = ((x - mean) / std).clamp(-REVE_CLIP_SD, REVE_CLIP_SD)
             # return_output bypasses the dummy classification head; last layer -> (B, tokens, 512)
             feats = self.fm(x, return_output=True)[-1]
-            if self.head_type in ('flatten', 'attnstat'):
-                return self.head(feats)
         elif self.model_name == 'LaBraM':
             # Without ch_names LaBraM requires the full 128-channel canonical order.
-            if self.head_type == 'flatten':
-                return self.head(self.fm(x, ch_names=self.ch_names, return_patch_tokens=True))
-            if self.head_type == 'multilayer':
-                # ponytail: taps via forward hooks; fine while the module is never deepcopied
-                feats = self.fm(x, ch_names=self.ch_names)
-                taps, self._taps[:] = list(self._taps), []
-                return self.head(torch.cat([feats, *taps], dim=-1))
             feats = self.fm(x, ch_names=self.fm_names)
         else:
             feats = self.fm(x)
@@ -417,10 +279,6 @@ def build_foundation_encoder(
     pretrained: bool = True,
     resample: str = 'resample',
     ch_names: list[str] | None = None,
-    input_normalization: str = 'trial_zscore',
-    head: str = 'mean',
-    head_dropout: float = 0.0,
-    drop_path: float = 0.0,
     arch_kwargs: dict | None = None,
 ) -> FoundationEncoder:
     return FoundationEncoder(
@@ -430,9 +288,5 @@ def build_foundation_encoder(
         pretrained=pretrained,
         resample=resample,
         ch_names=ch_names,
-        input_normalization=input_normalization,
-        head=head,
-        head_dropout=head_dropout,
-        drop_path=drop_path,
         arch_kwargs=arch_kwargs,
     )

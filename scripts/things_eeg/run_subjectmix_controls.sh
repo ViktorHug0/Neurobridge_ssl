@@ -30,7 +30,7 @@ case "$ARM" in
   pairwise_spi3)        EXTRA="--data_average --subject_mixup_mode raw_eeg --subject_mixup_alpha 0.5 --samples_per_image 3" ;;
   base_no_aug_unavg)    EXTRA="" ;;
   method_subjectmix_unavg) EXTRA="--subject_mixup_mode raw_eeg --subject_mixup_alpha 0.5" ;;
-  within_subject_mix)   EXTRA="--subject_mixup_within --within_mix_alpha 0.5" ;;
+  within_subject_mix)   EXTRA="--subject_mixup_within" ;;
   *) echo "unknown arm: $ARM" >&2; exit 1 ;;
 esac
 # samples_per_image is part of the arm for pairwise_spi3, so it must not be set twice

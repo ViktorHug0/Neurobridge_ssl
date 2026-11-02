@@ -1,10 +1,10 @@
 #!/bin/bash
-# 2026-10-12 night (ALIGN_LOG.md): editable alignment queue. Re-reads align_queue.txt ("<recipe> <fold>" per line)
+# Editable cv4 queue worker. Re-reads queue.txt ("<recipe> <fold>" per line)
 # before every run, so the queue can be reordered while workers run; exits when nothing is left to run.
 # Skips a run when it is scored, or claimed by ANOTHER job that Slurm still reports alive (dead claims are taken over).
 cd /nasbrain/p20fores/Neurobridge_SSL
-Q=${Q:-neurips_challenge/overnight/align_queue.txt}  # Q=...: another queue file (aug_queue.txt)
-export PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/${USER}-home; mkdir -p $HOME  # off the Kerberos /homes (common.sh)
+Q=${Q:-neurips_challenge/overnight/queue.txt}  # Q=...: another queue file
+export PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/${USER}-home; mkdir -p $HOME  # off the Kerberos /homes
 ME=${SLURM_JOB_ID:-$$}
 alive() { [[ "$(sacct -n -X -j "$1" -o State 2>/dev/null | head -1 | tr -d ' ')" =~ ^(RUNNING|PENDING|REQUEUED|SUSPENDED|)$ ]]; }
 while true; do

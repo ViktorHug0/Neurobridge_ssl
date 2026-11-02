@@ -39,35 +39,6 @@ def _zero_padded_time_shift(features, shifts):
     return shifted * valid.view(shape).expand_as(features).to(features.dtype)
 
 
-def canonicalize_query_latency(features, template, max_shift):
-    """Align each query independently to a source-only ERP template."""
-    if max_shift <= 0:
-        return features, torch.zeros(features.shape[0], dtype=torch.long, device=features.device)
-    template = torch.as_tensor(template, device=features.device, dtype=features.dtype)
-    if tuple(template.shape) != tuple(features.shape[1:]):
-        raise ValueError(
-            f"latency template shape {tuple(template.shape)} does not match "
-            f"one EEG query {tuple(features.shape[1:])}"
-        )
-    centered_template = template - template.mean(dim=-1, keepdim=True)
-    centered_template = centered_template.flatten().unsqueeze(0)
-    candidates = []
-    possible = torch.arange(-int(max_shift), int(max_shift) + 1, device=features.device)
-    for shift in possible.tolist():
-        shifted = _zero_padded_time_shift(
-            features,
-            torch.full((features.shape[0],), shift, device=features.device),
-        )
-        centered = shifted - shifted.mean(dim=-1, keepdim=True)
-        similarity = torch.nn.functional.cosine_similarity(
-            centered.flatten(1), centered_template.expand(features.shape[0], -1), dim=1
-        )
-        candidates.append(similarity)
-    best = torch.stack(candidates, dim=1).argmax(dim=1)
-    selected_shifts = possible[best]
-    return _zero_padded_time_shift(features, selected_shifts), selected_shifts
-
-
 def _load_json(path):
     if not os.path.isfile(path):
         return {}
@@ -227,8 +198,6 @@ def _build_eval_args(train_cfg, eval_cfg, cli_args):
         merged["image_feature_dir"] = cli_args.image_feature_dir
     if cli_args.sattc_saw_shrink is not None:
         merged["sattc_saw_shrink"] = cli_args.sattc_saw_shrink
-    if cli_args.sattc_saw_diag:
-        merged["sattc_saw_diag"] = True
     if cli_args.sattc_saw_no_renorm:
         merged["sattc_saw_no_renorm"] = True
     if cli_args.sattc_csls_k is not None:
@@ -278,8 +247,7 @@ def _forward_feature(args, modules, eeg_backbone_batch):
 
 
 def _encode_dataset_features(
-    eval_args, modules, model, img_projector, device, subject_ids, average,
-    latency_template=None, latency_max_shift=0, eeg_tta_shifts=None, train=False,
+    eval_args, modules, model, img_projector, device, subject_ids, average, eeg_tta_shifts=None,
 ):
     dataset = EEGPreImageDataset(
         subject_ids,
@@ -293,9 +261,9 @@ def _encode_dataset_features(
         average,
         False,
         None,
-        train,
+        False,
         _to_bool(getattr(eval_args, "image_test_aug", False)),
-        _to_bool(getattr(eval_args, "eeg_test_aug", False)),
+        False,
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
     )
     loader = DataLoader(
@@ -318,11 +286,6 @@ def _encode_dataset_features(
             subject_id_batch = batch[3].to(device)
             object_idx_batch = batch[4].to(device)
             image_idx_batch = batch[5].to(device)
-
-            if latency_template is not None and latency_max_shift > 0:
-                eeg_batch, _ = canonicalize_query_latency(
-                    eeg_batch, latency_template, latency_max_shift
-                )
 
             tta_shifts = tuple(eeg_tta_shifts or (0,))
             if tta_shifts == (0,):
@@ -387,7 +350,6 @@ def main():
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--sattc_saw_shrink", type=float, default=None)
-    parser.add_argument("--sattc_saw_diag", action="store_true")
     parser.add_argument("--sattc_saw_no_renorm", action="store_true")
     parser.add_argument("--sattc_csls_k", type=int, default=None)
     parser.add_argument("--sattc_sinkhorn", action="store_true")
@@ -405,17 +367,8 @@ def main():
     )
     parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
-    parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded features + labels here (for caption_eval.py)")
-    parser.add_argument("--dump_split", type=str, default="test", choices=["test", "training"], help="with --dump_npz: dump the training split (rep-averaged, one row per image) instead of the test split, then exit")
+    parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded test features + labels here (ensemble_experiments/test_selected/dump_testselected_arm.py)")
     parser.add_argument("--feature_dim", type=int, default=None)
-    parser.add_argument(
-        "--test_data_average",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="override the training data_average flag for inference-only test loading",
-    )
-    parser.add_argument("--latency_template_npy", type=str, default=None, help="source-only grand ERP template used for independent per-query latency canonicalization")
-    parser.add_argument("--latency_max_shift", type=int, default=0, help="maximum absolute per-query canonicalization shift in samples")
     parser.add_argument(
         "--eeg_tta_shifts",
         type=int,
@@ -449,12 +402,7 @@ def main():
     device = torch.device(eval_args.device if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    test_average_override = getattr(eval_args, "test_data_average", None)
-    test_average = (
-        _to_bool(test_average_override, True)
-        if test_average_override is not None
-        else _to_bool(getattr(eval_args, "data_average", True), True)
-    )
+    test_average = _to_bool(getattr(eval_args, "data_average", True), True)
     test_dataset = EEGPreImageDataset(
         [eval_args.test_subject_id],
         eval_args.eeg_data_dir,
@@ -469,7 +417,7 @@ def main():
         None,
         False,
         _to_bool(getattr(eval_args, "image_test_aug", False)),
-        _to_bool(getattr(eval_args, "eeg_test_aug", False)),
+        False,
         _to_bool(getattr(eval_args, "frozen_eeg_prior", False)),
     )
 
@@ -499,13 +447,11 @@ def main():
 
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
     projector_activation = getattr(eval_args, "projector_activation", "none")
-    projector_topk = getattr(eval_args, "projector_topk", 512)
     img_projector = build_projector(
         eval_args.projector,
         image_feature_dim,
         eval_args.feature_dim,
         activation=projector_activation,
-        topk=projector_topk,
     ).to(device)
     architecture = getattr(eval_args, "architecture", checkpoint.get("architecture", "baseline"))
     if architecture != "baseline":
@@ -515,7 +461,6 @@ def main():
         backbone_feature_dim,
         eval_args.feature_dim,
         activation=projector_activation,
-        topk=projector_topk,
     ).to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -532,7 +477,6 @@ def main():
 
     sattc_params = {
         "saw_shrink": getattr(eval_args, "sattc_saw_shrink", 0.2),
-        "saw_diag": _to_bool(getattr(eval_args, "sattc_saw_diag", False)),
         "saw_renorm": not _to_bool(getattr(eval_args, "sattc_saw_no_renorm", False)),
         "csls_k": getattr(eval_args, "sattc_csls_k", 12),
         "sinkhorn_enabled": _to_bool(getattr(eval_args, "sattc_sinkhorn", False)),
@@ -547,35 +491,6 @@ def main():
         "alignment_subspace_dim": getattr(eval_args, "sattc_alignment_subspace_dim", None),
     }
 
-    latency_template = None
-    if args.latency_template_npy is not None:
-        latency_template = np.load(args.latency_template_npy)
-        if latency_template.ndim == 3:
-            fold_index = int(eval_args.test_subject_id) - 1
-            if not 0 <= fold_index < latency_template.shape[0]:
-                raise ValueError(
-                    f"test subject {eval_args.test_subject_id} has no row in latency "
-                    f"template array with shape {latency_template.shape}"
-                )
-            latency_template = latency_template[fold_index]
-
-    if args.dump_split == "training":
-        assert args.dump_npz, "--dump_split training needs --dump_npz"
-        eeg, img, subj, obj, idx, _ = _encode_dataset_features(
-            eval_args, modules, model, img_projector, device,
-            [eval_args.test_subject_id], average=True, train=True,
-        )
-        # the bridge's targets are in stimulus-walk order (sorted concepts x sorted files);
-        # object-major/image-minor only matches that if the rows come out strictly increasing
-        key = obj.astype(np.int64) * (int(idx.max()) + 1) + idx
-        assert (np.diff(key) > 0).all(), "dump rows are not in stimulus-walk order"
-        os.makedirs(os.path.dirname(os.path.abspath(args.dump_npz)), exist_ok=True)
-        np.savez(args.dump_npz, eeg=eeg, image=img, subject=subj, object=obj, image_idx=idx)
-        cos = float((eeg / np.linalg.norm(eeg, axis=1, keepdims=True) *
-                     img / np.linalg.norm(img, axis=1, keepdims=True)).sum(1).mean())
-        print(f"wrote {args.dump_npz} {eeg.shape}  mean cos(eeg, image) = {cos:.4f}")
-        return
-
     eeg_feature_all, image_feature_all, subject_all, object_all, image_all, _ = _encode_dataset_features(
         eval_args,
         modules,
@@ -584,8 +499,6 @@ def main():
         device,
         [eval_args.test_subject_id],
         average=test_average,
-        latency_template=latency_template,
-        latency_max_shift=args.latency_max_shift,
         eeg_tta_shifts=eval_args.eeg_tta_shifts,
     )
 

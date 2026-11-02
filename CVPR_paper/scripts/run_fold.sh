@@ -19,11 +19,11 @@ BASE="--num_epochs 50 --batch_size 1024 --learning_rate 3e-4 --data_average --in
   --eeg_data_dir /nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/
   --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer28_mean_8bit"
 # ponytail: token models get the challenge's optimiser recipe (one-cycle 1e-3, wd 0.05, clip, EMA, bf16); later flags win
-TOK="--learning_rate 1e-3 --lr_scheduler onecycle --onecycle_pct_start 0.1 --weight_decay 0.05 --grad_clip 1.0
+TOK="--learning_rate 1e-3 --lr_scheduler onecycle --weight_decay 0.05 --grad_clip 1.0
   --ema_decay 0.999 --ema_warmup --amp_dtype bfloat16"
 # <arm>_vc = same recipe with ValCon selection (10% of training concepts held out, checkpoint chosen on them; atm_iv_valcon setup)
 A=${ARM%_vc} VC=""
-[ "$A" != "$ARM" ] && VC="--val_concept_ratio 0.1 --val_concept_seed 20260822 --select_best_on val --early_stop_patience 20 --save_testsel_checkpoint"
+[ "$A" != "$ARM" ] && VC="--val_concept_ratio 0.1 --select_best_on val --early_stop_patience 20 --save_testsel_checkpoint"
 case "$A" in
   tsconv) EXTRA="--eeg_encoder_type TSConv_parameterizable --tsconv_temporal_kernel 30 --tsconv_pool_kernel 51
             --tsconv_pool_stride 5 --tsconv_dropout 0.5" ;;
@@ -33,12 +33,12 @@ case "$A" in
   rmix)   EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50} $TOK" ;;
   rmixm)  EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50}" ;;  # mainline optimiser, fp32
   reve6)  EXTRA="--eeg_encoder_type REVE --fm_no_pretrained --fm_arch_kwargs {\"depth\":6}
-            --reve_input_normalization trial_zscore --batch_size 504 $TOK" ;;
+            --batch_size 504 $TOK" ;;
   atm128_rsa1) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --rsa_lambda 1" ;;  # E8.5 RSA-loss screen (user 2026-10-22)
   atm128_rsa5) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --rsa_lambda 5" ;;
   atm128_iso1) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 1" ;;  # E8.11 split-half cross-subject isometry loss
   atm128_iso5) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 5" ;;
-  atm128_iso1pr) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 1 --pr_lambda 5 --pr_floor 14" ;;  # E8.11c iso1 collapsed (PR 1.8): add a collapse guard
+  atm128_iso1pr) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 1 --pr_lambda 5" ;;  # E8.11c iso1 collapsed (PR 1.8): add a collapse guard
   atm128_iso03) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 0.3" ;;  # iso5 killed at ep22 (zero-shot 12.9 vs 26.5)
   # E8.7 which image target space suits TTA (user goal 2026-10-22): ATM-128 recipe, target swapped
   atm128_cliph) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-H-14_final" ;;
@@ -70,7 +70,7 @@ case "$A" in
   atm128_l31) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100
             --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer31_mean_8bit" ;;  # best layer in E2.0
   reve6m) EXTRA="--eeg_encoder_type REVE --fm_no_pretrained --fm_arch_kwargs {\"depth\":6}
-            --reve_input_normalization trial_zscore --batch_size 504 --amp_dtype bfloat16" ;;  # mainline optimiser (cf. rmixm)
+            --batch_size 504 --amp_dtype bfloat16" ;;  # mainline optimiser (cf. rmixm)
   labram) export HF_HUB_OFFLINE=1  # scripts/things_eeg/inter-subject-foundation.sh LaBraM_mix recipe (AVDE contrastive + regression)
           EXTRA="--eeg_encoder_type LaBraM --alpha 0.8 --batch_size 256 --learning_rate 2e-3 --lr_scheduler cosine
             --warmup_epochs 5 --min_lr 1e-5 --weight_decay 0.05 --time_window 0 250" ;;

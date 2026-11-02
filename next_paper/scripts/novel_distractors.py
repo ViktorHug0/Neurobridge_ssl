@@ -1,6 +1,6 @@
 """Are R3 distractors harder because they are TRAINING images (the encoder was trained to pull EEG towards them)?
 ValCon encoders never used the 165 held-out validation concepts as targets (train.py: permutation of the sorted
-concepts with --val_concept_seed 20260822, first 10%). Two distractor pools of equal size, pushed through the
+concepts with the fixed seed 20260822, first 10%). Two distractor pools of equal size, pushed through the
 subject's frozen image projector:
   novel   all 10 images of the 165 held-out concepts (1650 images, never targets), shuffled
   train   image 0 of 1650 non-held training concepts (targets during training), shuffled

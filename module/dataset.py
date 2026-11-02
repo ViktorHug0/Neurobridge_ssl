@@ -258,14 +258,7 @@ class EEGPreImageDataset(Dataset):
         eeg_test_aug=False,
         frozen_eeg_prior=False,
         cross_subject_average=False,
-        xavg_beta_a=1.0,
-        xavg_beta_b=1.0,
-        xavg_kmin=4,
-        xavg_kmax=36,
         subject_mixup_within=False,
-        within_mix_alpha=0.5,
-        bootstrap_repetition_average=False,
-        bootstrap_repetition_count=4,
         subject_ea_align=False,
     ):
         super().__init__()
@@ -282,22 +275,11 @@ class EEGPreImageDataset(Dataset):
         self.eeg_test_aug = eeg_test_aug
         self.frozen_eeg_prior = frozen_eeg_prior
         self.cross_subject_average = cross_subject_average
-        self.xavg_beta_a = xavg_beta_a
-        self.xavg_beta_b = xavg_beta_b
-        self.xavg_kmin = xavg_kmin
-        self.xavg_kmax = xavg_kmax
         self.subject_mixup_within = subject_mixup_within
-        self.within_mix_alpha = within_mix_alpha
-        self.bootstrap_repetition_average = bootstrap_repetition_average
-        self.bootstrap_repetition_count = bootstrap_repetition_count
         if cross_subject_average and average:
             raise ValueError("cross_subject_average needs un-averaged reps; disable data_average.")
         if subject_mixup_within and average:
             raise ValueError("subject_mixup_within needs un-averaged reps; disable data_average.")
-        if bootstrap_repetition_average and average:
-            raise ValueError("bootstrap_repetition_average needs un-averaged reps; disable data_average.")
-        if bootstrap_repetition_count < 1:
-            raise ValueError("bootstrap_repetition_count must be positive.")
         self.info = {}
         info_json_path = os.path.join(eeg_data_dir, "info.json")
         if os.path.isfile(info_json_path):
@@ -408,8 +390,6 @@ class EEGPreImageDataset(Dataset):
                 eeg_data = _fp16_memmap(eeg_data, eeg_cache_path[:-4] + "_fp16.npy")
             self.eeg_data_list.append(eeg_data)
         
-        self._selected_idx = selected_idx
-        self._time_window = list(time_window)
         self.num_subjects = len(self.eeg_data_list)
         self.num_objects = eeg_data.shape[0]
         self.num_images_per_object = eeg_data.shape[1]
@@ -461,38 +441,10 @@ class EEGPreImageDataset(Dataset):
         self._image_group_indices = None
         return idx
 
-    def add_extra_trials(self, path, subject_offset):
-        """Append single trials of another stimulus set after the grid (Alljoined-1: export_alljoined1.py writes
-        <path>/sub-XX.npz with X (n, 32, 120) in info.json channel order + nsd ids, and dinov2_track1.npz targets).
-        Indices >= the grid length serve them with their own image targets; subject id = subject_offset + XX;
-        object_idx = 100000 + target row (never a THINGS image), image_idx = repetition_idx = 0."""
-        assert self.train and not self.average and self.image_features.shape[-1] == self.target_dims[0], \
-            'extra trials: single-trial training with a single image target only'
-        targets = np.load(os.path.join(path, 'dinov2_track1.npz'))
-        row = {int(i): r for r, i in enumerate(targets['ids'])}
-        X, rows, subj = [], [], []
-        for f in sorted(glob.glob(os.path.join(path, 'sub-*.npz'))):
-            z = np.load(f)
-            X.append(z['X']); rows.append([row[int(i)] for i in z['nsd']])
-            subj.append(np.full(len(z['nsd']), subject_offset + int(os.path.basename(f)[4:6])))
-        X = np.concatenate(X)
-        if self._selected_idx is not None:
-            X = X[:, self._selected_idx]
-        self.extra_X = X[..., self._time_window[0]:self._time_window[1]]
-        self.extra_rows, self.extra_subj = np.concatenate(rows), np.concatenate(subj)
-        self.extra_feats = targets['F'].astype(np.float32)
-        self._grid_len = self._grid_length()
-        print(f'extra trials: {len(self.extra_rows)} from {path} (subjects {sorted(set(self.extra_subj.tolist()))})')
-
     def __len__(self):
-        return self._grid_length() + len(getattr(self, 'extra_rows', ()))
-
-    def _grid_length(self):
         if self.cross_subject_average:
             return self.num_objects * self.num_images_per_object
         if self.subject_mixup_within:
-            return self.num_objects * self.num_images_per_object * self.num_subjects
-        if self.bootstrap_repetition_average:
             return self.num_objects * self.num_images_per_object * self.num_subjects
         if self.average and self.random:
             length = self.num_objects * self.num_images_per_object
@@ -504,23 +456,7 @@ class EEGPreImageDataset(Dataset):
             length = self.num_objects * self.num_images_per_object * self.num_repetitions * self.num_subjects
         return length
         
-    def _same_dataset(self, s):
-        """other training subjects recorded with the same headset (THINGS-EEG2 = ids >= 21 in cv4.sh)"""
-        return [t for t in range(self.num_subjects) if t != s and (self.subject_ids[t] >= 21) == (self.subject_ids[s] >= 21)]
-
-    def _valid_reps(self, s, o, i):
-        """the repeats of (subject, object, image) that were recorded (Alljoined pads missing ones with zeros)"""
-        reps = np.asarray(self.eeg_data_list[s][o][i], np.float32)
-        return reps[np.abs(reps[:, :, :8]).sum((1, 2)) > 0]
-
     def __getitem__(self, index):
-        if getattr(self, 'extra_rows', None) is not None and index >= self._grid_len:
-            k = index - self._grid_len
-            eeg_data = np.asarray(self.extra_X[k], np.float32)
-            if self.eeg_transform is not None:
-                eeg_data = self.eeg_transform(eeg_data)
-            return (torch.tensor(eeg_data, dtype=torch.float32), torch.tensor(self.extra_feats[self.extra_rows[k]]),
-                    torch.zeros(self.feature_dim), int(self.extra_subj[k]), 100000 + int(self.extra_rows[k]), 0, 0)
         # When averaging, use default 0
         repetition_idx = 0
 
@@ -533,9 +469,7 @@ class EEGPreImageDataset(Dataset):
                 [self.eeg_data_list[s][object_idx][image_idx] for s in range(self.num_subjects)],
                 axis=0,
             ).astype(np.float32, copy=False)  # (num_subjects * num_reps, ch, time); upcast fp16->fp32 to average
-            eeg_data, _ = _random_average_trial(
-                pool, self.xavg_kmin, self.xavg_kmax, self.xavg_beta_a, self.xavg_beta_b
-            )
+            eeg_data, _ = _random_average_trial(pool, 4, 36, 1.0, 1.0)
             if not self.frozen_eeg_prior and self.eeg_transform is not None and self.train:
                 eeg_data = self.eeg_transform(eeg_data)
             image_feature = self.image_features[object_idx][image_idx]
@@ -558,38 +492,8 @@ class EEGPreImageDataset(Dataset):
             image_idx = index % self.num_images_per_object
             reps = self.eeg_data_list[subject_idx][object_idx][image_idx].astype(np.float32)  # (R, C, T)
             i, j = random.sample(range(reps.shape[0]), 2)
-            lam = random.betavariate(self.within_mix_alpha, self.within_mix_alpha)
+            lam = random.betavariate(0.5, 0.5)
             eeg_data = lam * reps[i] + (1.0 - lam) * reps[j]
-            image_feature = self.image_features[object_idx][image_idx]
-            if self.text_feature_dir is not None and self.text_feature_dir != '':
-                text_feature = self.text_features[object_idx][image_idx]
-            else:
-                text_feature = np.zeros((self.feature_dim,))
-            return (
-                torch.tensor(eeg_data, dtype=torch.float32),
-                torch.tensor(image_feature, dtype=torch.float32),
-                torch.tensor(text_feature, dtype=torch.float32),
-                self.subject_ids[subject_idx], object_idx, image_idx, 0,
-            )
-
-        # Hierarchical nonparametric augmentation: retain one row per
-        # (subject, stimulus), but bootstrap that subject's repeated measurements
-        # before any cross-subject mixing in the training loop. Sampling with
-        # replacement preserves the subject mean in expectation while exposing
-        # finite-repetition uncertainty that a fixed four-repetition mean hides.
-        if self.bootstrap_repetition_average:
-            subject_idx = index // (self.num_objects * self.num_images_per_object)
-            object_idx = (
-                index % (self.num_objects * self.num_images_per_object)
-            ) // self.num_images_per_object
-            image_idx = index % self.num_images_per_object
-            reps = self.eeg_data_list[subject_idx][object_idx][image_idx].astype(
-                np.float32
-            )
-            draw = np.random.randint(
-                0, reps.shape[0], size=self.bootstrap_repetition_count
-            )
-            eeg_data = reps[draw].mean(axis=0, dtype=np.float32)
             image_feature = self.image_features[object_idx][image_idx]
             if self.text_feature_dir is not None and self.text_feature_dir != '':
                 text_feature = self.text_features[object_idx][image_idx]
@@ -631,64 +535,15 @@ class EEGPreImageDataset(Dataset):
             image_idx = (index % (self.num_images_per_object * self.num_repetitions)) // self.num_repetitions
             repetition_idx = index % self.num_repetitions
             eeg_data = self.eeg_data_list[subject_idx][object_idx][image_idx][repetition_idx]
-            # repetition-average augmentation (train.py --rep_avg_prob): the mean of 2..R of this subject's own valid
-            # repeats of the image, a higher-SNR view with the same target (Alljoined pads unseen repeats with zeros)
-            if self.train and random.random() < getattr(self, 'rep_avg_prob', 0.0):
-                reps = self.eeg_data_list[subject_idx][object_idx][image_idx]
-                valid = [r for r in range(self.num_repetitions) if np.abs(np.asarray(reps[r][:, :8], np.float32)).sum() > 0]
-                if len(valid) > 1:
-                    pick = random.sample(valid, random.randint(2, len(valid)))
-                    eeg_data = np.mean([np.asarray(reps[r], np.float32) for r in pick], 0)
-            # Track-1 SubjectMix (attributes set by train.py): convex mix with a single trial of the
-            # SAME image from ANOTHER subject, drawn here because random batches almost never pair them.
-            if self.train and random.random() < getattr(self, 'xsubj_mix_prob', 0.0) and len(self._same_dataset(subject_idx)):
-                other = random.choice(self._same_dataset(subject_idx))
-                partner = self.eeg_data_list[other][object_idx][image_idx][random.randrange(self.num_repetitions)]
-                lam = random.betavariate(self.xsubj_mix_alpha, self.xsubj_mix_alpha)
-                eeg_data = lam * np.asarray(eeg_data, np.float32) + (1 - lam) * np.asarray(partner, np.float32)
-            # noise transplant (train.py --noise_swap_prob): this subject's evoked mean for the image + the single-trial
-            # residual of another subject (same dataset, random image). The label-carrying evoked part stays; the
-            # background, where person identity lives (alpha/beta power topography, TTA_LOG), comes from someone else.
-            if self.train and random.random() < getattr(self, 'noise_swap_prob', 0.0) and len(self._same_dataset(subject_idx)):
-                own = self._valid_reps(subject_idx, object_idx, image_idx)
-                other = self._valid_reps(random.choice(self._same_dataset(subject_idx)),
-                                         random.randrange(self.num_objects), random.randrange(self.num_images_per_object))
-                if len(own) > 1 and len(other) > 1:
-                    n, m = len(own), len(other)  # scale: single-trial noise level minus what the own mean still carries
-                    eeg_data = own.mean(0) + np.float32(np.sqrt((1 - 1 / n) * m / (m - 1))) * (other[random.randrange(m)] - other.mean(0))
-            # band swap (train.py --band_swap_prob): replace the trial's 8-30 Hz content by that of a random trial of another
-            # subject (same dataset). Cross-subject image information sits below 8 Hz (AUG_LOG band probe) while the person
-            # fingerprint is the alpha/beta topography, so this keeps the label and swaps the identity band.
-            if self.train and random.random() < getattr(self, 'band_swap_prob', 0.0) and len(self._same_dataset(subject_idx)):
-                other = self._valid_reps(random.choice(self._same_dataset(subject_idx)),
-                                         random.randrange(self.num_objects), random.randrange(self.num_images_per_object))
-                if len(other):
-                    x = np.asarray(eeg_data, np.float32)
-                    keep = ~((np.fft.rfftfreq(x.shape[-1], 1 / 120) >= 8) & (np.fft.rfftfreq(x.shape[-1], 1 / 120) < 30))  # cv4 data are 120 Hz
-                    Z = np.where(keep, np.fft.rfft(x, axis=-1), np.fft.rfft(other[random.randrange(len(other))], axis=-1))
-                    eeg_data = np.fft.irfft(Z, n=x.shape[-1], axis=-1).astype(np.float32)
+            if self.train:  # ponytail: RNG parity with the removed rep-avg/xsubj/noise/band-swap draws (one each)
+                for _ in range(4):
+                    random.random()
         
         # If it's the training set and a transform is specified, apply the EEG data transformation
         if not self.frozen_eeg_prior:
             if self.eeg_transform is not None and (self.train or self.eeg_test_aug):
                 # copy: un-averaged trials are a read-only fp16 memmap and transforms write in place
                 eeg_data = self.eeg_transform(np.array(eeg_data, dtype=np.float32))
-        bank = getattr(self, 'spatial_mix_bank', None)
-        if self.train and bank is not None and random.random() < getattr(self, 'spatial_jitter_prob', 0.0):
-            # simulated cap displacement: each electrode re-interpolated from its neighbours (train.py builds the bank)
-            eeg_data = bank[random.randrange(len(bank))] @ np.asarray(eeg_data, dtype=np.float32)
-        amp_std, mask_len = getattr(self, 'amp_scale_std', 0.0), getattr(self, 'time_mask_len', 0)
-        gain_range = getattr(self, 'amp_gain_range', 0.0)
-        if self.train and (amp_std > 0 or mask_len > 0 or gain_range > 1):
-            eeg_data = np.array(eeg_data, dtype=np.float32)
-            if amp_std > 0:  # per-channel gain jitter
-                eeg_data *= 1 + amp_std * np.random.randn(eeg_data.shape[0], 1).astype(np.float32)
-            if gain_range > 1:  # one global gain per trial, log-uniform in [1/range, range]
-                eeg_data *= np.float32(np.exp(np.random.uniform(-np.log(gain_range), np.log(gain_range))))
-            if mask_len > 0:  # zero one random window of up to mask_len samples
-                length = random.randint(1, mask_len)
-                start = random.randint(0, eeg_data.shape[-1] - length)
-                eeg_data[..., start:start + length] = 0
         
         if self.image_aug:
             if self.train or self.image_test_aug:
@@ -713,8 +568,7 @@ class EEGPreImageDataset(Dataset):
             object_idx, 
             image_idx, 
             repetition_idx
-        ) + ((torch.tensor(self.distill_targets[index], dtype=torch.float32),)
-             if getattr(self, 'distill_targets', None) is not None else ())
+        )
 
     def decode_index(self, index: int):
         repetition_idx = 0
@@ -722,13 +576,6 @@ class EEGPreImageDataset(Dataset):
         if self.subject_mixup_within:
             subject_idx = index // (self.num_objects * self.num_images_per_object)
             object_idx = (index % (self.num_objects * self.num_images_per_object)) // self.num_images_per_object
-            image_idx = index % self.num_images_per_object
-            return self.subject_ids[subject_idx], object_idx, image_idx, 0
-        if self.bootstrap_repetition_average:
-            subject_idx = index // (self.num_objects * self.num_images_per_object)
-            object_idx = (
-                index % (self.num_objects * self.num_images_per_object)
-            ) // self.num_images_per_object
             image_idx = index % self.num_images_per_object
             return self.subject_ids[subject_idx], object_idx, image_idx, 0
         if self.average and self.random:

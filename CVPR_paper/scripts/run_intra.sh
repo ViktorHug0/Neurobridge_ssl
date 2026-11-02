@@ -14,9 +14,9 @@ BASE="--num_workers 4 --select_best_on test --softplus --num_epochs 50 --data_av
   --eeg_data_dir /nasbrain/p20fores/NICE-EEG/Data/Things-EEG2/Preprocessed_data_250Hz/
   --selected_channels P7 P5 P3 P1 Pz P2 P4 P6 P8 PO7 PO3 POz PO4 PO8 O1 Oz O2
   --img_l2norm --projector linear --feature_dim 512 --eeg_backbone_dim 1024 --batch_size 1024
-  --learning_rate 1e-3 --lr_scheduler onecycle --onecycle_pct_start 0.1"
+  --learning_rate 1e-3 --lr_scheduler onecycle"
 A=${ARM%_vc} VC=""  # <arm>_vc: ValCon selection, as in run_fold.sh
-[ "$A" != "$ARM" ] && VC="--val_concept_ratio 0.1 --val_concept_seed 20260822 --select_best_on val --early_stop_patience 20 --save_testsel_checkpoint"
+[ "$A" != "$ARM" ] && VC="--val_concept_ratio 0.1 --select_best_on val --early_stop_patience 20 --save_testsel_checkpoint"
 case "$A" in
   atm_oc) EXTRA="--eeg_encoder_type ATM" ;;
   atm128_oc) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128" ;;

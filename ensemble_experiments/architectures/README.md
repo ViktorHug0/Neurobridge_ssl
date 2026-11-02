@@ -1,33 +1,23 @@
-# Maintained ensemble architectures
+# Maintained registry encoders
 
-This directory contains the experimental EEG encoders that remain useful for
-the ensemble program. Rejected architecture implementations and their dedicated
-launch, gate, reporting, and maintenance scripts have been removed.
+The `--eeg_encoder_type` names that `train.py` resolves through
+`ortho_encoders.build_architecture_encoder`. Everything else that once lived
+here was removed in the 2026-11-02 cleanup.
 
 ## Available encoders
 
 | Encoder | Purpose |
 |---|---|
-| `FastTSConvSqueezeformer` | Full-size convolution/attention hybrid |
-| `TinySqueezeformer` | Parameter-matched proxy for rapid ensemble studies |
-| `MultiScaleTSMixer` | Full-size multi-resolution temporal-spatial MLP mixer |
-| `TinyMultiScaleTSMixer` | Parameter-matched proxy for rapid ensemble studies |
-| `TinyGatedChannelTransformer` | Attention-native channel-token control (arm A) |
-| `TinyDifferentialChannelTransformer` | Tiny Channel A with differential attention |
-| `TinyGraphDiffusionNet` | Sparse montage-graph diffusion with a virtual global node |
+| `FastTSConvSqueezeformer` | Convolution/attention hybrid (`sqf_dbn*` cv4 recipes, CVPR screens, ValCon checkpoints) |
+| `MultiScaleTSMixer` | Multi-resolution temporal-spatial MLP mixer (`honest_ensemble/multi_*_valcon` checkpoints) |
+| `TokenREVE` | Scratch REVE with a switchable tokenizer (`rmix*` cv4 recipes, CVPR `rmix` screens) |
 
-The public encoder names no longer use the historical `Ortho` prefix. The
-loader still accepts it for historical maintained names so existing checkpoints
-and experiment configurations remain reproducible.
+The loader still accepts the historical `Ortho` prefix, so existing checkpoints
+and configurations remain loadable.
 
 ## Files
 
-- `ortho_encoders.py` contains the maintained encoders and their
-  shared implementation blocks.
-- `smoke.py` checks output shape, parameter count, and backward propagation.
-- `run_fast_tsconv_squeezeformer.sh` runs the full-size Squeezeformer family.
-- `architecture_target_matrix.sbatch` and `run_arch_target_testsel.sh` run the
-  maintained full-size architecture/visual-target experiments.
-
-Historical result directories and ensemble manifests are preserved as
-provenance; they are not executable model definitions.
+- `ortho_encoders.py`: `FastTSConvSqueezeformer`, `MultiScaleTSMixer`, their
+  shared blocks, and the registry.
+- `hybrid_encoders.py`: `TokenREVE` (self-check: `PYTHONPATH=. .venv/bin/python ensemble_experiments/architectures/hybrid_encoders.py`).
+- `alljoined_encoders.py`: `_SwitchBlock`, the transformer block `TokenREVE` uses.

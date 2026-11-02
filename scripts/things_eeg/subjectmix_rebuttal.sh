@@ -68,7 +68,7 @@ run_arm "fixed_mean_k${K}" $GROUPED --samples_per_image "$K" --subject_mixup_mod
 done
 # STOCHASTIC averaging (random-size random-subset mean, redrawn per epoch) — no interpolation.
 # One-sample-per-image epoch is ~16 batches, so 450 ep matches the 50-ep gradient-step budget.
-EPOCHS=450 run_arm stoch_mean_xavg --cross_subject_average --xavg_beta_a 1 --xavg_beta_b 1 --xavg_kmin 4 --xavg_kmax 36
+EPOCHS=450 run_arm stoch_mean_xavg --cross_subject_average
 
 # ============ Sub-claim 2: is it "JUST SMOOTHING / generic augmentation"? (no cross-subject mixing) ============
 run_arm noise_aug   $GROUPED --samples_per_image 9 --subject_mixup_mode none --eeg_aug --eeg_aug_type noise
@@ -76,7 +76,7 @@ run_arm smooth_aug  $GROUPED --samples_per_image 9 --subject_mixup_mode none --e
 
 # WITHIN-subject Beta mix of 2 of a subject's OWN reps (isolates the cross-subject ingredient). Uses
 # un-averaged reps (no data_average), same grouped multi-positive batch structure as the method.
-run_arm within_subject_mix --grouped_batch_sampler --multi_positive_loss --samples_per_image 9 --subject_mixup_within --within_mix_alpha 0.5
+run_arm within_subject_mix --grouped_batch_sampler --multi_positive_loss --samples_per_image 9 --subject_mixup_within
 
 # ============ Sub-claim 3 (steelman): is there a BETTER averaging? ============
 # Per-subject Euclidean Alignment (channel-cov whitening) THEN deterministic group-mean of 9.

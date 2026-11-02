@@ -1,0 +1,21 @@
+# "<recipe> <fold>" per line, read by align_dyn.sh before every run; the best ensemble (cv4.sh)
+reve_d6_optx_things 1
+reve_d6_optx_things 2
+reve_d6_optx_things 3
+reve_d6_optx_things 4
+rmix_reg_optx_things 1
+rmix_reg_optx_things 2
+rmix_reg_optx_things 3
+rmix_reg_optx_things 4
+sqf_dbn_optx_things 1
+sqf_dbn_optx_things 2
+sqf_dbn_optx_things 3
+sqf_dbn_optx_things 4
+tsc_dbn40_bn64_optx_things 1
+tsc_dbn40_bn64_optx_things 2
+tsc_dbn40_bn64_optx_things 3
+tsc_dbn40_bn64_optx_things 4
+reve_scratch_optx_things 1
+reve_scratch_optx_things 2
+reve_scratch_optx_things 3
+reve_scratch_optx_things 4
