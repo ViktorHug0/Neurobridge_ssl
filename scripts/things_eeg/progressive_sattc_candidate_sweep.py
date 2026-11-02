@@ -24,7 +24,9 @@ from module.util import (
     subject_adaptive_whiten,
     topk,
 )
-from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
+from module.eeg_encoder.model import build_eeg_encoder, run_eeg_backbone
+from module.projector import build_projector
+from module.util import seed_everything
 
 
 def _load_json(path):

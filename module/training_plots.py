@@ -1,4 +1,5 @@
-"""Save training / subject-probe metric figures (non-interactive backend)."""
+"""Training diagnostics: training / subject-probe metric figures (non-interactive backend) and
+L0 sparsity stats of post-ReLU alignment vectors."""
 
 import matplotlib
 
@@ -46,3 +47,40 @@ def save_probe_plot(probe_history, out_path):
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def empty_alignment_sparsity_accumulator():
+    return {'l0_sum': 0.0, 'n_samples': 0, 'active_mask': None}
+
+
+def update_alignment_sparsity_accumulator(acc, features):
+    """Update running L0 stats without storing all samples (O(dim) memory)."""
+    features = np.asarray(features, dtype=np.float32)
+    if features.size == 0:
+        return acc
+    if acc['active_mask'] is None:
+        acc['active_mask'] = np.zeros(features.shape[1], dtype=bool)
+    acc['l0_sum'] += float((features > 0).sum(axis=1).sum())
+    acc['n_samples'] += features.shape[0]
+    acc['active_mask'] |= (features > 0).any(axis=0)
+    return acc
+
+
+def finalize_alignment_sparsity_accumulator(acc):
+    if acc['n_samples'] == 0 or acc['active_mask'] is None:
+        return {'l0_mean': 0.0, 'l0_frac': 0.0, 'active_feat_frac': 0.0}
+    dim = acc['active_mask'].shape[0]
+    l0_mean = acc['l0_sum'] / acc['n_samples']
+    active_dims = int(acc['active_mask'].sum())
+    return {
+        'l0_mean': l0_mean,
+        'l0_frac': l0_mean / dim,
+        'active_feat_frac': active_dims / dim,
+    }
+
+
+def compute_alignment_sparsity_stats(features):
+    """L0 stats on post-ReLU, pre-L2-norm alignment vectors."""
+    acc = empty_alignment_sparsity_accumulator()
+    update_alignment_sparsity_accumulator(acc, features)
+    return finalize_alignment_sparsity_accumulator(acc)

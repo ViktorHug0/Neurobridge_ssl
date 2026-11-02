@@ -51,7 +51,8 @@ from shared import (
     params_from_args,
     write_config,
 )
-from train import build_eeg_encoder, build_projector, run_eeg_backbone
+from module.eeg_encoder.model import build_eeg_encoder, run_eeg_backbone
+from module.projector import build_projector
 
 DEFAULT_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_ROOT, "fewshot_finetuning")
 

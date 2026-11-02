@@ -26,3 +26,23 @@ class ProjectorDirect(nn.Module):
 
     def forward(self, x):
         return self.out_activation(x)
+
+
+def build_projector(projector_type, input_dim, output_dim, activation='none'):
+    activation = (activation or 'none').lower()
+    if activation not in ('none', 'relu'):
+        raise ValueError(f"Unsupported projector activation: {activation}")
+    if projector_type == 'bottleneck':  # EEG side: encoder emits a low-rank code (--eeg_backbone_dim r), lifted
+        # linearly to the target space; image/text side: identity, so outputs stay in the grader's DINOv2 space
+        if input_dim == output_dim:
+            return ProjectorDirect(activation=activation)
+        return nn.Linear(input_dim, output_dim)
+    if projector_type == 'direct':
+        if input_dim != output_dim:
+            raise ValueError(
+                f"ProjectorDirect requires input_dim == output_dim, got {input_dim} != {output_dim}."
+            )
+        return ProjectorDirect(activation=activation)
+    if projector_type == 'linear':
+        return ProjectorLinear(input_dim, output_dim, activation=activation)
+    raise ValueError(f"Unsupported projector type: {projector_type}")

@@ -87,7 +87,8 @@ def build_test_dataset(cfg, subject_ids):
 
 
 def build_modules(cfg, checkpoint, dataset, device, n_times):
-    from train import build_eeg_encoder, build_projector
+    from module.eeg_encoder.model import build_eeg_encoder
+    from module.projector import build_projector
 
     image_feature_dim = dataset.image_features.shape[-1]
     backbone_dim = getattr(cfg, "eeg_backbone_dim", 0) or image_feature_dim
@@ -177,7 +178,7 @@ def batch_transform_wknn(Ps, F, wccn, K=4):
 def score_modules(model, eeg_projector, img_projector, cfg, subject_ids, device, batch_size,
                   num_workers, fraction=1.0) -> dict:
     """The grader pass on live modules; train.py calls it mid-run with fraction < 1."""
-    from train import run_eeg_backbone
+    from module.eeg_encoder.model import run_eeg_backbone
 
     native_n_times = int(cfg.time_window[1]) - int(cfg.time_window[0])
     gallery_normed = None

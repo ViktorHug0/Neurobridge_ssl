@@ -105,3 +105,68 @@ class ContrastiveLoss(nn.Module):
             loss = loss_contrastive
 
         return loss
+
+
+def build_image_positive_mask(object_indices, image_indices):
+    same_object = object_indices.unsqueeze(1) == object_indices.unsqueeze(0)
+    same_image = image_indices.unsqueeze(1) == image_indices.unsqueeze(0)
+    return same_object & same_image
+
+
+def _compute_cross_modal_loss_impl(
+    criterion,
+    eeg_feature,
+    image_feature,
+    positive_mask,
+    use_multi_positive,
+):
+    if use_multi_positive:
+        loss_contrastive = criterion.multi_positive_pair_loss(
+            eeg_feature,
+            image_feature,
+            positive_mask,
+        )
+
+        if criterion.alpha != 1.0:
+            eeg_for_mse, image_for_mse = criterion._normalize_inputs(eeg_feature, image_feature)
+            loss_mse = criterion.criterion_mse(eeg_for_mse, image_for_mse)
+            return criterion.alpha * loss_contrastive + (1 - criterion.alpha) * loss_mse
+        return loss_contrastive
+
+    return criterion(eeg_feature, image_feature)
+
+
+def compute_cross_modal_loss(
+    criterion,
+    eeg_feature,
+    image_feature,
+    positive_mask,
+    use_multi_positive,
+):
+    """Run contrastive geometry in FP32 even when encoder AMP is active."""
+    if not torch.is_autocast_enabled('cuda'):
+        return _compute_cross_modal_loss_impl(
+            criterion, eeg_feature, image_feature,
+            positive_mask, use_multi_positive,
+        )
+
+    with torch.autocast(device_type='cuda', enabled=False):
+        return _compute_cross_modal_loss_impl(
+            criterion,
+            eeg_feature.float(),
+            image_feature.float(),
+            positive_mask,
+            use_multi_positive,
+        )
+
+
+def compute_subject_mixup_regularization(mixed_eeg_feature, original_eeg_feature, partner_indices, mixed_mask):
+    if partner_indices is None or mixed_mask is None or not torch.any(mixed_mask):
+        return mixed_eeg_feature.new_tensor(0.0)
+    mixed_subset = mixed_eeg_feature[mixed_mask]
+    original_subset = original_eeg_feature[mixed_mask]
+    partner_subset = original_eeg_feature[partner_indices[mixed_mask]]
+    return (
+        torch.norm(mixed_subset - original_subset, p=2, dim=1).sum()
+        + torch.norm(mixed_subset - partner_subset, p=2, dim=1).sum()
+    ) / mixed_eeg_feature.shape[0]

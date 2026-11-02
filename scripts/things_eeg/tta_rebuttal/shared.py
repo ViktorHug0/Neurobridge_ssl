@@ -25,7 +25,8 @@ if REPO_ROOT not in sys.path:
 
 from module.dataset import EEGPreImageDataset
 from module.util import apply_orthogonal_map, fit_soft_assignment_procrustes, sinkhorn_normalize, topk
-from train import build_eeg_encoder, build_projector, run_eeg_backbone
+from module.eeg_encoder.model import build_eeg_encoder, run_eeg_backbone
+from module.projector import build_projector
 
 
 DEFAULT_OUTPUT_ROOT = os.path.join(REPO_ROOT, "results", "things_eeg", "tta_rebuttal")

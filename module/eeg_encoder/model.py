@@ -2,6 +2,7 @@ import torch.nn as nn
 from einops.layers.torch import Rearrange
 from torch import Tensor
 import os
+import json
 import logging
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
@@ -467,3 +468,87 @@ class PositionalEncoding(nn.Module):
         seq_len = x.size(1)
         x = x + self.pe[:, :seq_len, :]
         return x
+
+
+def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
+    if args.eeg_encoder_type == 'ATM':
+        from module.eeg_encoder.atm import ATMS  # atm.py imports this module
+        return ATMS(
+            feature_dim=feature_dim,
+            eeg_sample_points=eeg_sample_points,
+            channels_num=channels_num,
+            d_model=getattr(args, 'atm_d_model', 250),
+            d_ff=getattr(args, 'atm_d_ff', 256),
+            domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+        )
+    if args.eeg_encoder_type == 'EEGNet':
+        return EEGNet(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'EEGProject':
+        return EEGProject(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'TSConv':
+        return TSConv(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    if args.eeg_encoder_type == 'TSConv_parameterizable':
+        head_dropout = None if args.tsconv_head_dropout < 0 else args.tsconv_head_dropout
+        return TSConv_parameterizable(
+            feature_dim=feature_dim,
+            eeg_sample_points=eeg_sample_points,
+            channels_num=channels_num,
+            backbone_dim=args.tsconv_backbone_dim,
+            temporal_filters=args.tsconv_temporal_filters,
+            temporal_kernel=args.tsconv_temporal_kernel,
+            pool_kernel=args.tsconv_pool_kernel,
+            pool_stride=args.tsconv_pool_stride,
+            spatial_filters=args.tsconv_spatial_filters,
+            projection_filters=args.tsconv_projection_filters,
+            activation=args.tsconv_activation,
+            dropout=args.tsconv_dropout,
+            head_dropout=head_dropout,
+            domain_batch_norm_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+        )
+    if args.eeg_encoder_type == 'EEGConformer':
+        return EEGConformer(feature_dim=feature_dim, eeg_sample_points=eeg_sample_points, channels_num=channels_num)
+    from module.eeg_encoder.foundation import (
+        build_foundation_encoder,
+        is_foundation_encoder,
+    )
+    if is_foundation_encoder(args.eeg_encoder_type):
+        return build_foundation_encoder(
+            args.eeg_encoder_type,
+            feature_dim,
+            channels_num,
+            pretrained=not getattr(args, 'fm_no_pretrained', False),
+            ch_names=getattr(args, 'selected_channels', None) or None,  # a channel subset names its electrodes
+            arch_kwargs=json.loads(getattr(args, 'fm_arch_kwargs', None) or '{}'),
+        )
+    from module.eeg_encoder.ortho_encoders import (
+        build_architecture_encoder,
+        is_architecture_encoder,
+    )
+    if is_architecture_encoder(args.eeg_encoder_type):
+        extra = {}
+        if args.eeg_encoder_type.removeprefix('Ortho') == 'FastTSConvSqueezeformer':
+            # Reuse the TSConv geometry flags; their defaults equal the 250 Hz design.
+            extra = dict(
+                pool_kernel=getattr(args, 'tsconv_pool_kernel', 51),
+                pool_stride=getattr(args, 'tsconv_pool_stride', 5),
+                backbone_dim=getattr(args, 'tsconv_backbone_dim', 0),
+                domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
+            )
+        extra.update(json.loads(getattr(args, 'arch_kwargs', None) or '{}'))
+        return build_architecture_encoder(
+            args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num, **extra
+        )
+    raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
+
+
+def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
+    if args.eeg_encoder_type == 'ATM':
+        return model(eeg_batch, subject_id_batch)
+    elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable']:
+        model_kwargs = {}
+        if getattr(args, 'tsconv_domain_bn_boundary', 0) > 0:
+            model_kwargs['subject_ids'] = subject_id_batch
+        return model(eeg_batch, return_intermediate=return_intermediate, **model_kwargs)
+    if getattr(args, 'tsconv_domain_bn_boundary', 0) > 0:  # registry Squeezeformer with per-dataset BatchNorm
+        return model(eeg_batch, subject_ids=subject_id_batch)
+    return model(eeg_batch)

@@ -1,5 +1,10 @@
 import json
+import os
+import random
+import time
+
 import numpy as np
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -252,3 +257,34 @@ def retrieve_all(eeg_features, image_features, subject_ids=None, eval_mode='plai
         count_5 += block_5
         count_1 += block_1
     return count_5, count_1, len(eeg_features)
+
+
+def seed_everything(seed: int = None):
+    if seed is None:
+        seed = int(time.time()) % (2**32 - 1)
+
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"[seed_everything] All seeds set to: {seed}")
+    return seed
+
+
+def collect_trainable_parameters(modules):
+    params = []
+    seen = set()
+    for module in modules:
+        if module is None:
+            continue
+        for parameter in module.parameters():
+            if parameter.requires_grad and id(parameter) not in seen:
+                params.append(parameter)
+                seen.add(id(parameter))
+    return params

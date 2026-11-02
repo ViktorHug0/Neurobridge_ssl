@@ -44,7 +44,7 @@ source .venv/bin/activate
 
 | Path | Role |
 |------|------|
-| [`train.py`](train.py) | Main training entrypoint (~2.1k lines): LOSO loop, loss, eval during train, checkpoints |
+| [`train.py`](train.py) | Main training entrypoint: `parse_args` -> `main` (data, model, epoch loop, eval during train, checkpoints) |
 | [`evaluate.py`](evaluate.py) | Standalone eval from `checkpoint_test_best.pth` + SATTC-style refinement |
 | [`scripts/data/compute_avg_results.py`](scripts/data/compute_avg_results.py) | Aggregate per-subject `result.csv` → `inter_subject_summary.csv` |
 | [`scripts/data/extract_feature.py`](scripts/data/extract_feature.py) | Precompute image features (CLIP, OpenCLIP, InternViT, DINOv2, …) |
@@ -52,6 +52,7 @@ source .venv/bin/activate
 | [`module/dataset.py`](module/dataset.py) | `EEGPreImageDataset` — EEG + image features, caching |
 | [`module/loss.py`](module/loss.py) | `ContrastiveLoss` (1-pos and multi-pos) |
 | [`module/dataset.py`](module/dataset.py) | `GroupedImageBatchSampler` |
+| [`module/augment.py`](module/augment.py) | EEG augmentations: `RandomGaussianNoise`, `RandomSmooth`, cross-subject SubjectMix, operator transfer |
 | [`module/util.py`](module/util.py) | Retrieval, SAW, CSLS, Sinkhorn, Procrustes, whitening |
 | [`module/projector.py`](module/projector.py) | `direct` / `linear` / `bottleneck` projectors |
 | [`module/eeg_encoder/model.py`](module/eeg_encoder/model.py) | TSConv, EEGNet, EEGConformer, … |

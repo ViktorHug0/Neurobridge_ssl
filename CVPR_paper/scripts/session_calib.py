@@ -21,7 +21,7 @@ from sklearn.utils import shuffle
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts/things_eeg/tta_rebuttal'))
 sys.path.insert(0, os.path.dirname(__file__))
 from shared import _test_image_matrix, apply_tta_calibration, fit_tta_calibration, load_subject_context, score_features  # noqa: E402
-from train import run_eeg_backbone  # noqa: E402
+from module.eeg_encoder.model import run_eeg_backbone  # noqa: E402
 from stream_grid import subject_params  # noqa: E402
 from run_partial_coverage import topk_acc  # noqa: E402
 

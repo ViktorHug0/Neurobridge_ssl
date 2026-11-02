@@ -38,7 +38,7 @@ def chronological(subject):
 
 @torch.no_grad()
 def cache(recipe, device=torch.device('cuda:0')):
-    from train import run_eeg_backbone
+    from module.eeg_encoder.model import run_eeg_backbone
     os.makedirs(OUT, exist_ok=True)
     run_dirs = {int(f.split('/')[-4][4:]): os.path.dirname(f) for f in glob.glob(f'{ROOT}/{recipe}/fold*/*/*/track1_score.json')}
     for k, subs in FOLDS.items():
