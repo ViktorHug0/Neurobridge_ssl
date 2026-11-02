@@ -92,7 +92,7 @@ def build_test_dataset(cfg, subject_ids):
 def build_modules(cfg, checkpoint, dataset, device, n_times):
     from train import build_eeg_encoder, build_projector
 
-    image_feature_dim = getattr(dataset, "target_dims", [dataset.image_features.shape[-1]])[0]  # aux targets: primary only
+    image_feature_dim = dataset.image_features.shape[-1]
     backbone_dim = getattr(cfg, "eeg_backbone_dim", 0) or image_feature_dim
     feature_dim = int(cfg.feature_dim)
 
@@ -191,7 +191,7 @@ def score_modules(model, eeg_projector, img_projector, cfg, subject_ids, device,
         if gallery_normed is None:
             # One subject builds the gallery; every subject shares the same 200 targets.
             n_objects = dataset.num_objects
-            targets = torch.tensor(dataset.image_features[:, 0, :dataset.target_dims[0]], dtype=torch.float32, device=device)
+            targets = torch.tensor(dataset.image_features[:, 0], dtype=torch.float32, device=device)
             gallery_normed = _normalize(img_projector(targets).float().cpu().numpy())
             sums = np.zeros((len(subject_ids), n_objects, gallery_normed.shape[1]), dtype=np.float64)
             counts = np.zeros((len(subject_ids), n_objects), dtype=np.int64)

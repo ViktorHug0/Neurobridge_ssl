@@ -16,7 +16,7 @@
 #   SEEDS="3300 3301 3302" ARMS="method fixed_mean2" bash ...     # paper's 3 seeds, only chosen arms
 #
 # Runtime: ~18 min per (arm,seed,subject) on an RTX 3080; the xavg arm is ~9x that (step-matched 450 ep).
-# Full matrix (10 arms x 10 subj x 1 seed) ~= 2 days; x3 seeds ~= a week. Scope with ARMS/SEEDS/SUBJECTS.
+# Full matrix (9 arms x 10 subj x 1 seed) ~= 2 days; x3 seeds ~= a week. Scope with ARMS/SEEDS/SUBJECTS.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -77,10 +77,6 @@ run_arm smooth_aug  $GROUPED --samples_per_image 9 --subject_mixup_mode none --e
 # WITHIN-subject Beta mix of 2 of a subject's OWN reps (isolates the cross-subject ingredient). Uses
 # un-averaged reps (no data_average), same grouped multi-positive batch structure as the method.
 run_arm within_subject_mix --grouped_batch_sampler --multi_positive_loss --samples_per_image 9 --subject_mixup_within
-
-# ============ Sub-claim 3 (steelman): is there a BETTER averaging? ============
-# Per-subject Euclidean Alignment (channel-cov whitening) THEN deterministic group-mean of 9.
-run_arm aligned_average $GROUPED --samples_per_image 9 --subject_mixup_mode raw_eeg --mixup_type group --subject_mixup_alpha 1000 --subject_ea_align
 
 # ============ Reference ============
 run_arm base_no_aug $GROUPED --samples_per_image 9 --subject_mixup_mode none

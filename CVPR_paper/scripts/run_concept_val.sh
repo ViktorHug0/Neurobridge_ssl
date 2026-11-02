@@ -48,7 +48,7 @@ for held in ${FOLDS:-1 2 3 4 5 6 7 8 9 10}; do
     --eeg_encoder_type "$ENCODER_TYPE" --tsconv_temporal_kernel "$TKERNEL" \
     --train_subject_ids "${train_ids[@]}" --test_subject_ids "$held" \
     --select_best_on val --val_concept_ratio "$VAL_CONCEPT_RATIO" \
-    --early_stop_patience "$EARLY_STOP_PATIENCE" --early_stop_min_delta 0 \
+    --early_stop_patience "$EARLY_STOP_PATIENCE" \
     --save_testsel_checkpoint \
     --image_feature_dir "$IMAGE_FEATURE_DIR" --eeg_data_dir "$EEG_DATA_DIR" \
     --device cuda:0 --feature_dim "$FEATURE_DIM" --eeg_backbone_dim "$BACKBONE_DIM" \

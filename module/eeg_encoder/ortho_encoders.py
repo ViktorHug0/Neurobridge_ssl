@@ -164,7 +164,7 @@ class FastTSConvSqueezeformer(nn.Module):
     def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63,
                  d_model=160, depth=3, heads=4, conv_kernel=15,
                  expansion=2, drop=0.15, stem_filters=40,
-                 pool_kernel=51, pool_stride=5, backbone_dim=0, power_branch=False, domain_bn_boundary=0, ffn=True):
+                 pool_kernel=51, pool_stride=5, backbone_dim=0, domain_bn_boundary=0, ffn=True):
         # domain_bn_boundary > 0: every BatchNorm keeps separate statistics for subject IDs at or above it
         # (THINGS-EEG2 mapped onto Alljoined); unseen subjects take the primary path (cf. TSConv's)
         # pool_kernel/pool_stride: 51/5 is the 250 Hz design (10 tokens at 120 Hz); 25/2 keeps
@@ -213,23 +213,8 @@ class FastTSConvSqueezeformer(nn.Module):
             nn.Tanh(),
             nn.Linear(d_model // 2, 1),
         )
-        # TSConv's band-power branch (+0.037 there), made cheap: its temporal filter bank and
-        # spatial conv have no nonlinearity between them, so they compose into one 63->filters
-        # Conv1d of the same 25 taps -- the same function class (rank <= 25 <= filters) without
-        # the filters x channels x time intermediate. Then BN -> square -> pool -> log, flattened
-        # into the head next to the attentive statistics.
-        self.power_branch = nn.Sequential(
-            nn.Conv1d(channels_num, stem_filters, 25, bias=False),
-            nn.BatchNorm1d(stem_filters),
-        ) if power_branch else None
-        self.power_pool = nn.AvgPool1d(pool_kernel, pool_stride)
-        self.power_dropout = nn.Dropout(drop)
-        power_dim = 0
-        if power_branch:
-            with torch.no_grad():
-                power_dim = self._power_features(torch.zeros(2, channels_num, eeg_sample_points)).shape[1]
         trunk_dim = backbone_dim or feature_dim
-        self.head = _head(2 * d_model + power_dim, trunk_dim)
+        self.head = _head(2 * d_model, trunk_dim)
         if trunk_dim != feature_dim:
             self.head.append(nn.Linear(trunk_dim, feature_dim))
 
@@ -246,13 +231,7 @@ class FastTSConvSqueezeformer(nn.Module):
         mean = (weights * z).sum(dim=1)
         variance = (weights * (z - mean.unsqueeze(1)).square()).sum(dim=1)
         pooled = torch.cat([mean, variance.clamp_min(1e-6).sqrt()], dim=-1)
-        if self.power_branch is not None:
-            pooled = torch.cat([pooled, self._power_features(x)], dim=-1)
         return self.head(pooled)
-
-    def _power_features(self, x):
-        power = self.power_pool(self.power_branch(x).square())
-        return self.power_dropout(power.clamp_min(1e-6).log().flatten(1))
 
 
 class _MultiResolutionSpatialStem(nn.Module):

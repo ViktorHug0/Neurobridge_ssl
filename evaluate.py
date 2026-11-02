@@ -22,7 +22,6 @@ from module.util import (
     topk,
 )
 from train import build_eeg_encoder, build_projector, run_eeg_backbone, seed_everything
-from module.inductive_covariance import InductiveQueryCovarianceAlign
 
 
 def _zero_padded_time_shift(features, shifts):
@@ -424,25 +423,6 @@ def main():
     channels_num = test_dataset.channels_num
     image_feature_dim = test_dataset.image_features.shape[-1]
     backbone_feature_dim = getattr(eval_args, "eeg_backbone_dim", 0) or image_feature_dim
-
-    if _to_bool(getattr(eval_args, "inductive_covariance_align", False)):
-        covariance_state = checkpoint.get("inductive_covariance_state_dict")
-        if covariance_state is None:
-            raise KeyError("checkpoint is missing inductive_covariance_state_dict")
-        # Constructor values are replaced immediately by the serialized frozen priors.
-        placeholder = {0: torch.eye(channels_num, device=device)}
-        covariance_aligner = InductiveQueryCovarianceAlign(
-            placeholder,
-            alpha=float(eval_args.inductive_covariance_alpha),
-            shrinkage=float(eval_args.inductive_covariance_shrinkage),
-        ).to(device)
-        # The source lookup size is fold-dependent, so load buffers explicitly.
-        covariance_aligner.global_reference = covariance_state["global_reference"].to(device)
-        covariance_aligner.source_reference_lookup = covariance_state[
-            "source_reference_lookup"
-        ].to(device)
-        covariance_aligner.known_source = covariance_state["known_source"].to(device)
-        eval_args._inductive_covariance_aligner = covariance_aligner
 
     model = build_eeg_encoder(eval_args, backbone_feature_dim, eeg_sample_points, channels_num).to(device)
     projector_activation = getattr(eval_args, "projector_activation", "none")

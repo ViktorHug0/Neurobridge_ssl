@@ -12,8 +12,6 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import gc
 
-from module.util import _inv_sqrt_cov
-
 
 def _resolve_eeg_file(subject_dir: str, train: bool) -> str:
     """
@@ -57,28 +55,6 @@ def _load_eeg_container(path: str):
         if isinstance(item, dict):
             return item
     return obj
-
-
-def _load_image_target_blocks(target_dirs: list[str], split_file: str):
-    """Load one primary image target plus optional normalized auxiliary blocks."""
-    if not target_dirs:
-        raise ValueError("At least one image feature directory is required")
-    dims = [
-        np.load(os.path.join(directory, split_file), mmap_mode="r").shape[-1]
-        for directory in target_dirs
-    ]
-    if len(target_dirs) == 1:
-        return np.load(os.path.join(target_dirs[0], split_file)), dims
-
-    blocks = []
-    for target_index, directory in enumerate(target_dirs):
-        block = np.load(os.path.join(directory, split_file)).astype(np.float32)
-        if target_index > 0:
-            block /= np.clip(
-                np.linalg.norm(block, axis=-1, keepdims=True), 1e-8, None
-            )
-        blocks.append(block)
-    return np.concatenate(blocks, axis=-1), dims
 
 
 def _eeg_cache_key(
@@ -259,7 +235,6 @@ class EEGPreImageDataset(Dataset):
         frozen_eeg_prior=False,
         cross_subject_average=False,
         subject_mixup_within=False,
-        subject_ea_align=False,
     ):
         super().__init__()
         self.subject_ids = subject_ids
@@ -318,7 +293,7 @@ class EEGPreImageDataset(Dataset):
                 # pages instead of each holding a private ~9 GB copy. Materialize a
                 # writable array only for options that mutate the cached samples.
                 eeg_data = np.load(eeg_cache_path, mmap_mode="r")
-                if self.frozen_eeg_prior or subject_ea_align:
+                if self.frozen_eeg_prior:
                     eeg_data = np.array(eeg_data, copy=True)
             else:
                 eeg_container = _load_eeg_container(eeg_data_path)
@@ -378,13 +353,6 @@ class EEGPreImageDataset(Dataset):
                             else:
                                 eeg_data[object_idx, image_idx] = self.eeg_transform(eeg_data[object_idx, image_idx])
 
-            if subject_ea_align:
-                # Euclidean Alignment: whiten each subject by its own channel-covariance R^-1/2 so
-                # subjects share a common covariance before averaging ("a smarter cross-subject mean").
-                Xf = eeg_data.reshape(-1, eeg_data.shape[-2], eeg_data.shape[-1]).astype(np.float32)
-                R = np.einsum('nct,ndt->cd', Xf, Xf) / (Xf.shape[0] * Xf.shape[-1])
-                W = _inv_sqrt_cov(R)
-                eeg_data = np.einsum('cd,...dt->...ct', W, eeg_data.astype(np.float32)).astype(eeg_data.dtype, copy=False)
             if not self.average and eeg_data.dtype != np.float16:
                 # Backed by disk, not RAM -- see _fp16_memmap. Mixing/averaging upcasts per item.
                 eeg_data = _fp16_memmap(eeg_data, eeg_cache_path[:-4] + "_fp16.npy")
@@ -410,37 +378,18 @@ class EEGPreImageDataset(Dataset):
                 self.aug_image_features.append(aug_image_feature)
         
         split_file = "image_train.npy" if train else "image_test.npy"
-        # A comma-separated image_feature_dir means several image targets at once. Preserve
-        # the primary block byte-for-byte so its training path remains matched to a normal
-        # single-target run. Training-only auxiliary blocks are L2-normalized before they are
-        # concatenated; target_dims tells the model where to split them again.
-        target_dirs = [d for d in str(self.image_feature_dir).split(',') if d]
-        self.image_feature_path = os.path.join(target_dirs[0], split_file)
+        self.image_feature_path = os.path.join(self.image_feature_dir, split_file)
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             if train:
                 self.text_feature_path = os.path.join(self.text_feature_dir, "train.npy")
             else:
                 self.text_feature_path = os.path.join(self.text_feature_dir, "test.npy")
 
-        self.image_features, self.target_dims = _load_image_target_blocks(
-            target_dirs, split_file
-        )
+        self.image_features = np.load(self.image_feature_path)
         self.feature_dim = self.image_features.shape[-1]
         if self.text_feature_dir is not None and self.text_feature_dir != '':
             self.text_features = np.load(self.text_feature_path)
     
-    def keep_objects(self, fraction, seed=0):
-        """Train on a fixed random subset of the training concepts (same subset for every subject): data-volume
-        control for fewer-source-subject runs (CVPR E8.8b). Object ids become local to the subset."""
-        idx = np.sort(np.random.default_rng(seed).choice(self.num_objects, int(round(fraction * self.num_objects)), replace=False))
-        self.eeg_data_list = [np.asarray(e[idx]) for e in self.eeg_data_list]
-        self.image_features = self.image_features[idx]
-        if hasattr(self, 'text_features'):
-            self.text_features = self.text_features[idx]
-        self.num_objects = len(idx)
-        self._image_group_indices = None
-        return idx
-
     def __len__(self):
         if self.cross_subject_average:
             return self.num_objects * self.num_images_per_object
@@ -636,11 +585,3 @@ if __name__ == '__main__':
     assert lo < hi, (lo, hi)  # a<b skews to fewer recordings, a>b to more
     print(f'cross_subject_average self-check OK (mean k: low-skew={lo:.1f} < high-skew={hi:.1f})')
 
-    # Euclidean Alignment: whitening R^-1/2 must make the per-subject channel covariance ~= I.
-    rng = _np.random.default_rng(0)
-    A = rng.standard_normal((8, 8)); Xf = _np.einsum('cd,ndt->nct', A, rng.standard_normal((500, 8, 40))).astype(_np.float32)
-    R = _np.einsum('nct,ndt->cd', Xf, Xf) / (Xf.shape[0] * Xf.shape[-1])
-    W = _inv_sqrt_cov(R); Xa = _np.einsum('cd,ndt->nct', W, Xf)
-    Ra = _np.einsum('nct,ndt->cd', Xa, Xa) / (Xa.shape[0] * Xa.shape[-1])
-    assert _np.allclose(Ra, _np.eye(8), atol=0.05), _np.abs(Ra - _np.eye(8)).max()
-    print('EA self-check OK (aligned covariance ~= I)')

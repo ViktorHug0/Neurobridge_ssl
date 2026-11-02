@@ -59,7 +59,7 @@ def cache(recipe, device=torch.device('cuda:0')):
             r = np.asarray(np.load(f'{DATA}/sub-{s:02d}/test.npy', mmap_mode='r').reshape(-1, 32, 120)[np.sort(order)])
             r = dict(zip(np.sort(order).tolist(), r))
             ds = build_test_dataset(cfg, [s])
-            G = ds.image_features[:, 0, :ds.target_dims[0]] if G is None else G
+            G = ds.image_features[:, 0] if G is None else G
             for i in order:
                 eeg, _, _, _, obj, _, _ = ds[int(i)]
                 xs.append(torch.as_tensor(eeg)); img.append(int(obj)); subj.append(s); idx.append(int(i))

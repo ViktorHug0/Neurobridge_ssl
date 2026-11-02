@@ -34,12 +34,6 @@ case "$A" in
   rmixm)  EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50}" ;;  # mainline optimiser, fp32
   reve6)  EXTRA="--eeg_encoder_type REVE --fm_no_pretrained --fm_arch_kwargs {\"depth\":6}
             --batch_size 504 $TOK" ;;
-  atm128_rsa1) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --rsa_lambda 1" ;;  # E8.5 RSA-loss screen (user 2026-10-22)
-  atm128_rsa5) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --rsa_lambda 5" ;;
-  atm128_iso1) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 1" ;;  # E8.11 split-half cross-subject isometry loss
-  atm128_iso5) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 5" ;;
-  atm128_iso1pr) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 1 --pr_lambda 5" ;;  # E8.11c iso1 collapsed (PR 1.8): add a collapse guard
-  atm128_iso03) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --iso_lambda 0.3" ;;  # iso5 killed at ep22 (zero-shot 12.9 vs 26.5)
   # E8.7 which image target space suits TTA (user goal 2026-10-22): ATM-128 recipe, target swapped
   atm128_cliph) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-H-14_final" ;;
   atm128_dino20) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/dinov2-giant_L20_mean" ;;
@@ -54,15 +48,7 @@ case "$A" in
             --tsconv_pool_stride 5 --tsconv_dropout 0.5 --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer44_mean_8bit" ;;  # E8.7d: final-layer effect on a 2nd architecture
   atm128_dino40) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --image_feature_dir /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/dinov2-giant_L40_mean" ;;
   # E8.8 source diversity: ATM-128 on only the first N_TRAIN of the 9 source subjects
-  # E8.8b volume control: all 9 subjects, 1/3 (2/3) of the training concepts = the data volume of atm128_n3 (n6)
-  atm128_v3) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --train_object_fraction 0.3333" ;;
-  atm128_v6) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --train_object_fraction 0.6667" ;;
   atm128_n3|atm128_n6) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100"; N=${A#atm128_n}; TRAIN=$(echo $TRAIN | cut -d" " -f1-$N) ;;
-  # E8.10 TTA vs training length: same recipes, extra checkpoints along the trajectory
-  atm128_ep) EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 128 --feature_dim 128 --num_epochs 100 --save_epoch_checkpoints 5 10 20 30 40 50 60 70 80 90 100" ;;
-  tsconv_ep) EXTRA="--eeg_encoder_type TSConv_parameterizable --tsconv_temporal_kernel 30 --tsconv_pool_kernel 51
-            --tsconv_pool_stride 5 --tsconv_dropout 0.5 --save_epoch_checkpoints 5 10 15 20 25 30 40 50" ;;
-  rmix_ep) EXTRA="--eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"patch\":50} $TOK --save_epoch_checkpoints 5 10 15 20 25 30 40 50" ;;
   atm64)  EXTRA="--eeg_encoder_type ATM --eeg_backbone_dim 64 --feature_dim 64" ;;  # atm128 shape halved (backbone + alignment 64), 50 epochs (user test)
   eegnet)   EXTRA="--eeg_encoder_type EEGNet" ;;        # E1.6 grid encoders, mainline recipe (base-quality analysis)
   eegproject) EXTRA="--eeg_encoder_type EEGProject" ;;

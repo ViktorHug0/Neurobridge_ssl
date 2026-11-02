@@ -14,17 +14,15 @@ UNIFIED_CSV="${RUN_ROOT}/sattc_summary.csv"
 SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/inter-subjects/mixup_20260330-225732/mix_raw_eeg_pairwise_linear_a0p5_seed3301}"
 HELD_OUT_SUBJECTS="${HELD_OUT_SUBJECTS:-1 2 3 4 5 6 7 8 9 10}"
 
-# SAW + CW + fixed-k CSLS sweep (override CSLS_KS / SAW_SHRINKS / CW_SHRINKS).
+# SAW + fixed-k CSLS sweep (override CSLS_KS / SAW_SHRINKS).
 CSLS_KS="${CSLS_KS:-2}"
 SAW_SHRINKS="${SAW_SHRINKS:- 0.85}"
-CW_SHRINKS="${CW_SHRINKS:-0.85}"
 
 mkdir -p "$RUN_ROOT"
 
 read -r -a HELD_OUT_SUBJECT_ARR <<< "$HELD_OUT_SUBJECTS"
 read -r -a CSLS_K_ARR <<< "$CSLS_KS"
 read -r -a SAW_SHRINK_ARR <<< "$SAW_SHRINKS"
-read -r -a CW_SHRINK_ARR <<< "$CW_SHRINKS"
 SOURCE_LABEL="$(basename "$SOURCE_RUN_DIR")"
 
 append_average_row() {
@@ -82,49 +80,43 @@ for K in "${CSLS_K_ARR[@]}"
 do
     for SHRINK in "${SAW_SHRINK_ARR[@]}"
     do
-        for CW_SHRINK in "${CW_SHRINK_ARR[@]}"
+        SHRINK_TAG="${SHRINK//./p}"
+        CONFIG_SUFFIX="saw_csls_k${K}_s${SHRINK_TAG}"
+        CONFIG_NAME="${SOURCE_LABEL}_${CONFIG_SUFFIX}"
+        CONFIG_RUN_DIR="${RUN_ROOT}/${CONFIG_NAME}"
+        mkdir -p "$CONFIG_RUN_DIR"
+
+        echo "=========================================================="
+        echo "Sweep: ${CONFIG_NAME}"
+        echo "Source checkpoints: ${SOURCE_RUN_DIR}"
+        echo "saw_csls  k=${K}  sattc_saw_shrink=${SHRINK}"
+        echo "=========================================================="
+
+        for SUB_ID in "${HELD_OUT_SUBJECT_ARR[@]}"
         do
-            SHRINK_TAG="${SHRINK//./p}"
-            CW_TAG="${CW_SHRINK//./p}"
-            CONFIG_SUFFIX="saw_cw_csls_k${K}_s${SHRINK_TAG}_cw${CW_TAG}"
-            CONFIG_NAME="${SOURCE_LABEL}_${CONFIG_SUFFIX}"
-            CONFIG_RUN_DIR="${RUN_ROOT}/${CONFIG_NAME}"
-            mkdir -p "$CONFIG_RUN_DIR"
+            OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
+            CHECKPOINT_DIR="$(find_checkpoint_dir "$SOURCE_RUN_DIR" "$OUTPUT_NAME")"
+            if [ -z "$CHECKPOINT_DIR" ]; then
+                echo "Could not find checkpoint directory for ${OUTPUT_NAME} in ${SOURCE_RUN_DIR}"
+                exit 1
+            fi
 
-            echo "=========================================================="
-            echo "Sweep: ${CONFIG_NAME}"
-            echo "Source checkpoints: ${SOURCE_RUN_DIR}"
-            echo "saw_csls + cw  k=${K}  sattc_saw_shrink=${SHRINK}  sattc_cw_shrink=${CW_SHRINK}"
-            echo "=========================================================="
-
-            for SUB_ID in "${HELD_OUT_SUBJECT_ARR[@]}"
-            do
-                OUTPUT_NAME=$(printf "sub-%02d" "$SUB_ID")
-                CHECKPOINT_DIR="$(find_checkpoint_dir "$SOURCE_RUN_DIR" "$OUTPUT_NAME")"
-                if [ -z "$CHECKPOINT_DIR" ]; then
-                    echo "Could not find checkpoint directory for ${OUTPUT_NAME} in ${SOURCE_RUN_DIR}"
-                    exit 1
-                fi
-
-                python3 evaluate.py \
-                    --checkpoint_dir "$CHECKPOINT_DIR" \
-                    --output_dir "$CONFIG_RUN_DIR" \
-                    --output_name "$OUTPUT_NAME" \
-                    --eval_mode saw_csls \
-                    --test_subject_id "$SUB_ID" \
-                    --batch_size "$BATCH_SIZE" \
-                    --num_workers "$NUM_WORKERS" \
-                    --device "$DEVICE" \
-                    --sattc_csls_k "$K" \
-                    --sattc_saw_shrink "$SHRINK" \
-                    --sattc_cw \
-                    --sattc_cw_shrink "$CW_SHRINK"
-            done
-
-            python3 compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
-            append_average_row "$CONFIG_NAME" "$CONFIG_RUN_DIR"
+            python3 evaluate.py \
+                --checkpoint_dir "$CHECKPOINT_DIR" \
+                --output_dir "$CONFIG_RUN_DIR" \
+                --output_name "$OUTPUT_NAME" \
+                --eval_mode saw_csls \
+                --test_subject_id "$SUB_ID" \
+                --batch_size "$BATCH_SIZE" \
+                --num_workers "$NUM_WORKERS" \
+                --device "$DEVICE" \
+                --sattc_csls_k "$K" \
+                --sattc_saw_shrink "$SHRINK"
         done
+
+        python3 compute_avg_results.py --result_dir "$CONFIG_RUN_DIR" --output_name "inter_subject_summary.csv"
+        append_average_row "$CONFIG_NAME" "$CONFIG_RUN_DIR"
     done
 done
 
-echo "SAW+CW+CSLS eval sweep completed: ${UNIFIED_CSV}"
+echo "SAW+CSLS eval sweep completed: ${UNIFIED_CSV}"

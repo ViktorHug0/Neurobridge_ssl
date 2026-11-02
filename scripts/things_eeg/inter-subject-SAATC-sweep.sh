@@ -92,16 +92,14 @@ run_spec() {
     local eval_mode="$2"
     local csls_k="$3"
     local saw_shrink="$4"
-    local cw_enabled="$5"
-    local cw_shrink="$6"
-    local sinkhorn_enabled="$7"
-    local sinkhorn_tau="$8"
-    local sinkhorn_iters="$9"
-    local soft_enabled="${10}"
-    local soft_steps="${11}"
-    local soft_power="${12}"
-    local saw_no_renorm="${13}"
-    local soft_norm_inputs="${14}"
+    local sinkhorn_enabled="$5"
+    local sinkhorn_tau="$6"
+    local sinkhorn_iters="$7"
+    local soft_enabled="$8"
+    local soft_steps="$9"
+    local soft_power="${10}"
+    local saw_no_renorm="${11}"
+    local soft_norm_inputs="${12}"
 
     local config_name="${SOURCE_LABEL}_$(sanitize_tag "$tag")"
     local config_run_dir="${RUN_ROOT}/${config_name}"
@@ -109,7 +107,7 @@ run_spec() {
 
     echo "=========================================================="
     echo "Sweep: ${config_name}"
-    echo "tag=${tag} mode=${eval_mode} k=${csls_k} saw=${saw_shrink} renorm=$((1 - saw_no_renorm)) cw=${cw_enabled}/${cw_shrink} sinkhorn=${sinkhorn_enabled}/${sinkhorn_tau}/${sinkhorn_iters} soft=${soft_enabled}/${soft_steps}/${soft_power} soft_norm=${soft_norm_inputs}"
+    echo "tag=${tag} mode=${eval_mode} k=${csls_k} saw=${saw_shrink} renorm=$((1 - saw_no_renorm)) sinkhorn=${sinkhorn_enabled}/${sinkhorn_tau}/${sinkhorn_iters} soft=${soft_enabled}/${soft_steps}/${soft_power} soft_norm=${soft_norm_inputs}"
     echo "=========================================================="
 
     for SUB_ID in "${HELD_OUT_SUBJECT_ARR[@]}"
@@ -141,9 +139,6 @@ run_spec() {
         if [ "$eval_mode" = "saw_csls" ]; then
             EXTRA_ARGS+=(--sattc_csls_k "$csls_k")
         fi
-        if [ "$cw_enabled" = "1" ]; then
-            EXTRA_ARGS+=(--sattc_cw --sattc_cw_shrink "$cw_shrink")
-        fi
         if [ "$sinkhorn_enabled" = "1" ]; then
             EXTRA_ARGS+=(--sattc_sinkhorn --sattc_sinkhorn_tau "$sinkhorn_tau" --sattc_sinkhorn_iters "$sinkhorn_iters")
         fi
@@ -161,8 +156,8 @@ run_spec() {
     append_average_row "$config_name" "$config_run_dir"
 }
 
-# run_spec "exp1_k1_ablate_cw_saw_no_renorm" "saw_csls" "1" "0.85" "0" "none" "1" "0.08" "30" "1" "7" "1.0" "1" "0"
-# run_spec "exp2_k1_ablate_cw_soft_norm_inputs" "saw_csls" "1" "0.85" "0" "none" "1" "0.08" "30" "1" "7" "1.0" "0" "1"
+# run_spec "exp1_k1_ablate_cw_saw_no_renorm" "saw_csls" "1" "0.85" "1" "0.08" "30" "1" "7" "1.0" "1" "0"
+# run_spec "exp2_k1_ablate_cw_soft_norm_inputs" "saw_csls" "1" "0.85" "1" "0.08" "30" "1" "7" "1.0" "0" "1"
 
 for SAW_SHRINK in ${SAW_SHRINK_VALUES}
 do
@@ -177,7 +172,7 @@ do
                     for SINKHORN_ITERS in ${SINKHORN_ITER_VALUES}
                     do
                         TAG="saw${SAW_SHRINK}_k${K}_tau${TAU}_steps${SOFT_STEPS}_pow${SOFT_POWER}_iters${SINKHORN_ITERS}"
-                        run_spec "$(sanitize_tag "$TAG")" "saw_csls" "$K" "$SAW_SHRINK" "0" "none" "1" "$TAU" "$SINKHORN_ITERS" "1" "$SOFT_STEPS" "$SOFT_POWER" "0" "0"
+                        run_spec "$(sanitize_tag "$TAG")" "saw_csls" "$K" "$SAW_SHRINK" "1" "$TAU" "$SINKHORN_ITERS" "1" "$SOFT_STEPS" "$SOFT_POWER" "0" "0"
                     done
                 done
             done
@@ -185,6 +180,6 @@ do
     done
 done
 
-# run_spec "exp7_k1_ablate_cw_steps_3_power_1p5_saw_no_renorm" "saw_csls" "1" "0.85" "0" "none" "1" "0.08" "30" "1" "3" "1.5" "1" "0"
+# run_spec "exp7_k1_ablate_cw_steps_3_power_1p5_saw_no_renorm" "saw_csls" "1" "0.85" "1" "0.08" "30" "1" "3" "1.5" "1" "0"
 
 echo "Targeted SAATC sweep completed: ${UNIFIED_CSV}"

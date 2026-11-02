@@ -31,10 +31,6 @@ from module.eeg_encoder.model import (
 )
 from module.loss import ContrastiveLoss
 from module.util import retrieve_all
-from module.inductive_covariance import (
-    InductiveQueryCovarianceAlign,
-    estimate_source_covariances,
-)
 from module.projector import *
 from module.sampler import GroupedImageBatchSampler
 from module.training_plots import save_probe_plot, save_training_plot
@@ -72,28 +68,20 @@ def _compute_cross_modal_loss_impl(
     positive_mask,
     use_multi_positive,
 ):
-    eeg_confidence = None
-    if isinstance(eeg_feature, dict):
-        eeg_confidence = eeg_feature.get('confidence')
-        eeg_feature = eeg_feature['feature']
     if use_multi_positive:
         loss_contrastive = criterion.multi_positive_pair_loss(
             eeg_feature,
             image_feature,
             positive_mask,
-            query_scale=eeg_confidence,
         )
 
         if criterion.alpha != 1.0:
-            if criterion.mse_on_raw:
-                loss_mse = criterion.criterion_mse(eeg_feature, image_feature)
-            else:
-                eeg_for_mse, image_for_mse = criterion._normalize_inputs(eeg_feature, image_feature)
-                loss_mse = criterion.criterion_mse(eeg_for_mse, image_for_mse)
+            eeg_for_mse, image_for_mse = criterion._normalize_inputs(eeg_feature, image_feature)
+            loss_mse = criterion.criterion_mse(eeg_for_mse, image_for_mse)
             return criterion.alpha * loss_contrastive + (1 - criterion.alpha) * loss_mse
         return loss_contrastive
 
-    return criterion(eeg_feature, image_feature, eeg_confidence=eeg_confidence)
+    return criterion(eeg_feature, image_feature)
 
 
 def compute_cross_modal_loss(
@@ -110,17 +98,10 @@ def compute_cross_modal_loss(
             positive_mask, use_multi_positive,
         )
 
-    if isinstance(eeg_feature, dict):
-        eeg_feature = dict(eeg_feature)
-        eeg_feature['feature'] = eeg_feature['feature'].float()
-        if eeg_feature.get('confidence') is not None:
-            eeg_feature['confidence'] = eeg_feature['confidence'].float()
-    else:
-        eeg_feature = eeg_feature.float()
     with torch.autocast(device_type='cuda', enabled=False):
         return _compute_cross_modal_loss_impl(
             criterion,
-            eeg_feature,
+            eeg_feature.float(),
             image_feature.float(),
             positive_mask,
             use_multi_positive,
@@ -147,11 +128,6 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             channels_num=channels_num,
             d_model=getattr(args, 'atm_d_model', 250),
             d_ff=getattr(args, 'atm_d_ff', 256),
-            temporal_filters=getattr(args, 'atm_temporal_filters', 40),
-            temporal_kernel=getattr(args, 'atm_temporal_kernel', 25),
-            pool_kernel=getattr(args, 'atm_pool_kernel', 51),
-            spatial_filters=getattr(args, 'atm_spatial_filters', 40),
-            projection_filters=getattr(args, 'atm_projection_filters', 40),
             domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
         )
     if args.eeg_encoder_type == 'EEGNet':
@@ -176,7 +152,6 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             activation=args.tsconv_activation,
             dropout=args.tsconv_dropout,
             head_dropout=head_dropout,
-            power_branch=getattr(args, 'tsconv_power_branch', False),
             domain_batch_norm_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
         )
     if args.eeg_encoder_type == 'EEGConformer':
@@ -206,7 +181,6 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
                 pool_kernel=getattr(args, 'tsconv_pool_kernel', 51),
                 pool_stride=getattr(args, 'tsconv_pool_stride', 5),
                 backbone_dim=getattr(args, 'tsconv_backbone_dim', 0),
-                power_branch=getattr(args, 'tsconv_power_branch', False),
                 domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
             )
         extra.update(json.loads(getattr(args, 'arch_kwargs', None) or '{}'))
@@ -214,20 +188,6 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num, **extra
         )
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
-
-
-def attach_lora(linear, rank):
-    """HISTORY.md D5: low-rank fine-tuning of one nn.Linear in place: forward uses W + B A (A random, B zero, so the
-    model starts unchanged); state_dict() stores the merged weight under the usual key and drops the adapters, so
-    checkpoints load into the plain architecture (score_track1, grader)."""
-    linear.lora_A = nn.Parameter(torch.randn(rank, linear.in_features, device=linear.weight.device) / math.sqrt(linear.in_features))
-    linear.lora_B = nn.Parameter(torch.zeros(linear.out_features, rank, device=linear.weight.device))
-    linear.forward = lambda x: F.linear(x, linear.weight + linear.lora_B @ linear.lora_A, linear.bias)
-
-    def merged(module, destination, prefix, local_metadata):
-        destination[prefix + 'weight'] = (module.weight + module.lora_B @ module.lora_A).detach()
-        destination.pop(prefix + 'lora_A', None); destination.pop(prefix + 'lora_B', None)
-    linear._register_state_dict_hook(merged)
 
 
 def build_projector(projector_type, input_dim, output_dim, activation='none'):
@@ -288,9 +248,6 @@ def compute_alignment_sparsity_stats(features):
 
 
 def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
-    covariance_aligner = getattr(args, '_inductive_covariance_aligner', None)
-    if covariance_aligner is not None:
-        eeg_batch = covariance_aligner(eeg_batch, subject_id_batch)
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
     elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable']:
@@ -432,16 +389,6 @@ class _GroupedSubset(Subset):
         return out
 
 
-class EEGConfidenceHead(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
-        self.net = nn.Linear(input_dim, 1)
-        self.softplus = nn.Softplus()
-
-    def forward(self, x):
-        return self.softplus(self.net(x)).squeeze(-1)
-
-
 def collect_trainable_parameters(modules):
     params = []
     seen = set()
@@ -492,59 +439,21 @@ if __name__ == '__main__':
     parser.add_argument('--t_learnable', action='store_true')
     parser.add_argument('--softplus', action='store_true')
     parser.add_argument('--alpha', default=1.0, type=float)
-    parser.add_argument('--mse_on_raw', action='store_true', help='ENIGMA-faithful: compute the MSE term on the UNnormalized CLIP target (learns magnitude/geometry; InfoNCE stays normalized). ATM/repo default normalizes the MSE target -> cosine-only -> needs a diffusion prior for magnitude.')
     parser.add_argument('--img_l2norm', action='store_true')
     parser.add_argument('--eeg_l2norm', action='store_true')
-    parser.add_argument(
-        '--eeg_confidence_mode',
-        type=str,
-        choices=['none', 'detached_prenorm', 'learned'],
-        default='none',
-        help='optional EEG-side confidence scaling while keeping alignment geometry L2-normalized',
-    )
     parser.add_argument('--multi_positive_loss', action='store_true', help='enable multi-positive EEG-image contrastive loss')
     parser.add_argument('--grouped_batch_sampler', action='store_true', help='sample multiple subjects per exact image in each batch')
     parser.add_argument('--samples_per_image', default=4, type=int, help='number of samples per exact image for grouped batches')
     parser.add_argument('--subject_mixup_within', action='store_true', help='rebuttal arm: Beta-mix 2 of a subject''s OWN reps for the same stimulus (within-subject; isolates the cross-subject factor). Needs un-averaged reps (no --data_average).')
-    parser.add_argument('--subject_ea_align', action='store_true', help='rebuttal arm: per-subject Euclidean Alignment (channel-covariance whitening) of raw EEG at load, applied to train/val/test')
-    parser.add_argument('--inductive_covariance_align', action='store_true', help='source-only covariance prior blended with each query covariance independently before the EEG encoder')
-    parser.add_argument('--inductive_covariance_alpha', default=0.4, type=float, help='single-query covariance weight for --inductive_covariance_align')
-    parser.add_argument('--inductive_covariance_shrinkage', default=0.25, type=float, help='identity shrinkage after source/query covariance blending')
-    parser.add_argument('--inductive_covariance_ref_trials', default=2048, type=int, help='deterministic training trials sampled per source covariance estimate')
-    parser.add_argument('--inductive_covariance_reference_cache', default='', type=str, help='optional fold-specific cache for source covariance estimates')
     parser.add_argument('--cross_subject_average', action='store_true', help='train on synthetic per-image trials, each the mean of a random-size (Beta-drawn) random subset of cross-subject raw recordings')
     parser.add_argument('--subject_mixup_mode', type=str, choices=['none', 'raw_eeg', 'embedding'], default='none', help='cross-subject same-stimulus convex mixing mode')
     parser.add_argument('--mixup_type', type=str, choices=['pairwise', 'group'], default='pairwise', help='pairwise mixing or per-stimulus group mixing')
     parser.add_argument('--subject_mixup_alpha', default=1.0, type=float, help='beta(alpha, alpha) coefficient for cross-subject same-stimulus mixup')
     parser.add_argument('--subject_mixup_reg_lambda', default=0.0, type=float, help='weight for raw_eeg pairwise mixup embedding regularization')
-    parser.add_argument('--single_emb_stop_grad', action='store_true', help='detach original single-subject embeddings in mixup regularization')
     parser.add_argument('--op_transfer_prob', default=0.0, type=float, help='probability per batch of re-rendering raw EEG through another subject`s channel-mixing operator (counterfactual do(subject:=t))')
-    parser.add_argument('--pr_lambda', default=0.0, type=float, help='weight of the collapse guard relu(1/PR - 1/pr_floor) on the batch EEG cloud (CVPR E8.11c)')
-    parser.add_argument('--iso_lambda', default=0.0, type=float, help='weight of the cross-subject isometry loss: mean residual of the best rotation between two source subjects\' embeddings of the batch\'s shared images (CVPR E8.11); logged in REL')
-    parser.add_argument('--rsa_lambda', default=0.0, type=float, help='weight of 1 - RSA (Pearson corr of centred EEG-EEG vs image-image cosines, same-image pairs dropped; CVPR E8.4); logged in REL')
-    parser.add_argument('--auxiliary_alignment_dims', default='', type=str,
-                        help='comma-separated training-only alignment widths sharing one encoder')
-    parser.add_argument('--auxiliary_alignment_lambda', default=0.0, type=float,
-                        help='weight of training-only multi-resolution contrastive supervision')
-    parser.add_argument(
-        '--auxiliary_image_targets', action='store_true',
-        help=(
-            'interpret comma-separated --image_feature_dir entries as one primary '
-            'inference target followed by training-only semantic targets; auxiliary '
-            'heads are not saved in the inference checkpoint'
-        ),
-    )
-    parser.add_argument('--matryoshka_dims', default='', type=str,
-                        help='comma-separated prefix widths for nested contrastive supervision of the final embedding')
-    parser.add_argument('--matryoshka_lambda', default=0.0, type=float,
-                        help='weight of nested-prefix contrastive supervision (single projector and final embedding)')
-    parser.add_argument('--matryoshka_epochs', default=0, type=int,
-                        help='apply nested-prefix supervision for first N epochs (0 = all epochs)')
     parser.add_argument('--eval_mode', type=str, choices=['plain_cosine', 'saw', 'csls', 'saw_csls'], default='plain_cosine', help='test-time retrieval: cosine, SAW whitening, or SAW + fixed-k CSLS')
     parser.add_argument('--sattc_saw_shrink', default=0.2, type=float, help='covariance shrinkage for subject-adaptive whitening (SAW) during evaluation')
     parser.add_argument('--sattc_csls_k', default=2, type=int, help='fixed neighborhood size k for CSLS after SAW (eval_mode saw_csls)')
-    parser.add_argument('--sattc_cw', action='store_true', help='apply candidate-side whitening (CW) to the retrieval bank during evaluation')
-    parser.add_argument('--sattc_cw_shrink', default=0.05, type=float, help='covariance shrinkage for candidate-side whitening (CW)')
     parser.add_argument('--val_subject_id', default=None, type=int, help='subject ID used for validation model selection')
     parser.add_argument('--val_concept_ratio', default=0.0, type=float, help='hold out this fraction of TRAINING CONCEPTS (all their images, all training subjects) as a validation split for checkpoint selection; keeps all training subjects, unlike --val_subject_id')
     parser.add_argument('--save_testsel_checkpoint', action='store_true', help='additionally save checkpoint_testsel_best.pth (best held-out test loss) alongside the selected checkpoint, as a matched control for val-selected runs')
@@ -577,15 +486,6 @@ if __name__ == '__main__':
             '0 disables and nonzero values require --select_best_on val'
         ),
     )
-    parser.add_argument(
-        '--early_stop_min_delta',
-        type=float,
-        default=0.0,
-        help=(
-            'minimum source-validation loss decrease that resets early-stop '
-            'patience; checkpoint selection still retains every exact improvement'
-        ),
-    )
     parser.add_argument('--subject_probe_holdout', action='store_true', help='per-subject held-out split; train linear subject probes (baseline only)')
     parser.add_argument('--subject_probe_holdout_ratio', type=float, default=0.10, help='fraction per train subject reserved for probe validation')
     parser.add_argument('--subject_probe_interval', type=int, default=1, help='train/eval subject probes every N epochs')
@@ -602,7 +502,6 @@ if __name__ == '__main__':
     )
     parser.add_argument('--init_checkpoint', default='', type=str,
                         help='initialize the encoder and projectors from a compatible training checkpoint')
-    parser.add_argument('--lora_rank', default=0, type=int, help='rank of LoRA adapters on the Linear layers matching "proj_eeg|eproj" (HISTORY.md D5)')
     parser.add_argument('--eval_unique_gallery', action='store_true',
                         help='rank val/test queries against each DISTINCT stimulus once instead of '
                              'one row per presentation; without it repeated presentations put '
@@ -610,7 +509,6 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_backbone_dim', default=0, type=int, help='width of the TSConv residual trunk before a separate trunk->feature_dim layer (0 = trunk at feature_dim, no extra layer); NeuralBench Track1TSConv uses 1024')
     parser.add_argument('--tsconv_temporal_filters', default=40, type=int, help='temporal filter count for TSConv_parameterizable')
     parser.add_argument('--tsconv_temporal_kernel', default=25, type=int, help='temporal kernel width for TSConv_parameterizable')
-    parser.add_argument('--tsconv_power_branch', action='store_true', help='TSConv_parameterizable: add a ShallowConvNet band-power branch (square -> pool -> log) before the trunk')
     parser.add_argument('--tsconv_pool_kernel', default=51, type=int, help='temporal average-pooling kernel for TSConv_parameterizable')
     parser.add_argument('--arch_kwargs', default='', type=str, help='JSON dict of constructor kwargs for registry encoders (ortho_encoders.py)')
     parser.add_argument('--tsconv_pool_stride', default=5, type=int, help='temporal average-pooling stride for TSConv_parameterizable')
@@ -622,11 +520,6 @@ if __name__ == '__main__':
     parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
     parser.add_argument('--atm_d_model', default=250, type=int, help='ATM channel-token hidden dimension')
     parser.add_argument('--atm_d_ff', default=256, type=int, help='ATM feed-forward hidden dimension')
-    parser.add_argument('--atm_temporal_filters', default=40, type=int, help='ATM readout temporal filter count')
-    parser.add_argument('--atm_temporal_kernel', default=25, type=int, help='ATM readout temporal kernel width')
-    parser.add_argument('--atm_pool_kernel', default=51, type=int, help='ATM readout pooling kernel width')
-    parser.add_argument('--atm_spatial_filters', default=40, type=int, help='ATM readout spatial filter count')
-    parser.add_argument('--atm_projection_filters', default=40, type=int, help='ATM readout projection filter count')
     parser.add_argument('--image_aug', action='store_true')
     parser.add_argument('--image_test_aug', action='store_true')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
@@ -650,8 +543,6 @@ if __name__ == '__main__':
     parser.add_argument('--aug_image_feature_dirs', default=[], nargs='+', type=str, help='where your augmentation image feature are')
     parser.add_argument('--text_feature_dir', default='./data/things_eeg/text_feature/BLIP2', type=str, help='where your text feature are')
     parser.add_argument('--save_weights', action='store_true', help='whether to save model weights')
-    parser.add_argument('--train_object_fraction', default=1.0, type=float, help='train on this fraction of the training concepts (fixed seed-0 subset, all subjects); CVPR E8.8b volume control')
-    parser.add_argument('--save_epoch_checkpoints', nargs='*', type=int, default=[], help='also save checkpoint_epXXX.pth at these epochs (1-based; CVPR E8.10 TTA-vs-training-length curves)')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
     args = parser.parse_args()
     if args.subject_mixup_reg_lambda < 0:
@@ -775,93 +666,10 @@ if __name__ == '__main__':
         args.frozen_eeg_prior,
         cross_subject_average=args.cross_subject_average,
         subject_mixup_within=args.subject_mixup_within,
-        subject_ea_align=args.subject_ea_align,
     )
-    if args.train_object_fraction < 1:  # CVPR E8.8b: same data volume as fewer subjects, all subjects kept
-        log(f'train_object_fraction {args.train_object_fraction}: {len(train_dataset.keep_objects(args.train_object_fraction))} training concepts')
-
-    if args.inductive_covariance_align:
-        if args.subject_ea_align:
-            raise ValueError(
-                '--inductive_covariance_align is incompatible with --subject_ea_align'
-            )
-        if (
-            args.inductive_covariance_reference_cache
-            and os.path.isfile(args.inductive_covariance_reference_cache)
-        ):
-            cached = torch.load(
-                args.inductive_covariance_reference_cache,
-                map_location=device,
-                weights_only=True,
-            )
-            source_covariances = {
-                int(subject): covariance.to(device)
-                for subject, covariance in cached.items()
-            }
-        else:
-            source_covariances = estimate_source_covariances(
-                train_dataset.eeg_data_list,
-                args.train_subject_ids,
-                device,
-                max_trials_per_subject=args.inductive_covariance_ref_trials,
-            )
-            if args.inductive_covariance_reference_cache:
-                os.makedirs(
-                    os.path.dirname(args.inductive_covariance_reference_cache),
-                    exist_ok=True,
-                )
-                torch.save(
-                    {
-                        subject: covariance.cpu()
-                        for subject, covariance in source_covariances.items()
-                    },
-                    args.inductive_covariance_reference_cache,
-                )
-        args._inductive_covariance_aligner = InductiveQueryCovarianceAlign(
-            source_covariances,
-            alpha=args.inductive_covariance_alpha,
-            shrinkage=args.inductive_covariance_shrinkage,
-        ).to(device)
-        log(
-            'Inductive covariance alignment: source-only leave-one-source-out train '
-            f'prior, all-source unseen prior, alpha={args.inductive_covariance_alpha}, '
-            f'shrinkage={args.inductive_covariance_shrinkage}, '
-            f'reference_trials={args.inductive_covariance_ref_trials}'
-        )
 
     eeg_sample_points = train_dataset.num_sample_points
-    target_dims = getattr(
-        train_dataset, 'target_dims', [train_dataset.image_features.shape[-1]]
-    )
-    if args.auxiliary_image_targets:
-        if len(target_dims) < 2:
-            raise ValueError(
-                '--auxiliary_image_targets requires at least two comma-separated '
-                '--image_feature_dir entries'
-            )
-        image_feature_dim = target_dims[0]
-        inference_image_feature_dir = str(args.image_feature_dir).split(',')[0]
-        log(
-            'Semantic amalgamation targets: primary_dim='
-            f'{image_feature_dim}, auxiliary_dims={target_dims[1:]}'
-        )
-    else:
-        image_feature_dim = train_dataset.image_features.shape[-1]
-        inference_image_feature_dir = args.image_feature_dir
-    target_offsets = np.cumsum([0, *target_dims]).tolist()
-
-    def primary_image_target(features):
-        """Return the only image block retained by the inference checkpoint."""
-        if not args.auxiliary_image_targets:
-            return features
-        return features[..., :image_feature_dim]
-
-    def auxiliary_image_target_blocks(features):
-        return [
-            features[..., target_offsets[index]:target_offsets[index + 1]]
-            for index in range(1, len(target_dims))
-        ]
-
+    image_feature_dim = train_dataset.image_features.shape[-1]
     backbone_feature_dim = args.eeg_backbone_dim if args.eeg_backbone_dim > 0 else image_feature_dim
     channels_num = train_dataset.channels_num
     log(f'EEG sample points: {eeg_sample_points}')
@@ -1004,8 +812,6 @@ if __name__ == '__main__':
         raise ValueError("--early_stop_patience must be nonnegative.")
     if args.early_stop_patience > 0 and args.select_best_on != 'val':
         raise ValueError("--early_stop_patience requires --select_best_on val.")
-    if args.early_stop_min_delta < 0:
-        raise ValueError("--early_stop_min_delta must be nonnegative.")
     if args.val_subject_id is not None:
         if args.val_subject_id in args.test_subject_ids:
             raise ValueError("val_subject_id must be different from test_subject_ids.")
@@ -1029,7 +835,6 @@ if __name__ == '__main__':
             args.image_test_aug,
             False,
             args.frozen_eeg_prior,
-            subject_ea_align=args.subject_ea_align,
         )
         val_dataloader = DataLoader(val_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
@@ -1050,26 +855,20 @@ if __name__ == '__main__':
         args.image_test_aug,
         False,
         args.frozen_eeg_prior,
-        subject_ea_align=args.subject_ea_align,
     )
     test_dataloader = DataLoader(test_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
 
     inference_keys = [
         'eeg_encoder_type', 'eeg_data_dir', 'image_feature_dir',
         'projector', 'projector_activation', 'feature_dim', 'eeg_backbone_dim', 'time_window', 'selected_channels',
-        'eeg_confidence_mode',
         'tsconv_temporal_filters', 'tsconv_temporal_kernel', 'tsconv_pool_kernel', 'tsconv_pool_stride',
         'tsconv_spatial_filters', 'tsconv_projection_filters', 'tsconv_activation', 'tsconv_dropout',
-        'tsconv_head_dropout', 'tsconv_power_branch',
+        'tsconv_head_dropout',
         'arch_kwargs', 'fm_arch_kwargs',
         'tsconv_domain_bn_boundary',
-        'inductive_covariance_align', 'inductive_covariance_alpha',
-        'inductive_covariance_shrinkage', 'inductive_covariance_ref_trials',
-        'eval_mode', 'sattc_saw_shrink', 'sattc_csls_k', 'sattc_cw', 'sattc_cw_shrink',
+        'eval_mode', 'sattc_saw_shrink', 'sattc_csls_k',
     ]
     inference_config = {k: args_dict[k] for k in inference_keys}
-    # Training-only semantic targets must never leak into standalone inference.
-    inference_config['image_feature_dir'] = inference_image_feature_dir
     inference_config['feature_dim'] = int(str(args.feature_dim).split(',')[0])
     inference_config['architecture'] = 'baseline'
     inference_config['eeg_sample_points'] = eeg_sample_points
@@ -1084,11 +883,6 @@ if __name__ == '__main__':
     log(str(model))
 
     projector_activation = args.projector_activation
-    if len(target_dims) > 1 and not args.auxiliary_image_targets:
-        raise ValueError(
-            'comma-separated --image_feature_dir entries require '
-            '--auxiliary_image_targets'
-        )
     args.feature_dim = int(str(args.feature_dim).split(',')[0])
     eeg_projector = build_projector(
         args.projector, backbone_feature_dim, args.feature_dim,
@@ -1118,21 +912,6 @@ if __name__ == '__main__':
         text_projector.load_state_dict(initial['text_projector_state_dict'])
         log(f'Initialized all modules from {args.init_checkpoint}')
         del initial
-
-    if args.lora_rank > 0:  # HISTORY.md D5: rank-r updates W + B A on the nn.Linear layers matching proj_eeg|eproj
-        import re
-        for prefix, root in (('model.', model), ('eproj', eeg_projector)):
-            for name, module in root.named_modules():
-                full = prefix + name
-                if isinstance(module, nn.Linear) and re.search('proj_eeg|eproj', full):
-                    attach_lora(module, args.lora_rank)
-                    log(f'LoRA rank {args.lora_rank} on {full} {tuple(module.weight.shape)}')
-        # only the adapters train; the checkpoint stores the merged weights (BN running stats adapt anyway)
-        for prefix, module in (('model.', model), ('eproj.', eeg_projector)):
-            for name, parameter in module.named_parameters():
-                parameter.requires_grad = re.search('lora_', prefix + name) is not None
-        log(f'LoRA adapters only: '
-            f'{sum(p.numel() for m in (model, eeg_projector) for p in m.parameters() if p.requires_grad):,} trainable parameters')
 
     align_dim = args.feature_dim if args.projector != 'direct' else backbone_feature_dim
     probe_class_map = {sid: idx for idx, sid in enumerate(sorted(args.train_subject_ids))}
@@ -1168,7 +947,6 @@ if __name__ == '__main__':
         args.softplus,
         logit_scale_max=args.logit_scale_max,
         asymmetric=args.asymmetric_loss,
-        mse_on_raw=args.mse_on_raw,
     ).to(device)
     if args.init_checkpoint:  # the learned temperature belongs to the head
         saved = torch.load(args.init_checkpoint, map_location=device, weights_only=False).get('criterion_state_dict')
@@ -1176,76 +954,10 @@ if __name__ == '__main__':
             criterion.load_state_dict(saved)
             log(f'Initialized the loss (logit scale) from {args.init_checkpoint}')
     log(str(criterion))
-    auxiliary_dims = [
-        int(value) for value in str(args.auxiliary_alignment_dims).split(',')
-        if value.strip()
-    ]
-    matryoshka_dims = sorted(set(
-        int(value) for value in str(args.matryoshka_dims).split(',')
-        if value.strip()
-    ))
-    if args.matryoshka_lambda > 0:
-        if not matryoshka_dims:
-            raise ValueError('--matryoshka_dims is required when --matryoshka_lambda > 0')
-        if any(dim <= 0 or dim >= align_dim for dim in matryoshka_dims):
-            raise ValueError(
-                f'Matryoshka dimensions must be in [1, {align_dim - 1}]'
-            )
-        log(
-            f'Nested final-embedding supervision: dims={matryoshka_dims}, '
-            f'lambda={args.matryoshka_lambda}'
-        )
-    auxiliary_eeg_projectors = None
-    auxiliary_img_projectors = None
-    if args.auxiliary_alignment_lambda > 0:
-        if not auxiliary_dims:
-            raise ValueError(
-                '--auxiliary_alignment_dims is required when '
-                '--auxiliary_alignment_lambda > 0'
-            )
-        if any(dim <= 0 for dim in auxiliary_dims):
-            raise ValueError('Auxiliary alignment dimensions must be positive')
-        # Keep all later stochastic training decisions matched to the control.
-        auxiliary_rng = torch.random.get_rng_state()
-        if args.auxiliary_image_targets:
-            auxiliary_target_dims = target_dims[1:]
-            if len(auxiliary_dims) == 1:
-                auxiliary_dims = auxiliary_dims * len(auxiliary_target_dims)
-            if len(auxiliary_dims) != len(auxiliary_target_dims):
-                raise ValueError(
-                    '--auxiliary_alignment_dims must have one value or one value '
-                    'per training-only image target'
-                )
-        else:
-            auxiliary_target_dims = [image_feature_dim] * len(auxiliary_dims)
-        auxiliary_eeg_projectors = nn.ModuleList([
-            ProjectorLinear(backbone_feature_dim, dim) for dim in auxiliary_dims
-        ]).to(device)
-        auxiliary_img_projectors = nn.ModuleList([
-            ProjectorLinear(target_dim, dim)
-            for target_dim, dim in zip(auxiliary_target_dims, auxiliary_dims)
-        ]).to(device)
-        torch.random.set_rng_state(auxiliary_rng)
-        auxiliary_params = sum(
-            parameter.numel()
-            for module in (auxiliary_eeg_projectors, auxiliary_img_projectors)
-            for parameter in module.parameters()
-        )
-        log(
-            f'Training-only auxiliary alignment heads: dims={auxiliary_dims}, '
-            f'lambda={args.auxiliary_alignment_lambda}, '
-            f'parameters={auxiliary_params / 1e6:.2f}M'
-        )
-    eeg_confidence_head = None
-    if args.eeg_confidence_mode == 'learned':
-        eeg_confidence_head = EEGConfidenceHead(align_dim).to(device)
-        log(f'EEG confidence head parameters: {sum(p.numel() for p in eeg_confidence_head.parameters() if p.requires_grad) / 1e6:.2f}M')
 
     sattc_params = {
         'saw_shrink': args.sattc_saw_shrink,
         'csls_k': args.sattc_csls_k,
-        'cw_enabled': args.sattc_cw,
-        'cw_shrink': args.sattc_cw_shrink,
     }
 
     total_epochs = args.num_epochs
@@ -1256,11 +968,6 @@ if __name__ == '__main__':
         'img_projector': img_projector,
         'text_projector': text_projector,
     }
-    if eeg_confidence_head is not None:
-        module_registry['eeg_confidence_head'] = eeg_confidence_head
-    if auxiliary_eeg_projectors is not None:
-        module_registry['auxiliary_eeg_projectors'] = auxiliary_eeg_projectors
-        module_registry['auxiliary_img_projectors'] = auxiliary_img_projectors
     trainable_parameters = (
         collect_trainable_parameters(list(module_registry.values()))
         + ([p for p in criterion.parameters() if p.requires_grad] if args.t_learnable else [])
@@ -1318,17 +1025,6 @@ if __name__ == '__main__':
             anneal_strategy='cos',
         )
 
-    def forward_architecture(eeg_backbone_batch):
-        eeg_feature = eeg_projector(eeg_backbone_batch)
-        out = {'eeg_feature': eeg_feature}
-        if args.eeg_confidence_mode == 'detached_prenorm':
-            out['eeg_confidence'] = eeg_feature.norm(dim=1).detach()
-        elif args.eeg_confidence_mode == 'learned':
-            out['eeg_confidence'] = eeg_confidence_head(eeg_feature.detach())
-        else:
-            out['eeg_confidence'] = None
-        return out
-
     head_select_loader = (val_dataloader if args.select_best_on == 'val' and val_dataloader is not None
                           else test_dataloader)
 
@@ -1345,14 +1041,8 @@ if __name__ == '__main__':
             # moments per parameter are 2/3 of a REVE checkpoint (840 MB -> 280 MB).
             'loss': loss_value,
         }
-        if eeg_confidence_head is not None:
-            checkpoint['eeg_confidence_head_state_dict'] = eeg_confidence_head.state_dict()
         if args.t_learnable:
             checkpoint['criterion_state_dict'] = criterion.state_dict()
-        if args.inductive_covariance_align:
-            checkpoint['inductive_covariance_state_dict'] = (
-                args._inductive_covariance_aligner.state_dict()
-            )
         return checkpoint
 
     def evaluate_split(split_loader, split_name):
@@ -1375,17 +1065,13 @@ if __name__ == '__main__':
                 image_idx_batch = batch[5].to(device)
 
                 eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch)
-                eeg_feature_batch = arch_out['eeg_feature']
-                eeg_confidence_batch = arch_out['eeg_confidence']
-                image_feature_proj = img_projector(
-                    primary_image_target(image_feature_batch)
-                )
+                eeg_feature_batch = eeg_projector(eeg_backbone_batch)
+                image_feature_proj = img_projector(image_feature_batch)
 
                 positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
                 loss = compute_cross_modal_loss(
                     criterion,
-                    {'feature': eeg_feature_batch, 'confidence': eeg_confidence_batch},
+                    eeg_feature_batch,
                     image_feature_proj,
                     positive_mask,
                     args.multi_positive_loss
@@ -1459,13 +1145,10 @@ if __name__ == '__main__':
                 subject_id_batch = batch[3].to(device)
 
                 eeg_backbone_batch = run_eeg_backbone(model, args, eeg_batch, subject_id_batch)
-                arch_out = forward_architecture(eeg_backbone_batch)
-                _update_alignment_sparsity_accumulator(eeg_acc, arch_out['eeg_feature'].cpu().numpy())
+                _update_alignment_sparsity_accumulator(eeg_acc, eeg_projector(eeg_backbone_batch).cpu().numpy())
                 _update_alignment_sparsity_accumulator(
                     img_acc,
-                    img_projector(
-                        primary_image_target(image_feature_batch)
-                    ).cpu().numpy(),
+                    img_projector(image_feature_batch).cpu().numpy(),
                 )
 
         eeg_sp = _finalize_alignment_sparsity_accumulator(eeg_acc)
@@ -1579,9 +1262,6 @@ if __name__ == '__main__':
         total_loss = 0.0
         total_cl_loss = 0.0
         total_subject_mixup_reg_loss = 0.0
-        total_rel_loss = 0.0
-        total_auxiliary_alignment_loss = 0.0
-        total_matryoshka_loss = 0.0
 
         for batch in tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs}"):
             eeg_batch = batch[0].to(device)
@@ -1598,7 +1278,6 @@ if __name__ == '__main__':
                 )
             original_eeg_batch = eeg_batch
             mixup_metadata = None
-            backbone_subject_id_batch = subject_id_batch
             if args.subject_mixup_mode == 'raw_eeg':
                 mixup_out = cross_subject_stimulus_mix(
                     eeg_batch,
@@ -1613,32 +1292,21 @@ if __name__ == '__main__':
                     eeg_batch, mixup_metadata = mixup_out
                 else:
                     eeg_batch = mixup_out
-                if args.inductive_covariance_align:
-                    # A cross-subject mixture has no single owner. Give it the
-                    # same all-source prior used by a genuinely unseen subject.
-                    backbone_subject_id_batch = torch.full_like(subject_id_batch, -1)
             eeg_backbone_batch = run_eeg_backbone(
-                model, args, eeg_batch, backbone_subject_id_batch
+                model, args, eeg_batch, subject_id_batch
             )
             if args.subject_mixup_mode == 'embedding':
                 eeg_backbone_batch = cross_subject_stimulus_mix(
                     eeg_backbone_batch, object_idx_batch, image_idx_batch, subject_id_batch,
                     alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type,
                 )
-            arch_out = forward_architecture(eeg_backbone_batch)
+            eeg_feature_batch = eeg_projector(eeg_backbone_batch)
 
             loss = eeg_batch.new_tensor(0.0)
 
-            eeg_feature_batch = arch_out['eeg_feature']
-            eeg_confidence_batch = arch_out['eeg_confidence']
             if args.subject_mixup_reg_lambda > 0:
-                if args.single_emb_stop_grad:
-                    with torch.no_grad():
-                        original_eeg_feature_batch = run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
-                        original_eeg_feature_batch = forward_architecture(original_eeg_feature_batch)['eeg_feature']
-                else:
-                    original_eeg_feature_batch = run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
-                    original_eeg_feature_batch = forward_architecture(original_eeg_feature_batch)['eeg_feature']
+                original_eeg_feature_batch = run_eeg_backbone(model, args, original_eeg_batch, subject_id_batch)
+                original_eeg_feature_batch = eeg_projector(original_eeg_feature_batch)
                 subject_mixup_reg_loss = compute_subject_mixup_regularization(
                     eeg_feature_batch,
                     original_eeg_feature_batch,
@@ -1647,67 +1315,17 @@ if __name__ == '__main__':
                 )
                 loss = loss + args.subject_mixup_reg_lambda * subject_mixup_reg_loss
                 total_subject_mixup_reg_loss += subject_mixup_reg_loss.item()
-            image_feature_proj = img_projector(primary_image_target(image_feature_batch))
+            image_feature_proj = img_projector(image_feature_batch)
             positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
-            if auxiliary_eeg_projectors is not None:
-                auxiliary_losses = []
-                if args.auxiliary_image_targets:
-                    auxiliary_target_batches = auxiliary_image_target_blocks(
-                        image_feature_batch
-                    )
-                else:
-                    auxiliary_target_batches = [
-                        image_feature_batch
-                    ] * len(auxiliary_img_projectors)
-                for auxiliary_eeg, auxiliary_img, auxiliary_target in zip(
-                        auxiliary_eeg_projectors, auxiliary_img_projectors,
-                        auxiliary_target_batches):
-                    auxiliary_losses.append(criterion.multi_positive_pair_loss(
-                        auxiliary_eeg(eeg_backbone_batch),
-                        auxiliary_img(auxiliary_target),
-                        positive_mask,
-                    ))
-                auxiliary_alignment_loss = torch.stack(auxiliary_losses).mean()
-                loss = loss + args.auxiliary_alignment_lambda * auxiliary_alignment_loss
-                total_auxiliary_alignment_loss += auxiliary_alignment_loss.item()
             cl_loss = compute_cross_modal_loss(
                 criterion,
-                {'feature': eeg_feature_batch, 'confidence': eeg_confidence_batch},
+                eeg_feature_batch,
                 image_feature_proj,
                 positive_mask,
                 args.multi_positive_loss,
             )
             loss = loss + cl_loss
             total_cl_loss += cl_loss.item()
-            matryoshka_active = (
-                args.matryoshka_lambda > 0
-                and (args.matryoshka_epochs <= 0 or epoch <= args.matryoshka_epochs)
-            )
-            if matryoshka_active:
-                nested_losses = [
-                    criterion.multi_positive_pair_loss(
-                        eeg_feature_batch[:, :dim],
-                        image_feature_proj[:, :dim],
-                        positive_mask,
-                    )
-                    for dim in matryoshka_dims
-                ]
-                matryoshka_loss = torch.stack(nested_losses).mean()
-                loss = loss + args.matryoshka_lambda * matryoshka_loss
-                total_matryoshka_loss += matryoshka_loss.item()
-
-            if args.rsa_lambda > 0:
-                rsa_loss = criterion.rsa_loss(eeg_feature_batch, image_feature_proj, positive_mask)
-                loss = loss + args.rsa_lambda * rsa_loss
-                total_rel_loss += rsa_loss.item()
-
-            if args.iso_lambda > 0:
-                iso_loss = criterion.isometry_loss(eeg_feature_batch, image_idx_batch, subject_id_batch)
-                loss = loss + args.iso_lambda * iso_loss
-                total_rel_loss += iso_loss.item()
-
-            if args.pr_lambda > 0:
-                loss = loss + args.pr_lambda * criterion.collapse_penalty(eeg_feature_batch, 14.0)
 
             grad_scaler.scale(loss).backward()
             if args.grad_clip > 0:
@@ -1724,23 +1342,10 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/train', avg_loss, epoch)
         writer.add_scalar('Loss/train_cl', total_cl_loss / len(dataloader), epoch)
         writer.add_scalar('Loss/train_subject_mixup_reg', total_subject_mixup_reg_loss / len(dataloader), epoch)
-        writer.add_scalar(
-            'Loss/train_auxiliary_alignment',
-            total_auxiliary_alignment_loss / len(dataloader),
-            epoch,
-        )
-        writer.add_scalar(
-            'Loss/train_matryoshka',
-            total_matryoshka_loss / len(dataloader),
-            epoch,
-        )
         log(
             f"Epoch [{epoch}/{total_epochs}] TrainLoss={avg_loss:.4f} "
             f"CL={total_cl_loss / len(dataloader):.4f} "
-            f"MIXREG={total_subject_mixup_reg_loss / len(dataloader):.4f} "
-            f"REL={total_rel_loss / len(dataloader):.4f} "
-            f"AUX={total_auxiliary_alignment_loss / len(dataloader):.4f} "
-            f"MRL={total_matryoshka_loss / len(dataloader):.4f}"
+            f"MIXREG={total_subject_mixup_reg_loss / len(dataloader):.4f}"
         )
 
         if ema_model is not None:
@@ -1929,8 +1534,6 @@ if __name__ == '__main__':
             best_test_sparsity = dict(test_sparsity)
             if args.save_weights:
                 torch.save(build_checkpoint(epoch, selected_loss), f"{writer.log_dir}/checkpoint_test_best.pth")
-        if args.save_weights and epoch in args.save_epoch_checkpoints:  # same (EMA-swapped) weights as evaluated
-            torch.save(build_checkpoint(epoch, selected_loss), f"{writer.log_dir}/checkpoint_ep{epoch:03d}.pth")
         if args.save_testsel_checkpoint and avg_test_loss < best_testsel_loss:
             # Matched control: what test-loss selection would have kept on this same
             # trajectory. Never influences training or the selected checkpoint.
@@ -1938,7 +1541,7 @@ if __name__ == '__main__':
             best_testsel_epoch = epoch
             torch.save(build_checkpoint(epoch, avg_test_loss), f"{writer.log_dir}/checkpoint_testsel_best.pth")
         if args.early_stop_patience > 0:
-            if selected_loss < early_stop_reference_loss - args.early_stop_min_delta:
+            if selected_loss < early_stop_reference_loss:
                 early_stop_reference_loss = selected_loss
                 epochs_without_selection_improvement = 0
             else:
@@ -1973,7 +1576,6 @@ if __name__ == '__main__':
     result_dict = {
         'architecture': 'baseline',
         'eval_mode': args.eval_mode,
-        'eeg_confidence_mode': args.eeg_confidence_mode,
         'top1 acc': f'{top1_acc:.3f}',
         'top5 acc': f'{top5_acc:.3f}',
         'best top1 acc': f'{best_top1_acc:.3f}',
