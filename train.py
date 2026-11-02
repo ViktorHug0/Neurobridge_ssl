@@ -217,7 +217,7 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
 
 
 def attach_lora(linear, rank):
-    """SUBJECT_LOG D5: low-rank fine-tuning of one nn.Linear in place: forward uses W + B A (A random, B zero, so the
+    """HISTORY.md D5: low-rank fine-tuning of one nn.Linear in place: forward uses W + B A (A random, B zero, so the
     model starts unchanged); state_dict() stores the merged weight under the usual key and drops the adapters, so
     checkpoints load into the plain architecture (score_track1, grader)."""
     linear.lora_A = nn.Parameter(torch.randn(rank, linear.in_features, device=linear.weight.device) / math.sqrt(linear.in_features))
@@ -602,7 +602,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('--init_checkpoint', default='', type=str,
                         help='initialize the encoder and projectors from a compatible training checkpoint')
-    parser.add_argument('--lora_rank', default=0, type=int, help='rank of LoRA adapters on the Linear layers matching "proj_eeg|eproj" (SUBJECT_LOG D5)')
+    parser.add_argument('--lora_rank', default=0, type=int, help='rank of LoRA adapters on the Linear layers matching "proj_eeg|eproj" (HISTORY.md D5)')
     parser.add_argument('--eval_unique_gallery', action='store_true',
                         help='rank val/test queries against each DISTINCT stimulus once instead of '
                              'one row per presentation; without it repeated presentations put '
@@ -1119,7 +1119,7 @@ if __name__ == '__main__':
         log(f'Initialized all modules from {args.init_checkpoint}')
         del initial
 
-    if args.lora_rank > 0:  # SUBJECT_LOG D5: rank-r updates W + B A on the nn.Linear layers matching proj_eeg|eproj
+    if args.lora_rank > 0:  # HISTORY.md D5: rank-r updates W + B A on the nn.Linear layers matching proj_eeg|eproj
         import re
         for prefix, root in (('model.', model), ('eproj', eeg_projector)):
             for name, module in root.named_modules():

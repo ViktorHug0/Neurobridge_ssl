@@ -1,4 +1,4 @@
-"""Per-TRIAL cache of the cv4 grader stream, for the lean test-time adaptation (lean_tta.py; TTA_LOG.md):
+"""Per-TRIAL cache of the cv4 grader stream, for the lean test-time adaptation (lean_tta.py; HISTORY.md):
   <OUT>/fold<k>.npz          img, subj, idx (dataset index), F (eeg_fingerprint), G (gallery)
   <OUT>/<recipe>_f<k>.npy    raw member outputs (N, 1536) float16, in stream order (batches = consecutive 64 rows)
 Stream = the sealed condition: each test subject's real trials in recording order, the fold's 5 subjects pooled and

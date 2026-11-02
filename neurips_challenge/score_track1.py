@@ -132,7 +132,7 @@ def eeg_fingerprint(X, bands=FP_BANDS):
 
 
 def fit_fingerprint_wccn(data_dir, subjects, shrink=0.3, n_per=3000, seed=0):
-    """offline (TTA_LOG T4-T6): standardisation + within-person whitening (WCCN, all 656 fingerprint dims) from
+    """offline (HISTORY.md T4-T6): standardisation + within-person whitening (WCCN, all 656 fingerprint dims) from
     `subjects`' training-image trials. Same hardware only (Alljoined people, not THINGS-EEG2)."""
     Fs = []
     for s in subjects:  # per-subject fingerprints cached once: random reads of train.npy saturate the NAS
@@ -153,7 +153,7 @@ def fit_fingerprint_wccn(data_dir, subjects, shrink=0.3, n_per=3000, seed=0):
 
 
 def lw_shrink(Y, d):
-    """uncentred Ledoit-Wolf whitening of one batch (TTA_LOG T23): batch direction i (eigenvalue lam_i of Y^T Y / B) is
+    """uncentred Ledoit-Wolf whitening of one batch (HISTORY.md T23): batch direction i (eigenvalue lam_i of Y^T Y / B) is
     scaled by sqrt(d nu / ((1 - d) lam_i + d nu)), nu = mean eigenvalue over all D dims; d = 1 is the identity"""
     _, sv, Vt = torch.linalg.svd(Y, full_matrices=False); lam = sv ** 2 / len(Y); nu = lam.sum() / Y.shape[1]
     r = torch.sqrt(d * nu / ((1 - d) * lam + d * nu))
@@ -161,7 +161,7 @@ def lw_shrink(Y, d):
 
 
 def batch_transform_wknn(Ps, F, wccn, K=4):
-    """The lean test-time adaptation of the best ensemble (TTA_LOG T5, T23, T39; AUG_LOG), inside one predict() batch,
+    """The lean test-time adaptation of the best ensemble (HISTORY.md T5, T23, T39; HISTORY.md), inside one predict() batch,
     label-free and stateless: each member's output is divided by its batch mean norm and every trial is centred on the
     mean of its K most similar batch-mates in the within-person-whitened fingerprint space (cosine, batch-centred),
     keeping the batch mean; the members are summed, then ONE uncentred Ledoit-Wolf shrink with d = D / (D + B).

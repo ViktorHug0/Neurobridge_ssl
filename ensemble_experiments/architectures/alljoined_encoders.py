@@ -17,7 +17,7 @@ class _SwitchBlock(nn.Module):
         self.n1, self.n2 = make_norm(), make_norm()
         self.qkv, self.out = nn.Linear(d, 3 * d, bias=bias), nn.Linear(d, d, bias=bias)
         self.ff1, self.ff2 = nn.Linear(d, 2 * hidden if self.geglu else hidden, bias=bias), nn.Linear(hidden, d, bias=bias)
-        self.attn_mask, self.gate = None, None  # optional (ARCH_LOG R-series round 5): boolean attention mask, output gate
+        self.attn_mask, self.gate = None, None  # optional (HISTORY.md R-series round 5): boolean attention mask, output gate
         self.type_ffn, self.split = None, 0     # optional (round 6): a second FFN (n2, ff1, ff2) for tokens >= split
 
     def forward(self, x):

@@ -1,6 +1,6 @@
 # TTA_RESEARCH: literature scan on label-free test-time adaptation under the Track-1 constraints (2026-10-20)
 
-This is a companion to TTA_LOG.md. It covers literature only: no experiments were run for it. Gains quoted below
+This is a companion to HISTORY.md. It covers literature only: no experiments were run for it. Gains quoted below
 are the ones the authors report, on their own tasks, which are mostly motor-imagery (MI) classification or image
 classification. None of them is a 200-way zero-shot regression-to-retrieval task scored over aggregated repeats.
 Expect the gains to shrink or vanish when transferred to our setting.

@@ -23,9 +23,8 @@ The members are combined at test time by the lean adaptation, `score_track1.batc
 3. The members are summed.
 4. One Ledoit-Wolf shrink is applied with d = D / (D + B).
 
-Without operator transfer, the same five members score 44.02 (`*_things` recipes). The history of everything else
-that was tried, and why it failed, is in `AUG_LOG.md`, `TTA_LOG.md`, `ARCH_LOG.md`, `ALIGN_LOG.md`, `ROUTING_LOG.md`
-and `SUBJECT_LOG.md`. The code of those experiments is in git tag `pre-cleanup-2026-11-02`.
+Without operator transfer, the same five members score 44.02 (`*_things` recipes). Everything else that was tried,
+and what it scored, is in `HISTORY.md`. The code (and the full experiment logs) is in git tag `pre-cleanup-2026-11-02`.
 
 ## Pipeline
 

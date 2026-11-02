@@ -15,7 +15,7 @@ FOLDS=("" "2 4 5 11 15" "7 14 16 17 20" "3 8 10 12 19" "1 6 9 13 18")
 
 # recipe -> "<alljoined_run.sh arm> <train.py flags>". Every recipe trains for a fixed budget and keeps its
 # last epoch (--select_best_on fixed); the budgets come from the per-epoch sealed curves (CV4_PROTOCOL.md §5).
-# The 5 *_optx_things recipes are the best ensemble (AUG_LOG: lean TTA 44.25 over 4 folds); the 5 plain
+# The 5 *_optx_things recipes are the best ensemble (HISTORY.md: lean TTA 44.25 over 4 folds); the 5 plain
 # *_things recipes are the same members without channel-operator transfer, kept as its baseline (44.02).
 recipe() {
   case "$1" in
@@ -24,7 +24,7 @@ recipe() {
     sqf_dbn_things)             echo "sqf  --num_epochs 40 --tsconv_domain_bn_boundary 21" ;;  # every BatchNorm per dataset (ids >= 21 = THINGS)
     tsc_dbn40_bn64_things)      echo "tsc  --num_epochs 40 --tsconv_domain_bn_boundary 21 --eeg_backbone_dim 64 --projector bottleneck" ;;
     rmix_reg_things)            echo "gen  --eeg_encoder_type TokenREVE --arch_kwargs {\"tokens\":\"mixed\",\"registers\":4} --batch_size 128 --learning_rate 1e-3 --num_epochs 20 --stop_after_epoch 10 --amp_dtype bfloat16 --ema_decay 0.9998 --ema_warmup" ;;
-    # + re-render each batch through another training subject's channel covariance operator (AUG_LOG)
+    # + re-render each batch through another training subject's channel covariance operator (HISTORY.md)
     reve_scratch_optx_things)   echo "$(recipe reve_scratch_things) --op_transfer_prob 0.5" ;;
     reve_d6_optx_things)        echo "$(recipe reve_d6_things) --op_transfer_prob 0.5" ;;
     sqf_dbn_optx_things)        echo "$(recipe sqf_dbn_things) --op_transfer_prob 0.5" ;;

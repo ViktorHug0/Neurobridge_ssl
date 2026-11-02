@@ -1,6 +1,6 @@
 # AUG_LITERATURE: training-time augmentation and regularisation for cross-subject EEG->image retrieval (2026-10-26)
 
-Literature only; no experiments were run for this note. It is a companion to AUG_LOG.md. The gains quoted are the
+Literature only; no experiments were run for this note. It is a companion to HISTORY.md. The gains quoted are the
 ones the authors report on their own tasks (image DG benchmarks, sleep staging, motor imagery, fMRI). None of those is
 32-channel single-trial EEG -> 1536-d DINOv2 InfoNCE scored over ~80 averaged repeats, so expect the gains to shrink.
 
@@ -8,9 +8,9 @@ ones the authors report on their own tasks (image DG benchmarks, sleep staging, 
 ranking. Zero-mean per-trial noise averages away, and what survives is the person-level bias (the person's offset and
 mapping distortion). So a method ranks higher when it simulates or penalises *systematic* between-person differences
 (spatial mixing, spectral profile, per-subject loss landscapes), and lower when it only adds per-trial noise.
-TTA_LOG says the person fingerprint sits in the background alpha/beta topography, which favours the spectral entries.
+HISTORY.md says the person fingerprint sits in the background alpha/beta topography, which favours the spectral entries.
 
-**Excluded (already dead here, see AUG_LOG.md):** mixup, raw SubjectMix, SCORE multi-positive, MixStyle, latency and
+**Excluded (already dead here, see HISTORY.md):** mixup, raw SubjectMix, SCORE multi-positive, MixStyle, latency and
 montage jitter, channel dropout, gain, stochastic depth, wd, EMA, repetition averaging, blurred / soft / multi-layer
 targets, MMD / CORAL, FiLM + subject dropout, gradient reversal, EA / CAR, extra EEG1 / Alljoined-1 data, global
 negatives, loss truncation, TTA. Being tested now: noise transplant, covariance operator transfer, SubjectMix + THINGS.
@@ -71,7 +71,7 @@ for N_e = 6 evaluations.
 PACS. Dense uniform averaging inside a validation-chosen window is a different estimator from an exponential tail.
 **Sketch.** `AveragedModel` updated each step once t_s fires, then `update_bn` for BN encoders. Take the window from
 the training-subject validation split, never from the sealed people; that also keeps away from the sealed_best bias.
-The T50 "checkpoint soup" in TTA_LOG was never scored (the run hit a bug), so this is untested here.
+The T50 "checkpoint soup" in HISTORY.md was never scored (the run hit a bug), so this is untested here.
 
 ### 4. Fishr (match per-subject gradient variances)
 **Mechanism.** Treat each subject as a domain. Penalise the spread across domains of the per-domain variance of
@@ -96,7 +96,7 @@ trial: A' = (1 - l) A + l A_p with l ~ U(0, eta). This changes each channel's sp
 **Source.** Xu et al., CVPR 2021 oral (arXiv 2105.11120).
 **Effect sizes.** PACS ResNet-18: 79.94 -> 84.51 for full FACT, and 83.44 (+3.5) for amplitude mix alone, without the
 co-teacher. ResNet-50: 84.08 -> 88.15. eta = 1.0 on PACS and 0.2 on OfficeHome.
-**Why it could transfer.** It transfers the per-channel alpha/beta power profile, which is where TTA_LOG locates the
+**Why it could transfer.** It transfers the per-channel alpha/beta power profile, which is where HISTORY.md locates the
 person fingerprint, without needing repeat means. Noise transplant instead swaps the whole residual time series.
 **Sketch.** X = rfft(x, dim=-1) per channel (1 Hz bins at 120 Hz / 1 s). The partner is a random trial of a different
 subject in the same dataset. Mix only inside a band mask (start with 7-30 Hz; widen or narrow according to the pending
@@ -120,7 +120,7 @@ it to the residual (x - leave-one-out repeat mean) so that the evoked waveform i
 the worst subject online.
 **Sources.** Krueger et al., ICML 2021 (arXiv 2003.00688); Sagawa et al., ICLR 2020 (arXiv 1911.08731).
 **Effect sizes.** In the DomainBed table of the SAGM paper, both are below ERM: VREx 61.9, GroupDRO 60.7, ERM 63.9.
-**Why it might still help.** It costs one line, and the per-subject batch layout from #4 makes it free. AUG_LOG and
+**Why it might still help.** It costs one line, and the per-subject batch layout from #4 makes it free. HISTORY.md and
 memory record that dropping weak subjects did not help, which argues against expecting much.
 **Sketch.** beta in {1, 10}, ramped up after warmup. Run it only as a rider on the #4 run.
 

@@ -1,4 +1,4 @@
-"""TokenREVE (ARCH_LOG.md R-series): scratch REVE blocks with a switchable tokenizer, the rmix encoder of the cv4
+"""TokenREVE (HISTORY.md R-series): scratch REVE blocks with a switchable tokenizer, the rmix encoder of the cv4
 ensemble. Its TSConv time tokens reuse TSConv's validated stem (25-tap temporal conv, 25-sample box pool stride 2 at
 120 Hz, BN, ELU, one spatial conv over all electrodes); its flatten readouts use TSConv's bottleneck head (Linear -> 64,
 residual MLP, LayerNorm, Linear -> feature_dim).
@@ -48,7 +48,7 @@ class _Stem(nn.Module):
 
 class TokenREVE(nn.Module):
     """Scratch REVE (br3_things: REVE blocks = RMSNorm, no biases, GEGLU, no final norm; learned positions; per-electrode
-    trial z-score at 120 Hz) with a switchable tokenizer (ARCH_LOG R-series):
+    trial z-score at 120 Hz) with a switchable tokenizer (HISTORY.md R-series):
       electrode  one token per electrode, its whole z-scored waveform (= br3)
       virtual    one token per LEARNED virtual channel (linear spatial mix of the z-scored electrodes, TSConv's spatial
                  filter as REVE's tokenizer)
