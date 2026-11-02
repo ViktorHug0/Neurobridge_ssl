@@ -49,7 +49,7 @@ Avoid these patterns. Each one is a strong LLM marker.
 - Match the register of the authors' own text. Copy their NeurIPS sentences when they exist (`Neurips_paper_and_rebuttal/paper.tex`).
 - Plain declarative sentences: subject, verb, result, with "thus" or "therefore" when a conclusion follows.
 - One idea per sentence. Split run-ons that chain three findings with commas.
-- Keep hedges factual ("on ATM", "over three seeds"), not rhetorical.
+- Keep hedges factual ("on ATM", "over three seeds"), not rhetorical. Only hedge when necessary.
 
 ## Checklist before handing text back
 
