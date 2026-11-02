@@ -1,20 +1,20 @@
 #!/bin/bash
 # The cross-subject evaluation protocol for the sealed phase (new subjects, new images): 4 fixed folds of 5
 # Alljoined test subjects, training on the other 15 + the 10 THINGS-EEG2 subjects (sub-21..30,
-# export_things_to_alljoined.py). Full description, rationale and decision rules: neurips_challenge/CV4_PROTOCOL.md.
+# export_things_to_alljoined.py). Protocol and decision rules: neurips_challenge/README.md.
 # Do not edit FOLDS: every number in results/alljoined/track1/cv4/ is only comparable because the folds never change.
 #
 #   usage: cv4.sh <recipe> [fold ...]          one recipe on the given folds (default: 1 2 3 4)
 #          cv4.sh --list                       print the recipes
 # Results: results/alljoined/track1/cv4/<recipe>/fold<k>/<arm>/<run>/track1_score.json (per-subject sealed
 # scores). Finished folds are skipped, and alljoined_run.sh claims each run, so several workers can be pointed
-# at the same recipes and folds (overnight/align_dyn.sh).
+# at the same recipes and folds (align_dyn.sh).
 cd "$(dirname "$0")/.."
 
 FOLDS=("" "2 4 5 11 15" "7 14 16 17 20" "3 8 10 12 19" "1 6 9 13 18")
 
 # recipe -> "<alljoined_run.sh arm> <train.py flags>". Every recipe trains for a fixed budget and keeps its
-# last epoch (--select_best_on fixed); the budgets come from the per-epoch sealed curves (CV4_PROTOCOL.md §5).
+# last epoch (--select_best_on fixed); the budgets come from the per-epoch sealed curves (README.md, protocol).
 # The 5 *_optx_things recipes are the best ensemble (HISTORY.md: lean TTA 44.25 over 4 folds); the 5 plain
 # *_things recipes are the same members without channel-operator transfer, kept as its baseline (44.02).
 recipe() {

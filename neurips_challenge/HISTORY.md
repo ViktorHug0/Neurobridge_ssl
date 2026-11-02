@@ -4,7 +4,7 @@
 - Task: single-trial EEG (32-ch Emotiv, 120 Hz, -0.2..0.8 s) -> 1536-d DINOv2-giant target, cosine-ranked by the grader against a fixed gallery.
 - Sealed phase: unseen people AND unseen images, ~11 people; `predict(X)` on shuffled 64-trial batches mixing people; no subject id, no gallery, no state across calls; batch statistics allowed, batch size may change.
 - Metric: official subject-aggregated top-5 (raw predictions averaged per (person, image), ranked, per-person top-5 averaged; chance 2.5 at 200-way).
-- cv4 (CV4_PROTOCOL.md): 4 frozen folds x 5 held-out Alljoined people; train on the other 15 + THINGS-EEG2 sub-21..30; 20 people in all. Score with `tta_cache.py` + `lean_tta.py`.
+- cv4 (README.md, protocol): 4 frozen folds x 5 held-out Alljoined people; train on the other 15 + THINGS-EEG2 sub-21..30; 20 people in all. Score with `tta_cache.py` + `lean_tta.py`.
 - Warm-up leaderboard numbers (subjects seen in training, single epochs) are a different measurement: never compare them with cv4.
 
 ## 2. Current best
@@ -88,3 +88,6 @@
 - Signal: cross-subject image info is < 8 Hz (ridge probe full 12.3, < 4 Hz 12.6, 13-30 Hz 4.0); identity is the alpha/beta power topography; info window 0.1-0.5 s (peak 0.1-0.25); models are time-locked (REVE halves at a 50 ms shift).
 - sub-09 (~10) and sub-17 (~15) are intrinsically hard: no lag, polarity or channel permutation helps; lifting both to ~45 = +3 on the mean.
 - REVE family needs the e10 stop of its 20-epoch cycle; bf16 costs small conv models ~1.2 (h* recipes run fp32); EMA flatters mid-cycle epochs; capacity 5-19M is flat.
+- Untried from the literature notes (full notes in the tag: AUG_LITERATURE.md, TTA_RESEARCH.md): training-side SWAD, Fishr
+  (per-person gradient variance), FACT band-limited amplitude mix, FrequencyShift (alpha peak), FTSurrogate, SmoothTimeMask, RSC;
+  test-side Euclidean/Riemannian re-centring (EA, RPA), T-TIME, SPDIM, NeuroTTT (AdaBN was tried: +0.1-0.3 over centring).

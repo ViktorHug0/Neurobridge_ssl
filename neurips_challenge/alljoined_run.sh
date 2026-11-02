@@ -2,7 +2,7 @@
 # Track-1 recipe on Alljoined-1.6M (neuralbench's 120 Hz grader preprocessing, exported by
 # build_alljoined_cache.py): single trials, DINOv2-giant track1 targets (the stimuli are the THINGS-EEG2
 # images, same index), direct 1536-D head, per-epoch test numbers under the sealed rule (--sealed_test_metric),
-# then the full score_track1.py pass. Called by neurips_challenge/cv4.sh (the 4x5-subject protocol, CV4_PROTOCOL.md).
+# then the full score_track1.py pass. Called by neurips_challenge/cv4.sh (the 4x5-subject protocol, README.md).
 # The EEG memmaps are staged onto node-local disk first (stage_eeg_cache.py) to spare the NAS.
 #   usage: SPLIT=<name> TRAIN_SUBJECTS=.. TEST_SUBJECTS=.. alljoined_run.sh <tsc|sqf|reve|gen> [extra train.py args]
 #   reve = REVE architecture (cv4 recipes train it from scratch); gen = the caller passes the whole model recipe

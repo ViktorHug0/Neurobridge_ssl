@@ -1,4 +1,4 @@
-"""Read the cv4 protocol results (neurips_challenge/cv4.sh) and apply its rules (CV4_PROTOCOL.md §5-7).
+"""Read the cv4 protocol results (neurips_challenge/cv4.sh) and apply its rules (neurips_challenge/README.md, protocol).
 
     cv4_summary.py                     per-recipe table: chosen epoch budget, score, training-length audit
     cv4_summary.py --ref tsc           + every recipe paired against `tsc` on the subjects both have
