@@ -44,14 +44,3 @@ export MAX_EPOCHS=100 EARLY_STOP_PATIENCE=20
 echo "=== $ARM via $RUNNER ($FEATURES) ==="
 bash "$RUNNER" "$ARM" "$FEATURES"
 
-# Two dumps per run: the honest val-selected checkpoint, and the matched
-# test-selected control from the same trajectory.
-RUN_ROOT="results/things_eeg/honest_ensemble/$ARM/seed3300"
-python ensemble_experiments/test_selected/dump_testselected_arm.py \
-  --arm "$ARM" --run-root "$RUN_ROOT" \
-  --checkpoint-name checkpoint_test_best.pth \
-  --subjects 1 2 3 4 5 6 7 8 9 10 --device cuda:0
-python ensemble_experiments/test_selected/dump_testselected_arm.py \
-  --arm "$ARM" --dump-suffix _ctl --run-root "$RUN_ROOT" \
-  --checkpoint-name checkpoint_testsel_best.pth \
-  --subjects 1 2 3 4 5 6 7 8 9 10 --device cuda:0

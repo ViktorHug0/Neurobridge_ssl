@@ -11,8 +11,8 @@
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=28G
 #SBATCH --time=08:00:00
-#SBATCH --output=/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/ensemble50_testselected/slurm-iv-layers-%j.out
-#SBATCH --error=/nasbrain/p20fores/Neurobridge_SSL/results/things_eeg/ensemble50_testselected/slurm-iv-layers-%j.err
+#SBATCH --output=/nasbrain/p20fores/Neurobridge_SSL/logs/slurm-iv-layers-%j.out
+#SBATCH --error=/nasbrain/p20fores/Neurobridge_SSL/logs/slurm-iv-layers-%j.err
 set -euo pipefail
 
 REPO_ROOT=/nasbrain/p20fores/Neurobridge_SSL

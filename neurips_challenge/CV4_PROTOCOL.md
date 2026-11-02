@@ -3,12 +3,14 @@
 Adopted 2026-10-01. Every recipe that is meant for the sealed submission is compared under this protocol and
 only under this protocol. Scripts: `neurips_challenge/cv4.sh` (runs), `neurips_challenge/cv4_summary.py`
 (tables, decisions, training-length audit). Results: `results/alljoined/track1/cv4/`.
+Since the 2026-11-02 cleanup `cv4.sh` holds only the best ensemble's recipes; the recipe tables below are the
+historical record (their code: git tag `pre-cleanup-2026-11-02`).
 
 ```bash
-bash neurips_challenge/cv4.sh --list                         # the frozen recipes
-bash neurips_challenge/cv4.sh plab_gain 1 2                  # screen a recipe (10 test subjects)
-bash neurips_challenge/cv4.sh plab_gain 3 4                  # confirm it (all 20 subjects)
-.venv/bin/python neurips_challenge/cv4_summary.py --ref tsc  # tables, paired decisions, audit
+bash neurips_challenge/cv4.sh --list                         # the 10 kept recipes (best ensemble + its baseline)
+bash neurips_challenge/cv4.sh sqf_dbn_optx_things 1 2        # screen a recipe (10 test subjects)
+bash neurips_challenge/cv4.sh sqf_dbn_optx_things 3 4        # confirm it (all 20 subjects)
+.venv/bin/python neurips_challenge/cv4_summary.py --ref sqf_dbn_things  # tables, paired decisions, audit
 .venv/bin/python neurips_challenge/cv4_summary.py --self_test
 ```
 

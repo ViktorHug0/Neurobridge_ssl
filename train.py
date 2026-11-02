@@ -71,7 +71,6 @@ def _compute_cross_modal_loss_impl(
     image_feature,
     positive_mask,
     use_multi_positive,
-    sample_weights=None,
 ):
     eeg_confidence = None
     if isinstance(eeg_feature, dict):
@@ -83,7 +82,6 @@ def _compute_cross_modal_loss_impl(
             image_feature,
             positive_mask,
             query_scale=eeg_confidence,
-            sample_weights=sample_weights,
         )
 
         if criterion.alpha != 1.0:
@@ -104,13 +102,12 @@ def compute_cross_modal_loss(
     image_feature,
     positive_mask,
     use_multi_positive,
-    sample_weights=None,
 ):
     """Run contrastive geometry in FP32 even when encoder AMP is active."""
     if not torch.is_autocast_enabled('cuda'):
         return _compute_cross_modal_loss_impl(
             criterion, eeg_feature, image_feature,
-            positive_mask, use_multi_positive, sample_weights,
+            positive_mask, use_multi_positive,
         )
 
     if isinstance(eeg_feature, dict):
@@ -127,7 +124,6 @@ def compute_cross_modal_loss(
             image_feature.float(),
             positive_mask,
             use_multi_positive,
-            sample_weights,
         )
 
 
@@ -446,13 +442,6 @@ class EEGConfidenceHead(nn.Module):
         return self.softplus(self.net(x)).squeeze(-1)
 
 
-def set_requires_grad(module, enabled):
-    if module is None:
-        return
-    for parameter in module.parameters():
-        parameter.requires_grad = enabled
-
-
 def collect_trainable_parameters(modules):
     params = []
     seen = set()
@@ -497,10 +486,6 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='./result', type=str)
     parser.add_argument('--output_name', default=None, type=str)
     parser.add_argument('--train_subject_ids', default=[8], nargs='+', type=int)
-    parser.add_argument(
-        '--train_subject_weights', default=None, nargs='+', type=float,
-        help='positive loss weights aligned with --train_subject_ids; normalized to mean one',
-    )
     parser.add_argument('--test_subject_ids', default=[8], nargs='+', type=int)
     parser.add_argument('--data_average', action='store_true')
     parser.add_argument('--init_temperature', default=0.07, type=float)
@@ -617,11 +602,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('--init_checkpoint', default='', type=str,
                         help='initialize the encoder and projectors from a compatible training checkpoint')
-    parser.add_argument('--init_checkpoint_scope', choices=['all', 'encoder'], default='all',
-                        help='load all compatible modules or only the EEG encoder from --init_checkpoint')
     parser.add_argument('--lora_rank', default=0, type=int, help='rank of LoRA adapters on the Linear layers matching "proj_eeg|eproj" (SUBJECT_LOG D5)')
-    parser.add_argument('--freeze_eeg_encoder', action='store_true',
-                        help='freeze an initialized EEG encoder in eval mode and train only downstream modules')
     parser.add_argument('--eval_unique_gallery', action='store_true',
                         help='rank val/test queries against each DISTINCT stimulus once instead of '
                              'one row per presentation; without it repeated presentations put '
@@ -672,8 +653,6 @@ if __name__ == '__main__':
     parser.add_argument('--train_object_fraction', default=1.0, type=float, help='train on this fraction of the training concepts (fixed seed-0 subset, all subjects); CVPR E8.8b volume control')
     parser.add_argument('--save_epoch_checkpoints', nargs='*', type=int, default=[], help='also save checkpoint_epXXX.pth at these epochs (1-based; CVPR E8.10 TTA-vs-training-length curves)')
     parser.add_argument('--seed', type=int, default=None, help='random seed for reproducibility')
-    parser.add_argument('--train_rng_seed', type=int, default=None,
-                        help='optional RNG reset after module initialization, for matched batch/mixup draws across model variants')
     args = parser.parse_args()
     if args.subject_mixup_reg_lambda < 0:
         raise ValueError("--subject_mixup_reg_lambda must be non-negative.")
@@ -682,8 +661,6 @@ if __name__ == '__main__':
     if args.tsconv_domain_bn_boundary > 0:
         if args.eeg_encoder_type.removeprefix('Ortho') not in ('TSConv_parameterizable', 'FastTSConvSqueezeformer', 'ATM'):
             raise ValueError('--tsconv_domain_bn_boundary requires TSConv_parameterizable, FastTSConvSqueezeformer or ATM.')
-    if args.freeze_eeg_encoder and not args.init_checkpoint:
-        raise ValueError('--freeze_eeg_encoder requires --init_checkpoint.')
     if args.subject_mixup_reg_lambda > 0 and (args.subject_mixup_mode != 'raw_eeg' or args.mixup_type != 'pairwise'):
         raise ValueError("--subject_mixup_reg_lambda currently requires --subject_mixup_mode raw_eeg and --mixup_type pairwise.")
     if args.subject_probe_holdout:
@@ -744,43 +721,10 @@ if __name__ == '__main__':
         log(f'{key:22} {val}')
 
     if args.val_subject_id is not None and args.val_subject_id in args.train_subject_ids:
-        if args.train_subject_weights is not None:
-            args.train_subject_weights = [
-                weight
-                for subject, weight in zip(
-                    args.train_subject_ids, args.train_subject_weights
-                )
-                if subject != args.val_subject_id
-            ]
         args.train_subject_ids = [sid for sid in args.train_subject_ids if sid != args.val_subject_id]
         log(f"Removed val_subject_id={args.val_subject_id} from train_subject_ids for clean validation.")
         if len(args.train_subject_ids) == 0:
             raise ValueError("After removing val_subject_id, train_subject_ids is empty.")
-    if args.train_subject_weights is not None:
-        if not args.multi_positive_loss:
-            raise ValueError(
-                '--train_subject_weights currently requires --multi_positive_loss.'
-            )
-        if len(args.train_subject_weights) != len(args.train_subject_ids):
-            raise ValueError(
-                '--train_subject_weights must have one value per train subject.'
-            )
-        if any(weight <= 0 for weight in args.train_subject_weights):
-            raise ValueError('--train_subject_weights must all be positive.')
-        mean_subject_weight = float(np.mean(args.train_subject_weights))
-        args.train_subject_weights = [
-            float(weight) / mean_subject_weight
-            for weight in args.train_subject_weights
-        ]
-        log(
-            'Train subject loss weights: '
-            + ', '.join(
-                f's{subject}={weight:.3f}'
-                for subject, weight in zip(
-                    args.train_subject_ids, args.train_subject_weights
-                )
-            )
-        )
     with open(os.path.join(args.output_dir, "last_run.txt"), 'w') as f:
         f.write(writer.log_dir)
 
@@ -801,17 +745,6 @@ if __name__ == '__main__':
         f"Automatic mixed precision: {args.amp_dtype} "
         "(contrastive features/logits forced to float32)"
     )
-    train_subject_weight_lookup = None
-    if args.train_subject_weights is not None:
-        train_subject_weight_lookup = torch.ones(
-            max(args.train_subject_ids) + 1,
-            dtype=torch.float32,
-            device=device,
-        )
-        for subject, weight in zip(
-            args.train_subject_ids, args.train_subject_weights
-        ):
-            train_subject_weight_lookup[subject] = weight
     log(f'Subject mixup mode: {args.subject_mixup_mode}, type: {args.mixup_type} (alpha={args.subject_mixup_alpha})')
     log(f'Evaluation mode: {args.eval_mode}')
 
@@ -1180,19 +1113,11 @@ if __name__ == '__main__':
     if args.init_checkpoint:
         initial = torch.load(args.init_checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(initial['model_state_dict'])
-        if args.init_checkpoint_scope == 'all':
-            eeg_projector.load_state_dict(initial['eeg_projector_state_dict'])
-            img_projector.load_state_dict(initial['img_projector_state_dict'])
-            text_projector.load_state_dict(initial['text_projector_state_dict'])
-        log(
-            f'Initialized {args.init_checkpoint_scope} from {args.init_checkpoint}'
-        )
+        eeg_projector.load_state_dict(initial['eeg_projector_state_dict'])
+        img_projector.load_state_dict(initial['img_projector_state_dict'])
+        text_projector.load_state_dict(initial['text_projector_state_dict'])
+        log(f'Initialized all modules from {args.init_checkpoint}')
         del initial
-
-    if args.freeze_eeg_encoder:
-        set_requires_grad(model, False)
-        model.eval()
-        log('Frozen initialized EEG encoder in eval mode')
 
     if args.lora_rank > 0:  # SUBJECT_LOG D5: rank-r updates W + B A on the nn.Linear layers matching proj_eeg|eproj
         import re
@@ -1245,7 +1170,7 @@ if __name__ == '__main__':
         asymmetric=args.asymmetric_loss,
         mse_on_raw=args.mse_on_raw,
     ).to(device)
-    if args.init_checkpoint and args.init_checkpoint_scope == 'all':  # the learned temperature belongs to the head
+    if args.init_checkpoint:  # the learned temperature belongs to the head
         saved = torch.load(args.init_checkpoint, map_location=device, weights_only=False).get('criterion_state_dict')
         if saved is not None:
             criterion.load_state_dict(saved)
@@ -1391,13 +1316,6 @@ if __name__ == '__main__':
             total_steps=total_epochs * len(dataloader),
             pct_start=0.1,
             anneal_strategy='cos',
-        )
-
-    if args.train_rng_seed is not None:
-        seed_everything(args.train_rng_seed)
-        log(
-            f'Reset training RNG to {args.train_rng_seed} after module initialization; '
-            'batch order and stochastic augmentation draws are matched across variants'
         )
 
     def forward_architecture(eeg_backbone_batch):
@@ -1653,10 +1571,7 @@ if __name__ == '__main__':
         torch.clear_autocast_cache()
         if ema_model is not None and epoch > 1:
             model.load_state_dict(raw_state)
-        if args.freeze_eeg_encoder:
-            model.eval()
-        else:
-            model.train()
+        model.train()
         eeg_projector.train()
         img_projector.train()
         text_projector.train()
@@ -1761,11 +1676,6 @@ if __name__ == '__main__':
                 image_feature_proj,
                 positive_mask,
                 args.multi_positive_loss,
-                sample_weights=(
-                    train_subject_weight_lookup[subject_id_batch]
-                    if train_subject_weight_lookup is not None
-                    else None
-                ),
             )
             loss = loss + cl_loss
             total_cl_loss += cl_loss.item()

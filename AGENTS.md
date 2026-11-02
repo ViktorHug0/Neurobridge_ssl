@@ -18,7 +18,7 @@ Pipeline in one sentence:
 4. At test time: **200-way closed-set retrieval**; optional **transductive adaptation** (SAW / CSLS / Sinkhorn / soft Procrustes) for much higher accuracy.
 
 A parallel track exists for **THINGS-MEG** (`scripts/things_meg/`, `preprocess_meg.py`) and **AllJoined** (`scripts/alljoined/`). The mainline work is **THINGS-EEG**.
-NeurIPS 2026 Track 1 sealed-phase work (Alljoined-1.6M, new subjects + new images) is evaluated only under the 4×5-subject cross-validation protocol in `neurips_challenge/CV4_PROTOCOL.md` (`cv4.sh`, `cv4_summary.py`).
+NeurIPS 2026 Track 1 sealed-phase work (Alljoined-1.6M, new subjects + new images) is evaluated only under the 4×5-subject cross-validation protocol in `neurips_challenge/CV4_PROTOCOL.md` (`cv4.sh`, `cv4_summary.py`). The current pipeline and the best ensemble (optx5, cv4 44.25) are described in [`neurips_challenge/README.md`](neurips_challenge/README.md).
 
 ---
 
@@ -44,7 +44,7 @@ source .venv/bin/activate
 
 | Path | Role |
 |------|------|
-| [`train.py`](train.py) | Main training entrypoint (~1.3k lines): LOSO loop, loss, eval during train, checkpoints |
+| [`train.py`](train.py) | Main training entrypoint (~2.1k lines): LOSO loop, loss, eval during train, checkpoints |
 | [`evaluate.py`](evaluate.py) | Standalone eval from `checkpoint_test_best.pth` + SATTC-style refinement |
 | [`compute_avg_results.py`](compute_avg_results.py) | Aggregate per-subject `result.csv` → `inter_subject_summary.csv` |
 | [`extract_feature.py`](extract_feature.py) | Precompute image features (CLIP, OpenCLIP, InternViT, DINOv2, …) |
@@ -53,10 +53,10 @@ source .venv/bin/activate
 | [`module/loss.py`](module/loss.py) | `ContrastiveLoss` (1-pos and multi-pos) |
 | [`module/sampler.py`](module/sampler.py) | `GroupedImageBatchSampler` |
 | [`module/util.py`](module/util.py) | Retrieval, SAW, CSLS, Sinkhorn, Procrustes, whitening |
-| [`module/projector.py`](module/projector.py) | `direct` / `linear` / `mlp` projectors |
+| [`module/projector.py`](module/projector.py) | `direct` / `linear` / `bottleneck` projectors |
 | [`module/eeg_encoder/model.py`](module/eeg_encoder/model.py) | TSConv, EEGNet, EEGConformer, … |
 | [`module/eeg_encoder/atm/`](module/eeg_encoder/atm/) | ATMS encoder |
-| [`scripts/things_eeg/`](scripts/things_eeg/) | Bash sweeps + Python experiment drivers (47 `.sh`, 87 files at top level) |
+| [`scripts/things_eeg/`](scripts/things_eeg/) | Bash sweeps + Python experiment drivers (28 `.sh`, 47 files at top level) |
 | [`scripts/things_meg/`](scripts/things_meg/) | MEG analogues |
 | [`data/`](data/) | Image features, etc. (gitignored; large) |
 | [`results/`](results/) | Experiment outputs (gitignored) |
@@ -95,7 +95,7 @@ Default time window: **250 samples** (`--time_window 0 250`).
 EEG (B, C, T)
   → eeg_encoder (TSConv, EEGNet, EEGConformer, TSConv_parameterizable, ATM, …)
   → backbone dim (--eeg_backbone_dim, default = image feature dim)
-  → eeg_projector (--projector linear|mlp|direct, --feature_dim)
+  → eeg_projector (--projector linear|bottleneck|direct, --feature_dim)
   → L2-normalized alignment embedding
 
 Image features (precomputed, frozen)
@@ -155,11 +155,9 @@ Flags commonly used together:
 | Flag | Effect |
 |------|--------|
 | `--subject_mixup_mode raw_eeg\|embedding` | Same-stimulus cross-subject convex mixup |
-| `--train_saw` | Subject-wise ZCA whitening during training |
 | `--eval_mode saw_csls` | Use SAW+CSLS at **train-time** test eval (not full SATTC loop) |
 | `--select_best_on val` + `--val_subject_id N` | Checkpoint selection on a val subject (cleaner than test) |
 | `--subject_probe_holdout` | Linear probe: can subject ID be read from backbone vs align space? |
-| `--subject_adapt_lambda > 0` | Train-time unlabeled adaptation on batch splits |
 | `--save_weights` | Write `checkpoint_test_best.pth` (needed for `evaluate.py`) |
 
 ### Outputs per run
@@ -189,7 +187,7 @@ python compute_avg_results.py --result_dir RUN_DIR --output_name inter_subject_s
 
 ### During training
 
-`train.py` runs retrieval on the test subject each epoch using `module.util.retrieve_all` and `--eval_mode` (`plain_cosine`, `saw`, `csls`, `saw_csls`). This is **not** the full iterative SATTC pipeline unless those code paths are enabled via train args / subject adaptation.
+`train.py` runs retrieval on the test subject each epoch using `module.util.retrieve_all` and `--eval_mode` (`plain_cosine`, `saw`, `csls`, `saw_csls`). This is **not** the full iterative SATTC pipeline; use `evaluate.py` for that.
 
 ### Standalone (`evaluate.py`)
 
@@ -251,8 +249,8 @@ From [`technical_overview.md`](technical_overview.md) — **critical for correct
 | Compact inter-subject training | ~25–32% | e.g. `featdim_128`, no heavy TTA |
 | Mixup / training regularization | mid-30s | e.g. `mixup_*` summaries |
 | **Transductive SATTC / SAGE-TTA** on 200 test pairs | see below | SAW + CSLS + Sinkhorn + iterative Procrustes on **full** test fold |
-| Split-test transfer | ~49% → ~59% | Fit adaptation on half of test, apply to other half |
-| Score ensembling (inductive) | ~44% honest | nested-LOFO member selection; see `ensemble_experiments/` |
+| Split-test transfer | ~49% → ~59% | Fit adaptation on half of test, apply to other half; code in tag `pre-cleanup-2026-11-02` |
+| Score ensembling (inductive) | ~44% honest | nested-LOFO member selection; code in tag `pre-cleanup-2026-11-02` |
 
 **Which transductive number to quote.** The `~71%` that appears throughout
 [`technical_overview.md`](technical_overview.md) is the **April 2026** sweep figure and appears
@@ -278,7 +276,6 @@ protocol P-clean (`CVPR_paper/checklist.md`); log new runs in `CVPR_paper/EXPERI
 Example result roots on this machine:
 
 - `results/things_eeg/inter-subjects/` — LOSO sessions, sweeps (`projector_only_bb*`, `tsconv_*`, `sattc_*`, …)
-- `results/things_eeg/inter-subject-sparse/` — Sparse CLIP-style runs (`sparse_clip_fd_sparsity_*`, `sparse_relu_*`, …)
 - Sweep summaries: `session_summary.csv`, `sweep_summary.csv`, `inter_subject_summary.csv`
 
 ---
@@ -304,15 +301,10 @@ Three facts that follow, and that change how you plan work:
    `DEFAULT_SOURCE_RUN_DIR` of every `scripts/things_eeg/tta_rebuttal/` experiment. So the 68.x/77.2
    numbers exist only in `result.csv`; re-deriving them means retraining. Surviving clean weights:
    `tsconv_val_best_20260501-170237` (LOSO-val TSConv, 3 seeds) and `honest_ensemble/*_valcon` (ValCon).
-2. **The ensemble line replays from score dumps, not weights.**
-   `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` holds 2,010 npz (1.2 GB) = 235 arms
-   × 10 folds, and each dump carries the **raw 200×128 EEG and image embeddings** (plus
-   `subject`/`object`/`image_idx`), not just score matrices. Any metric, normalization,
-   CSLS/Sinkhorn/Procrustes or new fusion rule is computable for all 235 arms with no checkpoint.
-   Weights are needed only to run an arm on new EEG, add folds/seeds, or dump source-subject scores
-   for the learned router (only `atm_iv` and `ge100` have `source_dumps`).
+2. **The ensemble line's score dumps and code were deleted in the 2026-11-02 cleanup**; the code is
+   in tag `pre-cleanup-2026-11-02`.
 3. **Most ablation sweeps are now weight-free** (`eeg_encoder_architecture_sweep_*`,
-   `projector_only_bb*`, `tsconv_dropout_sweep_*`, `goal25*`, `multihead`, `mixup_*`,
+   `projector_only_bb*`, `tsconv_dropout_sweep_*`, `multihead`, `mixup_*`,
    `multipos_loss_sweep`, `holdout_probe_*`). Their numbers are in `result.csv`; re-running
    `evaluate.py` on them is not possible.
 
@@ -323,19 +315,11 @@ Three facts that follow, and that change how you plan work:
 | Script | Purpose |
 |--------|---------|
 | [`inter-subjects.sh`](scripts/things_eeg/inter-subjects.sh) | Canonical LOSO × `feature_dim` sweep |
-| [`inter-subjects-sparse-clip.sh`](scripts/things_eeg/sparse_clip/inter-subjects-sparse-clip.sh) | Sparse CLIP-style LOSO: `--projector_activation relu`, bb64 + `feature_dim` 512 → `results/things_eeg/inter-subject-sparse/` |
-| [`sparse_clip_logit_fd_sweep.sh`](scripts/things_eeg/sparse_clip/sparse_clip_logit_fd_sweep.sh) | Sweep `feature_dim` × sparsity (relu / topk) × `eeg_l2norm` → `results/things_eeg/inter-subject-sparse/` |
-| [`analyze_sparse_alignment.py`](scripts/things_eeg/sparse_clip/analyze_sparse_alignment.py) | Post-hoc L0 + object-coherence on alignment embeddings from a finished run |
-| [`measure_session_train_sparsity.py`](scripts/things_eeg/sparse_clip/measure_session_train_sparsity.py) | Train-set active-feature fraction at `checkpoint_test_best.pth`; merge into `sweep_summary.csv` |
-| [`plot_confidence_sweep.py`](scripts/things_eeg/sparse_clip/plot_confidence_sweep.py) | Confidence sweep figure (accuracy, L0, test/train active coverage) |
-| [`inter-subject-mixup.sh`](scripts/things_eeg/inter-subject-mixup.sh) | Cross-subject mixup |
-| [`projector_size_sweep.sh`](scripts/things_eeg/projector_size_sweep.sh) | Alignment dim sweep |
-| [`projector_only_sweep_backbone512.sh`](scripts/things_eeg/projector_only_sweep_backbone512.sh) | Fixed `--eeg_backbone_dim`, sweep `--feature_dim` × seeds |
-| [`multipos_loss_sweep.sh`](scripts/things_eeg/multipos_loss_sweep.sh) | Multi-positive ablations |
+| [`inter-subject-tsconv-val-best.sh`](scripts/things_eeg/inter-subject-tsconv-val-best.sh) | TSConv + cross-subject mixup, LOSO-val checkpoint selection |
+| [`inter-subject-SAATC.sh`](scripts/things_eeg/inter-subject-SAATC.sh) | SAGE-TTA (SATTC) evaluation sweep over 10 LOSO checkpoints |
 | [`progressive_sattc_candidate_sweep.py`](scripts/things_eeg/progressive_sattc_candidate_sweep.py) | SATTC hyperparameter / sample-count sweeps |
-| [`session_split_transfer_experiment.py`](scripts/things_eeg/session_split_transfer_experiment.py) | Disjoint half-fold transfer |
-| [`transfer_calibration_experiment.py`](scripts/things_eeg/transfer_calibration_experiment.py) | Calibration / blending experiments |
-| [`image_feature_extract.sh`](scripts/things_eeg/image_feature_extract.sh) | Feature extraction driver |
+
+The sparse CLIP, score-ensemble, reconstruction/caption, transfer and intra-subject lines were abandoned; their code is in tag `pre-cleanup-2026-11-02`.
 
 Bash scripts usually: `source .venv/bin/activate`, `cd` repo root, set `EEG_DATA_DIR` / `IMAGE_FEATURE_DIR` / `DEVICE`, loop subjects 1–10, call `compute_avg_results.py` after each config.
 
@@ -358,7 +342,7 @@ Strong default: **InternViT-6B layer 28**, mean pool, 8-bit (`InternViT-6B_layer
 ## Legacy / low priority
 
 - [`module/image_augmentation.py`](module/image_augmentation.py), [`module/eeg_augmentation.py`](module/eeg_augmentation.py) — used for aug feature paths, not mainline
-- [`fuse_feature.py`](fuse_feature.py), [`analysis/`](analysis/) — ancillary
+- [`fuse_feature.py`](fuse_feature.py) — ancillary (used by `scripts/things_meg/image_feature_extract.sh`)
 - README: “older utilities for augmentation and feature extraction are not the main path”
 
 ## EEG foundation-model encoders (LaBraM / CBraMod)
@@ -375,9 +359,9 @@ Pretrained weights come from the Hub ids `braindecode/labram-pretrained` and
 
 Two details that are easy to get wrong:
 
-- The models consume **200 samples**, not our 250. `--fm_resample resample` (default) treats both
-  as the same one-second window and interpolates 250 Hz -> 200 Hz. `crop` is also implemented and
-  is **wrong** — it collapses sub-01 from 30.0 to 3.0 top-1.
+- The models consume **200 samples**, not our 250. The wrapper treats both as the same one-second
+  window and interpolates 250 Hz -> 200 Hz; train.py has no switch for it. `foundation.py` also
+  implements `resample='crop'`, which is **wrong** — it collapses sub-01 from 30.0 to 3.0 top-1.
 - LaBraM needs `ch_names` for a 63-channel subset, otherwise it demands its full 128-channel
   canonical order. The wrapper passes `THINGS_EEG2_CH_NAMES`; all 63 map case-insensitively.
 
@@ -432,6 +416,6 @@ python compute_avg_results.py --result_dir RESULTS/SESSION/featdim_64 --output_n
 
 ---
 
-*Last updated from repo state: 15 September 2026 (weight cleanup, `scripts/` un-gitignored, root
-drivers moved into `scripts/things_eeg/`). Update this file when default paths, main recipes, or
+*Last updated from repo state: 2 November 2026 (code cleanup of abandoned lines and dead train.py
+flags; pre-cleanup tree in tag `pre-cleanup-2026-11-02`). Update this file when default paths, main recipes, or
 entrypoints change materially.*

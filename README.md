@@ -2,7 +2,7 @@
 
 This repo is about decoding images from EEG, mainly on THINGS-EEG-2 in the inter-subject setting: train on several people, then test on a held-out one.
 
-At a high level, the pipeline is pretty simple. EEG gets preprocessed, images are represented with frozen visual features, and an EEG encoder is trained to land in the same embedding space so EEG trials can retrieve the right image. The main training recipe is a contrastive loss with grouped multi-positive batches, plus a few optional variants like subject mixup and train-time SAW.
+At a high level, the pipeline is pretty simple. EEG gets preprocessed, images are represented with frozen visual features, and an EEG encoder is trained to land in the same embedding space so EEG trials can retrieve the right image. The main training recipe is a contrastive loss with grouped multi-positive batches, plus optional variants such as subject mixup.
 
 At test time, the interesting part is the adaptation side. Besides plain cosine retrieval, the repo also has the SAW / CSLS / Sinkhorn / soft-Procrustes tools that reshape the held-out subject's query geometry and give a much stronger transductive evaluation setup.
 
@@ -62,65 +62,17 @@ SubjectMix is worth +4.80 plain and +13.15 under TTA; TTA is worth +22.90 / +31.
 
 **SubjectMix sensitivity.** `alpha_mix ~ Beta(0.5, 0.5)`. Sweeping two orders of magnitude gives 33.4 / 33.9 / 34.5 / 35.0 / 35.1 for alpha 0.01 → 1.0, so the method is not sharply tuned. Smoothing-style augmentations never beat no-augmentation at any strength; SubjectMix beats the best of them by +5.35 (p=0.0026). Drivers in `scripts/things_eeg/subjectmix_rebuttal.sh`.
 
-## Score ensembling — the strongest inductive path so far
+## Score ensembling
 
-Fuse per-member 200×200 cosine score matrices (per-query standardized, then averaged). Rules live in `ensemble_experiments/retrieval_fusion.py`; full inventory in `ensemble_experiments/ENSEMBLE_RECAP.md`.
+Nested leave-one-fold-out member selection saturates around 44 (44.45 at k=4); code in tag `pre-cleanup-2026-11-02`.
 
-| k members | fixed-pool, all-ten (optimistic) | nested LOFO selection (honest) |
-|---:|---:|---:|
-| 1 | 37.05 | — |
-| 2 | 44.10 | 41.75 |
-| 3 | 46.55 | 43.60 |
-| 4 | 48.20 | **44.45** |
-| 5 | 48.85 | 44.35 |
-| 6 | 49.50 | — |
+## Sparse CLIP
 
-**Read the right column.** The left column selects members using all ten folds, so it is selection-optimistic; the right re-selects members per held-out fold. Honest performance **saturates around 44** by k=4 and does not improve at k=5. Per-k marginals in the optimistic column (+7.05, +2.45, +1.65, +0.65, +0.65) overstate what a new member buys.
-
-What actually drives the gain:
-
-- **Encoder diversity, not backbone diversity.** Mixing EEG encoders (ATM + TSConv) predicts ensemble gain with R²=0.69; image-backbone identity and layer depth do not. Never build a single-encoder committee. EVA adds nothing.
-- **Stop at k=3.** Beyond that you pay compute for selection noise.
-- **Protocol matters more than membership**: test-selected checkpoints beat ValCon by +2.235pp on average over 10 matched arms, so a committee's headline moves by more than a member swap does.
-- Best single arm is 37.0 (`group_e100`, 100-epoch group mixing).
-
-The whole ensemble line replays from `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` — 2,010 npz holding raw 200×128 EEG and image embeddings for 235 arms × 10 folds. Any metric, normalization or fusion rule is recomputable from those without a single checkpoint.
-
-## Sparse CLIP — sparsity that is nearly free, at scale
-
-Can the alignment space be sparse without losing accuracy? Four mechanisms were tried; one works. 5 folds (subjects 01–05), test-selected, `--projector_activation relu`.
-
-**Confidence-gated ReLU at large `feature_dim`.** Active dimensions per sample stay flat at ~25–113 regardless of width, while accuracy climbs until it meets the dense control:
-
-| feature_dim | dense top-1 / L0 | gated top-1 / L0 | Δ | sparsity |
-|---:|---|---|---:|---:|
-| 8192 | 27.8 / 4032 | 27.2 / 95 | −0.6 | 42× |
-| **32768** | **28.2 / 16098** | **28.0 / 113** | **−0.2** | **142×** |
-
-Only 61% of the 32,768 features ever fire on the train set and 2.1% across the 200 test trials — SAE-style dictionary behaviour, not collapse.
-
-Dead ends, so they are not retried: **top-k** collapses (down to 0.5–23% as k shrinks); **ReLU + `--eeg_l2norm`** is sparse but costs 10–16 points; the **logit-scale cap is a complete no-op** — identical accuracy *and* identical L0 across every cap value.
-
-**Two caveats.** The sparsity is relative to width, so 113 active dims is not cheaper than the dense `feature_dim 64` model, which is also more accurate: this is an interpretability result, not a compute result. And the winner has only been run on 5 subjects — the 10-fold confirmation is still outstanding. Drivers in `scripts/things_eeg/sparse_clip/`.
+Confidence-gated ReLU at `feature_dim` 32768 kept 113 active dimensions (142× sparsity) for −0.2 top-1 on 5 folds; code in tag `pre-cleanup-2026-11-02`.
 
 ## Image reconstruction and captioning
 
-A separate within-subject track: instead of retrieving from a fixed candidate set, generate the stimulus. Code in `reconstruction_experiments/`, findings in `reconstruction_experiments/experiments.md` and `reconstruction_experiments/next_experiments.md`.
-
-**ENIGMA reproduced.** The published ENIGMA tree runs on our THINGS-EEG-2 after four fixes (none of which change the method — nothing runs without them). On sub-01 all six reconstruction metrics land **within ~2pp** of the paper. Retrieval does not: Top-1 22.50 against a published 27.60. That gap is probably a cohort artifact — the published figure is very likely a 10-subject average and we have only sub-01 — but it is unresolved, so don't quote either as a clean comparison.
-
-**Captioning is limited by the EEG, not the bridge.** A linear bridge from the *real* image embedding to BLIP-2 Q-Former tokens reaches cwBLEU 29.38 against BLIP-2's own 29.82, so at most **0.44** is available to any increase in bridge capacity — every remaining gap is upstream in the embedding. Feeding EEG instead:
-
-| route | cwBLEU |
-|---|---|
-| ceiling: real image through the same bridge | 29.38 |
-| **best EEG arm** (generative bridge fit on predictions, sigma 1.08) | **10.06** |
-| retrieval from the ENIGMA embedding | 8.61 |
-| render an image first, then caption it (SDXL → BLIP-2) | 5.40 |
-
-Rendering pixels and captioning them is the worst route, and at +0.02 over a fixed-caption control (p = 0.996) it does not clear the floor at all. Noise-matched training — fitting the bridge on predictions *with* the decoding loss — is what moves the EEG arm; neither factor acts alone.
-
-**Two methodological traps recorded here.** cwBLEU's fixed-caption floor is gameable (a degenerate arm reaches 16.94), so score against the **permutation null**, not the floor. And a claim that retrieval accuracy does not predict caption quality has been **retracted**: the 6.51-vs-7.09 gap came from comparing a handicapped arm (no noise augmentation, pre-decoding-fix) against a modern one; the rerun gives 8.59. Neither top-1 nor cosine has been shown to separate those encoders.
+ENIGMA reproduced within ~2pp on sub-01 reconstruction metrics, and the best EEG caption arm reached cwBLEU 10.06 against a 29.38 real-image ceiling; code in tag `pre-cleanup-2026-11-02`.
 
 ---
 
@@ -140,22 +92,17 @@ If you just want the main pieces, start here:
 - `module/util.py` — SAW, CSLS, Sinkhorn, soft Procrustes, retrieval
 - `module/eeg_encoder/model.py` — TSConv, EEGNet, EEGConformer, …
 - `module/eeg_encoder/foundation.py` — LaBraM / CBraMod full fine-tuning
-- `ensemble_experiments/retrieval_fusion.py` — score-fusion rules
-- `reconstruction_experiments/` — reconstruction + captioning (`reconstruction_experiments/reconstruct_eval.py`, `reconstruction_experiments/caption_bridge.py`)
 
 Main THINGS-EEG sweeps:
 
 - `scripts/things_eeg/inter-subjects.sh` — canonical LOSO sweep
-- `scripts/things_eeg/inter-subject-mixup.sh` — SubjectMix
+- `scripts/things_eeg/inter-subject-tsconv-val-best.sh` — TSConv + SubjectMix, LOSO-val checkpoint selection
 - `scripts/things_eeg/inter-subject-SAATC.sh` — SAGE-TTA
 - `scripts/things_eeg/inter-subject-foundation.sh` — foundation-model arms
-- `scripts/things_eeg/projector_size_sweep.sh`, `scripts/things_eeg/multipos_loss_sweep.sh`
 
 Main adaptation scripts:
 
 - `scripts/things_eeg/progressive_sattc_candidate_sweep.py`
-- `scripts/things_eeg/session_split_transfer_experiment.py`
-- `scripts/things_eeg/transfer_calibration_experiment.py`
 
 There are still some older utilities around for augmentation and feature extraction, but they are not the main path anymore.
 

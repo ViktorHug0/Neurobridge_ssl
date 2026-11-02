@@ -15,7 +15,6 @@ kept everywhere, so all recorded numbers stay readable even where weights are go
 | Path | pth / GB | Backs |
 |---|---|---|
 | `results/things_eeg/subjectmix_rebuttal/` | 245 / 15.6 | vxam SubjectMix justification; `smooth_kernel_sweep/` = smoothing controls |
-| `results/things_eeg/intra-subjects/` | 101 / 7.8 | intra-vs-inter bars; `TTA/` holds the 85.2 inductive intra bar |
 | `results/things_eeg/foundation/` | 24 / 2.5 | vxam-Q1 LaBraM + CBraMod full-FT 2×2 (`labram_2x2_summary.csv`) |
 | `results/alljoined/` | 112 / 4.4 | **paper dataset 2 of 3** (AllJoined-1.6M, appendix `alljoined-meg-results`); also 6S7i-Q3 subject variability (n=6, CV 0.179→0.379) |
 | `results/things_meg/` | 30 / 1.9 | **paper dataset 3 of 3** (THINGS-MEG, 4 subjects/271 ch; appendix `alljoined-meg-results`) — the "generalizes across recording modalities" claim rests on this |
@@ -33,11 +32,6 @@ kept everywhere, so all recorded numbers stay readable even where weights are go
 | `results/things_eeg/cvpr/loso/{atm128_l31,reve6,reve6m,rmix,rmixm,sqf}` | — / 0.6 | CVPR encoder screens (folds 1/3/8; E1.3–E1.5, E1.7) |
 | `results/things_eeg/cvpr/{final,tta_screen_loso,tta_screen_intra,intra_analyses,regimes*,stream*,emb_cache,...}` | 0 | every CVPR analysis output (CSVs; `emb_cache` = 80-rep embeddings, replay without the model) |
 | `results/things_eeg/cvpr/competitors/sattc/own_conditions_seed3300` + `/nasbrain/p20fores/SATTC-CVPR2026/Retrieval/models/contrast/run_sattc_loso_sattc/` | — | SATTC under its own protocol (11.39 top-1) and the wrapper-validation checkpoints |
-| `results/things_eeg/synthetic_subjects/promising_allfolds/group_e100/seed3300` | 10 / 0.6 | current best base model, 37.0 |
-| `results/things_eeg/synthetic_subjects/ensemble_screen/dumps/` | 0 / 1.2 GB npz | 2,010 score dumps = 235 arms × 10 folds; the whole ensemble analysis replays from here |
-| `results/things_eeg/synthetic_subjects/layer_sweep/` | 122 / 5.2 | arm-naming reference (`*_ch17` = electrode ablation) |
-| `results/things_eeg/ensemble50_testselected/` | 192 / 9.7 | 16-arm ledger, `rule_final_ledger16.json` |
-| `results/things_eeg/inter-subject-sparse/` | 25 / 29.9 | sparse winner `fd32768_learned_confidence` + controls (curated 2026-09-14) |
 
 Also protected inside otherwise-cleared `inter-subjects/`:
 
@@ -45,7 +39,7 @@ Also protected inside otherwise-cleared `inter-subjects/`:
 - `eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-H-14_layer10_mean_ATM_seed3300_mixup` — `atm_vith`
 - `eeg_encoder_architecture_sweep_mixup_20260429-221100/ViT-bigG-14_layer27_mean_TSConv_seed3300_mixup` — `tsconv_bigg`
 - `eeg_encoder_architecture_sweep_mixup_20260429-221100/EVA02-E-14_layer35_mean_TSConv_seed3300_mixup` — `tsconv_eva`
-- `tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed330{0,1,2}_valbest` — live ValCon/gate pool roots (`validation/pool.json`, `gate_pool.json`); `honest_ensemble` refits point here as `val_root`
+- `tsconv_val_best_20260501-170237/param_k30_pool51_do050_featdim512_seed330{0,1,2}_valbest` — `honest_ensemble` refits point here as `val_root`
 
 ### Raw/preprocessed data — protected results, re-derivable inputs
 
@@ -61,7 +55,7 @@ deliberate decision, not as cleanup.
 
 | Path | Backs |
 |---|---|
-| `scripts/things_eeg/tta_rebuttal/` (27 files) | every response-period experiment |
+| `scripts/things_eeg/tta_rebuttal/` (31 files) | every response-period experiment |
 | `scripts/things_eeg/inter-subject-SAATC*.sh` | SATTC/SAGE training + sweeps |
 | `scripts/nsd_sage/` (13 files) | SAGE→fMRI transfer |
 | `scripts/alljoined/` | AllJoined LOSO |
@@ -98,9 +92,17 @@ LaBraM_mix also reproduces on sub-02 (41.50/74.50) and sub-10 (44.50/78.00).
 
 The one thing the weights could not determine was how a 250-sample epoch became the 200 the models
 consume; `--fm_resample resample` (250 Hz → 200 Hz over the same one-second window) reproduces the
-numbers, while `crop` gives 3.0 instead of 30.0. Objective and full-FT decision follow AVDE
+numbers, while `crop` gives 3.0 instead of 30.0. Since the 2026-11-02 cleanup the flag is gone and
+`resample` is the wrapper's fixed default (`evaluate.py` still replays LaBraM_mix sub-01 at 30.00 / 59.50). Objective and full-FT decision follow AVDE
 (Du/Dai et al. 2026, `papers/shallow_alignment.md`) and Liu et al. ICLR 2026 respectively.
 
-**Lesson:** `.gitignore` excludes `scripts/`, `results/`, `data/`, `output/`, `slides/`, `graphs/`.
-Only 35 of ~180 files in `scripts/` are tracked (they predate the ignore rule). Everything else there
-is one `rm` from permanent loss. Commit or un-ignore `scripts/` before the next cleanup round.
+**Lesson:** commit code before any cleanup round. The 2026-11-02 cleanup committed every text file first
+(tag `pre-cleanup-2026-11-02`); `results/`, `data/` and `logs/` stay out of git.
+
+## 2026-11-02 cleanup
+
+Unprotected and deleted (no paper or rebuttal number uses them): `results/things_eeg/intra-subjects/`,
+`synthetic_subjects/` (group_e100, ensemble dumps, layer_sweep), `ensemble50_testselected/`,
+`inter-subject-sparse/`, the ensemble-line results, and every failed Track-1 run. Code of all abandoned
+lines: git tag `pre-cleanup-2026-11-02`. Track-1 keeps the best ensemble only
+(`results/alljoined/track1/cv4/`, 10 recipes + their tta_cache; `neurips_challenge/README.md`).

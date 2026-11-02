@@ -367,7 +367,6 @@ def main():
     )
     parser.add_argument("--sattc_soft_procrustes_assignment_topk", type=int, default=None)
     parser.add_argument("--sattc_alignment_subspace_dim", type=int, default=None)
-    parser.add_argument("--dump_npz", type=str, default=None, help="Save encoded test features + labels here (ensemble_experiments/test_selected/dump_testselected_arm.py)")
     parser.add_argument("--feature_dim", type=int, default=None)
     parser.add_argument(
         "--eeg_tta_shifts",
@@ -501,11 +500,6 @@ def main():
         average=test_average,
         eeg_tta_shifts=eval_args.eeg_tta_shifts,
     )
-
-    if args.dump_npz:
-        os.makedirs(os.path.dirname(os.path.abspath(args.dump_npz)), exist_ok=True)
-        np.savez(args.dump_npz, eeg=eeg_feature_all, image=image_feature_all,
-                 subject=subject_all, object=object_all, image_idx=image_all)
 
     if sattc_params["soft_procrustes_enabled"] or sattc_params["sinkhorn_enabled"]:
         eeg_feature_all = process_query_features(
