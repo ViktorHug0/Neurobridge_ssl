@@ -1,7 +1,7 @@
 """cv4 score of an ensemble under the lean test-time adaptation, exactly as a submission's predict() would run it
 (score_track1.batch_transform_wknn on each 64-trial batch of the tta_cache.py stream), with the official
 subject-aggregated top-5 (official_metrics.py, verbatim from the competition repo), averaged over the folds' people.
-    lean_tta.py [--folds 1 2 3 4] [recipe ...]       default: the best ensemble (OPTX5, HISTORY.md: 44.25)
+    lean_tta.py [--folds 1 2 3 4] [recipe ...]       default: the best ensemble (OPTX5: 45.20 with add-back beta 0.5 + sqrt-norm vote weight, 44.25 before)
 """
 import argparse, os, sys
 import numpy as np

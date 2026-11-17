@@ -11,6 +11,577 @@ Newest entries go at the top. For every run, record:
 
 Only runs under protocol P-clean (`checklist.md`) can feed the paper. Older numbers are listed in the provenance section below as context only.
 
+## 2026-11-17 12:40 — page 9 overflow fixed (my 12:30 page check was wrong)
+
+- The 12:30 PDF had ~6 conclusion lines on page 9: my check only looked for the "Conclusion." heading on page 8.
+  Proper check now: no main-text line above "LLM Usage Statement" on its page (scratchpad `overflow.py`).
+- Fix (backups `*.before_1235.tex`): SCORE selection merged into the GALA selection sentence (Implementation details);
+  Sec. 4.2 "the query frequencies b of the gallery images in the probability simplex Delta_K" (set definition dropped).
+  Conclusion now ends at the bottom of page 8. `submission/paper.pdf` + `supplementary.pdf` regenerated.
+
+## 2026-11-17 12:30 — final submission PDFs regenerated from the user's 12:23/12:24 version
+
+- User's Section 4 (bilevel b, warm start restored by me in 4.3 and Alg. 1, frequency sentence fixed); Fig. 3 source
+  moved into Sec. 4.2 so it lands at the top of page 6; "lets GALA account for (A3) and (A4)"; Implementation details:
+  "(Sec. 3)" dropped, "The two hyper-parameters of SCORE with ATM are selected in the same way."; Supp. references and
+  supplementary header re-applied (the user's upload predated them). Main text ends on page 8, no warnings.
+- `CVPR_paper/submission/paper.pdf` (12 pages) and `supplementary.pdf` (7 pages) regenerated with `mutool merge`.
+  Backups of the user's uploads: `logs/cvpr/paper_backup/{paper.user_1224,section4.user_1202,section4.user_1223}.tex`.
+
+## 2026-11-17 11:05 — submission PDFs (CVPR rules: only references + LLM statement after page 8)
+
+- CVPR 2027 Author Guidelines (checked online): 8 pages incl. figures; extra pages only for references and the LLM Usage
+  Statement (does not count, goes before the references); supplementary = separate ZIP/PDF, due Nov 23 2026 AoE.
+- User's trimmed `paper.tex` (10:44, backup `paper.user_1044.tex`): main text ends on page 8. Kept 3 audit fixes on the
+  user's request (last 30 % wording, ablation 1.6-3.7, AdaBN / Tent 1-min cells); reverted the other 4.
+- `paper.tex`: main-text "Appendix~\ref" -> "Supp.~\ref" (9), "(Supp.~Fig.~...)" for the heatmap and "(Supp.~Table~...)"
+  for the ablation; supplementary header (title + "Supplementary Material", page counter reset) at the start of the
+  appendix block. One compile, split with `mutool merge`: `CVPR_paper/submission/paper.pdf` (pages 1-12, 1.05 MB) and
+  `CVPR_paper/submission/supplementary.pdf` (7 pages, 0.42 MB). (pdfunite tripled the size: do not use it.)
+
+## 2026-11-17 10:45 — code audit (agent): no leakage, no result-changing bug; three description fixes
+
+- Checked: causality (query t decoded by a fit on x[:t]; batch-only methods on x[:t+1]); labels never reach any
+  calibration (SATTC's evaluate_model uses them only for its loss / accuracy); selection = order 10, target subject
+  excluded, merge reproduces the selected CSVs; same streams for all methods; warm start reset per stream and method.
+- Fixed (backups `*.before_1045.tex`): Sec. 4.1 said "every quantity estimated from the buffer" gets the prior, but the
+  CSLS gallery term does not -> "the whitening and the rotation"; the Procrustes matrix uses the unnormalized gallery
+  (gala.py: C = e.T @ P**gamma @ graw) -> stated in "Practical choices"; Appendix D said SCORE's (5, 0.05) is used "in
+  every experiment" -> "for SCORE with its own encoder" (SCORE with ATM is stream-selected).
+- Left as is (user's choice to drop the sentence): GALA's settings were selected with the no-column-constraint variant
+  (`select/warm1_softmax`); the reselection for the final variant gives the same accuracy (+0.06, se 0.14).
+
+## 2026-11-17 10:30 — independent recomputation of every number (agent): tables all match; text fixes applied
+
+- Agent recomputed Table 1, ablation, encoder tables, Alljoined/MEG table, batch GALA row, Appendix C and the text
+  numbers from the raw CSVs with its own code (scratchpad `audit/`): every table cell within rounding; no duplicated
+  stream; 300 streams per ATM setting (AdaBN / Tent: 90 = 3 orders).
+- Fixed in `paper.tex` (backup `paper.before_1030.tex`): the 60-setting claims say "over the last 30% of the stream"
+  (they were "at the end of the stream", which Sec. 5 defines as the last 10%; with the last 10% the lead is 7.1, still
+  60 / 60); ablation "1.6 to 3.7 points" (CSLS brings 1.6 on the partial stream); encoders "on the uniform stream";
+  Alljoined / MEG "gains at most 4.1 points" (q = 40 partial: 4.08); Table 1 caption "three stream orders for AdaBN and
+  Tent"; AdaBN / Tent 1-minute cells = the zero-shot values (first update after 20 queries, so their decisions in the
+  1-minute window are the unadapted encoder's; the old cells were the first 20-query window); Appendix C says its
+  settings are selected on the batch results (ATM 80.0 there vs 79.1 in the batch table with stream-selected settings).
+- Not reported in the paper: THINGS-MEG q = 2 / 4 (GALA below zero-shot at q = 2, below SCORE / Hungarian at q = 4).
+
+## 2026-11-17 10:00 — paper edits on request; final audit running
+
+- **User edits requested (all applied in `paper.tex`, backups `logs/cvpr/paper_backup/paper.before_{0920,0940,1000}.tex`):**
+  prior slightly more emphasised (contribution 2); then old title restored ("GALA: Gallery-Level Alignment for Real-Life
+  Vision Decoding from EEG"), prior removed from the abstract, abstract shortened; two-form identity of Sec. 4.2 inline;
+  "Standard evaluations" (Sec. 3) shortened; ablation table -> Appendix G; "Evaluation practice" trimmed; the three
+  encoder tables merged into one full-width table (streams as column groups, one row block per encoder) on its own page,
+  source placed after the ablation table so that the ablation table fills the free column of the page before. The user
+  trims the rest of the main text on Overleaf.
+- **Checks (this session):** batch table rows zero-shot / CSLS (k = 3) / Hungarian / SCORE with ATM reproduced per subject
+  from `inc/cache/atm128_vc_s*/q80`; SCORE own encoder 52.35 (k = 5, rho = 0.05) and 50.80 (paper constants); 3.6-point
+  checkpoint inflation = log entry 2026-10-25 (35.8 test-selected vs 32.2); timings and stream lengths consistent.
+
+## 2026-11-17 08:45 — encoder tables to Appendix F (+ skewed / partial streams); bibliography verified; new GALA diagram
+
+- **User:** encoder table to the appendix, with the same table for the skewed and partial streams. Jobs 76922-76924
+  (`inc/queue_causal2i.txt`, 100 commands, 23 min): zero-shot, SATTC, SCORE and GALA (final) for the five other
+  encoders on the skewed and partial streams, 3 orders, stream-selected settings -> `inc/causal2_enc_sp`;
+  `causal_tables.py` prints the three encoder tables. GALA above SCORE for every encoder and time except LaBraM between
+  5 and 20 min (SCORE up to +1.5 on skewed / partial, +1.7 on uniform).
+- **Bibliography (3 agents, 84 cited entries):** no error; added verified volume / page numbers to 9 entries.
+- **Figure 2:** `figures/GALA_v2.png` from `scripts/edit_gala_png.py` (original GALA.png kept): column marginals b_1..b_4,
+  new full-width panel "4) Refine alignment with new queries" (query stream on a time axis, new query in blue with an
+  arrow into the loop, future queries dashed, alpha_t curve). Caption extended.
+
+## 2026-11-17 08:00 — Alljoined / MEG under the final method in the paper (Appendix E + Sec. 5.6); selection check
+
+- **Jobs 76755-76757 (`inc/queue_causal2h.txt`, done 00:16):** stream-based selection of the final method on Alljoined
+  (q = 20; GALA (0.6, 0.2, 1.5) for all 20, SCORE (10, 0.2)) and THINGS-MEG (q = 4), then `xds_chain.sh`: SCORE + GALA
+  causally -> `results/{alljoined,things_meg}/cvpr/causal2` (360 streams per method). Tables: `xds_tables.py`.
+- **Last 30 % of the stream (U / S / P):** Alljoined q = 20 zero-shot 6.9 / 7.1 / 7.1, Hungarian 8.6 / 8.6 / 8.1, SCORE
+  8.5 / 9.0 / 8.9, GALA 8.3 / 9.0 / 9.0; q = 40 zero-shot 8.7 / 8.7 / 8.4, SCORE 12.5 / 12.2 / 12.3, GALA 12.5 / 12.4 / 12.4.
+  THINGS-MEG q = 6 zero-shot 4.6 / 4.7 / 4.6, Hungarian 6.2 / 7.1 / 6.0, SCORE 6.0 / 6.2 / 6.7, GALA 5.6 / 6.3 / 7.1.
+  Every method within 4 points of zero-shot. In the paper: Appendix E (Table 5), two sentences at the end of Sec. 5.6
+  (renamed "Generalization to Other Encoders and Datasets"), one clause in Limitations.
+- **From-scratch row of the final method (`*_abl4b_*`):** 37.3 / 59.2 / 67.6; 37.4 / 59.2; 37.5 / 56.4 (warm start within
+  0.3) -> ablation table row "16 iterations per update" + cost sentence.
+- **Selection check (`inc/select/warm1_freq1`, final variant):** picks differ (power 1.5 more often) but the accuracy of the
+  final method on the selection streams is the same at the used and at the reselected settings (+0.06, se 0.14): no rerun.
+
+## 2026-11-16 22:45 — paper: hedges removed, batch table to Appendix D, batch = no prior, Appendix C redone
+
+- **User (22:20):** remove fluff / hedging sentences; per-subject batch table to the appendix; redo Appendix C with the new
+  method "no need for the prior though"; add Alljoined / MEG to the appendix and to the main text where it fits best.
+- **Batch evaluation now without the prior everywhere** (decision for consistency with Appendix C; complete batch):
+  GALA 79.1 (sd over seeds 1.2; top-5 91.9 < SCORE with ATM 92.3), +15.8 over the Hungarian control; with the prior
+  77.5. On SCORE's encoder (`inc/cache/score30s2_orig_s3300`, batch-selected settings): 65.9 without prior, 58.2 with
+  (d = 512: n0 = 1024 > 200 queries), old method 69.9.
+- **Appendix C (`appendix_c.py` -> `analysis/encoder_gain_final{,_grid}.csv`; final method without prior, 16 iterations,
+  settings selected on the batch evaluation of the other folds; full grid for d = 128, reduced grid of 30 for d = 512):**
+  errors fixed ATM 70.5 (3 seeds; top-1 80.0), TSConv 44.6, EEGNet 41.7, EEGProject 39.0, Conformer 48.2, LaBraM 36.4;
+  targets iv20 62.1, bigG 57.6, DINOv2 19.1, iv44 15.7, CLIP-H 11.5. Spearman over 11 models: RSA 0.95, zero-shot 0.83.
+  `make_encoder_figure.py` now reads `encoder_gain_final.csv`.
+- **Text:** batch table + "comparison with published results" -> new Appendix D (`app:batch`); removed: selection-variant
+  sentence, 600-query subsample sentence, AdaBN/Tent stream-order note, TransCLIP selection note, encoder-table caption
+  note, untuned pseudo-count clause. Section 4.1: the query frequencies have their own uniform prior (n_b, not alpha_t).
+  Main text now ends on page 9 (limit 8).
+
+## 2026-11-16 22:10 — method locked (user): estimated column masses + warm start; paper updated to the causal protocol
+
+- **User decision:** "let's lock in estimated column mass final setting. With warm restart"; `paper.tex` may be edited
+  from now on ("always try to perform minimalistic edits"); Alljoined and THINGS-MEG go in the appendix, with settings
+  selected on their own streams. Final method = `gala_sw_freq1` (`inc_stream.GALA`): CSLS scores -> column masses = soft
+  counts of the buffer + pseudo-count 1 -> 12 Sinkhorn steps -> Procrustes with the prior, ONE iteration per query from
+  the previous rotation; rho / tau / power = `inc/select/warm1_softmax` (selected for the variant without column
+  constraint; a check with the final variant is queued, `inc/select/warm1_freq1`).
+- **Ablation of the final method (jobs 76675-76677, `*_abl4a_*`), main setting (1 / 20 / 53 min uniform; 1 / 20 skewed;
+  1 / 20 partial):** GALA 37.2 / 59.1 / 67.3; 37.4 / 59.0; 37.4 / 56.1. w/o whitening 37.4 / 55.7 / 60.8; 37.7 / 55.8; 37.5 /
+  53.0. w/o CSLS 36.2 / 55.8 / 58.6; 35.4 / 55.3; 36.4 / 54.5. Uniform masses 37.1 / 58.4 / 69.4; 37.3 / 58.5; 37.1 / 55.0.
+  No column constraint 37.9 / 58.5 / 65.8; 37.9 / 58.3; 37.1 / 55.6. w/o rotation 36.2 / 39.1 / 39.0; 34.5 / 39.4; 34.8 / 37.6.
+  w/o prior 10.7 / 4.0 / 5.5; 10.4 / 3.9; 10.0 / 3.5. From scratch with 16 iterations (`*_abl4b_*`): running.
+- **Batch test of the final method (`batch_final.py` -> `inc/batch_final.csv`; 16 iterations from the identity, 3 seeds):**
+  estimated masses + prior 77.5 (top-5 95.2, sd over seeds 1.2; per subject 82.5 79.8 82.3 60.7 79.2 76.0 76.5 71.2 79.0
+  87.7); without prior 79.1; uniform masses + prior 79.4; uniform masses, no prior, batch-selected settings 81.8 (the
+  number of the earlier drafts, reproduced). Hungarian control 63.3, SCORE with ATM 66.8.
+- **Cost (one core, d = 128, K = 200):** one update 7 / 15 / 24 ms at 100 / 400 / 800 queries; 16 iterations from the
+  identity 81 / 141 / 226 ms.
+- **Figures for the paper (causal protocol, final method):** `figures/final_incremental.pdf` (main figure),
+  `final_grid_heatmap.pdf`, `final_stream_full_{uniform,skew,skew25}.pdf` (`make_inc_figures.py`, `explore_grid_viz.py`).
+- **`paper.tex` / `section4.tex` edited (backups of the user's files: `logs/cvpr/paper_backup/*_2211.tex`):** title
+  (advisor's suggestion), abstract, contributions 1-3, Section 3 (query decoded before it enters the buffer; protocol;
+  selection on the streams), Table 1 (all rows causal), evaluation / baselines / implementation text, main results,
+  ablation table and text, batch table GALA row (77.5; 81.8 kept in the text as the uniform-mass, no-prior variant),
+  Hungarian paragraph, conclusion, limitations, appendix A text / captions / figures, appendix C first sentence, new
+  related-work paragraph (kindermans2012bayesian, huebner2017learning, + verified wang2022cotta, gong2022note,
+  lipton2018bbse). Section 4 rewritten on the user's structure: prior (4.1), whitening with the alpha_t moments and the
+  registration problem with estimated masses tied to A3 / A4 (4.2), incremental update with Algorithm 1 = one update
+  per query (4.3). Builds without warning; main text ends on page 10 (the user's version: page 9): over the 8-page
+  limit. Still to fill: encoder table (TSConv running), "from scratch" ablation row, Alljoined / MEG appendix.
+- **Queued after the current jobs (`inc/queue_causal2h.txt`, watcher submits 3 jobs):** stream-based selection on Alljoined
+  (20 people, q = 20) and THINGS-MEG (4 people, q = 4) for the final method, then `xds_chain.sh` runs SCORE and GALA
+  causally -> `results/{alljoined,things_meg}/cvpr/causal2`; selection check for the final variant on THINGS-EEG-2.
+
+## 2026-11-16 21:50 — encoder table and the estimated-column-masses variant on the grid: 60 of 60, mean lead 6.6
+
+- **Jobs 76502-76504** (two relaxed rows + encoder selection) and **76631-76633** (encoder table + `gala_sw_freq1` grid)
+  completed, no crash. All numbers below from `CVPR_paper/scripts/causal_tables.py` (new; output in
+  `logs/cvpr/inc/causal_tables.out`; it reproduces the 55 / 60 and 60 / 60 counts and the main-setting tables).
+- **Relaxed column constraint with warm start and stream-selected settings, main setting (1 / 5 / 20 / 53 min uniform;
+  skewed; partial):** `gala_sw_freq1` (Sinkhorn towards column masses = soft counts of the buffer + pseudo-count 1) 37.2 /
+  46.2 / 59.1 / 67.3; 37.4 / 45.3 / 59.0; 37.4 / 47.4 / 56.1. `gala_sw_cp50` (column step to the power 0.5) 37.3 / 45.3 /
+  58.5 / 69.1; 37.5 / 44.5 / 58.4; 37.3 / 46.6 / 55.0 (= balanced Sinkhorn: no use).
+- **`gala_sw_freq1` on the 60 settings (`inc/causal2_freq`, main setting from `inc/causal2/*_abl3_*`, 300 streams each;
+  settings selected for `gala_sw`, pseudo-count not selected):** ahead in **60 of 60**, mean lead **6.6** (uniform 10.7,
+  skewed 5.5, partial 3.7); `gala_sw` 60 of 60, 6.0 (9.3 / 4.9 / 3.7); current method 55 of 60, 6.6 (12.6 / 5.1 / 2.2).
+  Against `gala_sw`: higher in 47 of 60 settings (uniform 20, +1.4 on average; skewed 17, +0.6; partial 10, -0.1; by
+  repetitions q = 5 / 10 / 20 / 40: -0.1 / +0.4 / +1.0 / +1.3; worst -2.0 at partial K = 25 q = 5). Smallest leads:
+  partial K = 25 q = 20 and K = 200 q = 5 (+0.8), K = 25 q = 10 (+0.9).
+- **Encoder selection on streams (`inc/select/enc_<encoder>`, grid of 30, seed 3300):** conformer mostly (0.9, 0.03-0.05,
+  1.0-1.2), eegnet (0.8, 0.03, 1.2) x 10, eegproject (0.9, 0.03, 1.2) x 10, labram (0.94, 0.05-0.1), tsconv (0.9, 0.03, 1.2)
+  x 10: tau = 0.03 is the lowest value of the grid. SCORE picks vary per encoder (`score_selected_s3300.csv`).
+- **Encoder table, `gala_sw` (uniform, q = 20, 3 orders; 1 / 5 / 10 / 20 / 53 min; SCORE stream-selected in brackets):**
+  Conformer 28.8 / 31.1 / 32.3 / 36.4 / 45.3 (21.2 / 25.3 / 29.2 / 31.8 / 33.3); EEGNet 21.7 / 27.9 / 31.0 / 34.2 / 40.6
+  (15.0 / 26.9 / 29.4 / 32.6 / 33.2); EEGProject 24.2 / 29.7 / 31.2 / 32.8 / 35.0 (16.7 / 27.2 / 27.9 / 30.0 / 28.6); LaBraM
+  26.7 / 31.7 / 33.5 / 37.0 / 39.5 (20.8 / 30.8 / 35.0 / 39.2 / 39.0): behind SCORE at 10 and 20 min; TSConv 27.1 / 31.2 /
+  33.3 / 40.0 / 48.8 (20.0 / 26.9 / 30.2 / 34.6 / 34.2).
+- **Launched (jobs 76675-76677, `inc/queue_causal2e.txt`, 110 commands)** so that both variants are complete: ablation of
+  `gala_sw_freq1` on the main setting (`gala_swf_nowhiten`, `_nocsls`, `_noprior` -> `*_abl4a_*`; from scratch with 16
+  iterations = `gala_freq1` -> `*_abl4b_*`; no rotation = `gala_s_norot`, uniform masses = `gala_sw_sinkhorn`, no column
+  constraint = `gala_sw`, all done) and its encoder table (`inc/causal2_enc/*_f_*`, settings of `gala_sw`).
+- **Paper:** user pasted a new `paper.tex` + `section4.tex` (prior first, one objective, Algorithm 1); reviewed, not edited.
+  Method choice (no Sinkhorn vs estimated masses) still open; number swap to the causal metric waits for the user's go.
+
+## 2026-11-16 16:30 — full rerun of the candidate complete: ahead in 60 of 60 settings (rule passed); encoder selection launched
+
+- **Jobs 76454-76456 completed** (2 h 35 min, no crash); `inc/causal2` holds 300 streams per setting for `gala_sw` and SCORE
+  (stream-selected), and for the six ablation variants on the main setting.
+- **60 settings, last 30 % of the stream, competitors = CSLS / SATTC / Hungarian (`inc/causal1`, same streams) and SCORE
+  with stream-selected settings:** candidate ahead in **60 of 60**, mean lead 6.0 (uniform 20, 9.3; skewed 20, 4.9; partial
+  20, 3.7); current method 55 of 60, 6.6 (12.6 / 5.1 / 2.2). Candidate minus current accuracy: uniform -3.5, skewed -0.3,
+  partial +1.4. SCORE stream-selected minus (5, 0.05): -0.15. Smallest leads: partial K = 25 q = 20 (+0.7), partial K = 200
+  q = 5 (+0.9). Figure `figures/causal2_grid_heatmap.pdf/.png` (block added to `explore_grid_viz.py`).
+- **Main setting (1 / 5 / 20 / 53 min uniform; 1 / 5 / 20 skewed; partial):** candidate 37.9 / 46.2 / 58.5 / 65.8; 37.9 / 45.3 /
+  58.3; 37.1 / 47.4 / 55.6 (current 36.9 / 45.3 / 58.2 / 68.5; 37.8 / 44.3 / 58.4; 37.2 / 46.4 / 55.1). SCORE stream-selected
+  29.3 / 42.3 / 52.0 / 53.4; 29.3 / 42.2 / 52.1; 29.9 / 43.9 / 50.1.
+- **Ablation of the candidate:** w/o whitening 38.0 / 45.6 / 54.5 / 59.0; 37.9 / 44.7 / 54.5; 38.0 / 46.7 / 52.1. w/o CSLS 30.4 /
+  37.3 / 50.4 / 52.6; 31.3 / 36.4 / 50.0; 32.1 / 37.8 / 49.4. w/o rotation 36.2 / 36.1 / 39.1 / 39.0; 34.5 / 35.4 / 39.4; 34.8 /
+  36.8 / 37.6. w/o prior 13.8 / 5.8 / 7.2 / 9.4; 14.7 / 5.5 / 7.2; 15.3 / 6.3 / 7.0 (collapse, below zero-shot). Balanced
+  matching put back (warm start kept) 37.1 / 45.4 / 58.4 / 69.4; 37.3 / 44.4 / 58.5; 37.1 / 46.4 / 55.0. From scratch, 16
+  iterations 38.0 / 46.2 / 58.6 / 66.2; 38.0 / 45.4 / 58.7; 37.1 / 47.5 / 55.9 (warm start costs nothing).
+  Script: scratchpad `main_table.py` (minute m = queries within +-30 % of 15 m; 53 min = last 10 %); it reproduces the
+  causal1 numbers above exactly.
+- **Development numbers for the relaxed column constraint (`inc/dev`, 16 iterations from scratch, batch-selected settings,
+  2 orders; difference to the current method, whole stream uniform / skewed / partial):** power 0.75: 0.0 / 0.0 / -0.2;
+  0.5: 0.0 / 0.0 / -0.1; 0.25: -0.2 / -0.2 / +0.2; estimated b pseudo-count 4: -0.1 / 0.0 / +0.3; 1: -0.3 / +0.2 / +0.8;
+  0.5: -0.4 / +0.1 / +0.8; none: -0.9 / -0.6 / +0.6. User (colleague's proposal to relax instead of remove): "stay with the plan".
+- **Launched (jobs 76502-76504, `inc/queue_causal2b.txt`, 330 commands):** (a) two more ablation rows on the main setting,
+  `gala_sw_cp50` (column step to the power 0.5) and `gala_sw_freq1` (estimated column masses), both warm-started ->
+  `inc/causal2/*_abl3_*`; (b) stream-based selection for the five other encoders (d = 512, 0.4 s per warm update, so a grid
+  of 30: rho 0.8 / 0.9 / 0.94 x tau 0.03 / 0.05 / 0.07 / 0.1 / 0.14 x power 1.0 / 1.2; SCORE: its 12 settings) ->
+  `inc/select/enc_<encoder>/` (`select_stream.py --enc --axes`; merge now also writes `score_selected_s<seed>.csv`).
+  Next: merge, then `inc_causal.py --methods score gala_sw` on the uniform stream, 3 orders -> `inc/causal2_enc`.
+
+## 2026-11-16 13:45 — stream-based selection done; full rerun of the candidate method launched (user decisions)
+
+- **User decisions (2026-11-16):** no frequency estimation; candidate new default = GALA without Sinkhorn, with warm start
+  ("package in the warm start while we're at it") and settings selected on the streams, in ONE full rerun; adopt if the
+  60-setting count holds or improves; 3 CPU nodes.
+- **Why no Sinkhorn:** batch test 81.8 -> 71.1 without it (w/o CSLS 80.8, w/o both 53.0); on the streams within 0.5 for 20
+  minutes and -2.5 at 53 min uniform (ablation above): the balanced matching is the soft form of the Hungarian control.
+- **Ten orders, current method:** GALA ahead in 55 of 60 settings (uniform 20, skewed 20, partial 15), mean lead 6.6
+  (12.6 / 5.1 / 2.2); behind: partial K = 25 q = 5, 10, 20 (-2.0, -2.2, -0.9), K = 50 q = 10, 20 (-0.6, -0.7).
+- **Selection on streams (`select_stream.py`, jobs 76257, 76333, 76367-76368; main setting, stream order 10, grid of 126;
+  per person the setting best on the other nine of the seed), mean of the three streams on the same queries (every
+  8th), 3 seeds x 10 people:** current method 52.5 with the batch-selected (0.7, 0.1, 1.2), 53.1 stream-selected;
+  no Sinkhorn, 16 iterations: 52.9 / 52.6; no Sinkhorn + warm start (1 iteration): 53.0 / 53.0 (on all queries: 53.2 at
+  the batch-selected values, 54.2 at the best single setting (0.8, 0.07, 1.2)). Warm + no Sinkhorn + stream-selected
+  minus the current method: +0.54 (se 0.53). Selected for warm + no Sinkhorn: seed 3300 (0.85, 0.05, 1.2) x 10; seed
+  3301 (0.8, 0.07, 1.2) x 10; seed 3302 (0.7, 0.07, 1.2) x 5, (0.8, 0.07, 1.2) x 3, (0.85, 0.05, 1.0) x 2
+  -> `inc/select/warm1_softmax/selected_per_subject_s<seed>.csv`. SCORE (k, rho): (3, 0.05) x 13, (5, 0.1) x 8,
+  (5, 0.05) x 6, (5, 0.02) x 3 -> `inc/select/score_selected.csv` (accuracy 47.9 with the selection, 48.1 with (5, 0.05)).
+- **Rerun (jobs 76454-76456, `inc/queue_causal2.txt`, 150 commands -> `inc/causal2`):** `gala_sw` (no Sinkhorn, warm start,
+  1 iteration per update, stream-selected settings) and SCORE with its stream-selected settings on the 60 settings, 10
+  orders; ablation on the main setting: `gala_sw_nowhiten`, `_nocsls`, `_noprior`, `_sinkhorn` (balanced matching back),
+  `gala_s_norot`, `gala_s16` (from scratch, 16 iterations). Zero-shot, CSLS, SATTC, Hungarian stay from `inc/causal1`.
+- Cancelled: the extra ablation rows of the old default (76319-76320). Not yet done: encoders under the new method.
+
+## 2026-11-16 11:30 — advisor's points 2, 3, 5: development runs (user: "go ahead with all 3"); ten orders complete; MEG streams
+
+- **Overnight:** jobs 75315-75317, 75327 completed; `inc/causal1` holds 300 streams (3 seeds x 10 people x 10 orders) for
+  each of the 60 settings and for the six ablation variants, no duplicate. Figures not yet redrawn on ten orders.
+- **Causal ablation, main setting (1 / 5 / 20 / 53 min uniform; 1 / 5 / 20 skewed; partial):** GALA 36.9 / 45.3 / 58.2 /
+  68.5; 37.8 / 44.3 / 58.5; 37.2 / 46.4 / 55.1. w/o whitening 37.0 / 44.8 / 54.7 / 60.6; 37.5 / 44.0 / 54.8; 37.4 / 46.0 /
+  51.8. w/o CSLS 35.9 / 44.1 / 56.8 / 64.5; 35.1 / 43.0 / 56.5; 36.4 / 45.1 / 54.7. w/o Sinkhorn 38.2 / 45.7 / 57.9 / 66.0;
+  38.3 / 44.9 / 58.0; 37.0 / 47.0 / 55.0. w/o rotation 36.1 / 36.1 / 38.7 / 38.9; 34.8 / 35.2 / 39.0; 35.0 / 36.8 / 37.3.
+  Single iteration 37.0 / 44.5 / 52.3 / 55.7; 37.3 / 43.8 / 52.9; 37.6 / 45.9 / 50.0. w/o prior 11.4 / 21.9 / 49.4 / 68.6;
+  11.7 / 21.8 / 49.3; 10.1 / 23.1 / 45.8. Without Sinkhorn AND CSLS (quick check, seed 3300, 1 order, ~900 queries per
+  stream, whole stream): 53.4 uniform / 42.7 partial against 61.3 / 46.5 for GALA: the two are substitutes.
+- **Points 2 and 5 (`dev_gala.py`, jobs 76246-76247, main setting, 3 seeds x 10 people x 2 orders, cold variants on every
+  4th query; paired difference to GALA over the whole stream, standard error over 30 (seed, person) units in brackets):**
+  KL-relaxed column constraint (exponent 0.25 / 0.5 / 0.75): within +-0.2 everywhere. Column masses = frequencies
+  estimated from the buffer (pseudo-count 0.5 / 1 / 2 / 4): partial +0.82 (0.32) / +0.80 (0.26) / +0.70 (0.23) / +0.30
+  (0.16); uniform -0.45 (0.27) / -0.34 (0.28) / -0.26 (0.24) / -0.12 (0.19); skewed +0.03 to +0.16. Last 30 % of the
+  stream, pseudo-count 1: partial +1.1 (0.5), uniform -1.3 (0.5). No column constraint: partial +0.57 (0.50), uniform
+  -0.93 (0.32), skewed -0.55 (0.36). Warm start from the previous rotation with 1 / 2 / 4 iterations per update:
+  uniform -0.03 / -0.07 / -0.16 (0.15), skewed -0.31 / -0.20 / -0.14 (0.1), partial -0.49 / -0.46 / -0.34 (0.25).
+  Seconds per update on a CPU-pool core, buffer <= 50 / 51-200 / 201-400 / 401-800: GALA 0.11 / 0.16 / 0.22 / 0.34; warm
+  start, 1 iteration 0.009 / 0.014 / 0.020 / 0.035; SCORE 0.007 / 0.009 / 0.012 / 0.021.
+- **Decision (mine, reported to the user):** no variant is a clear win -> the method is unchanged; `gala_freq1` and
+  `gala_warm1` are run as two extra ablation rows on the main setting, 10 orders (`*_K200q20_abl2_*`, jobs 76319-76320).
+- **Point 3 (`select_stream.py`, job 76257):** selection of the GALA and SCORE settings on the streams of the other
+  people (stream order 10, causal, every 8th query) -> `inc/select/cold`; running.
+- **THINGS-MEG causal streams (`things_meg/cvpr/causal`, 4 people, 10 orders), last 30 % of the stream, q = 6 / 4 / 2,
+  uniform:** zero-shot 4.6 / 4.2 / 3.8, CSLS 5.4 / 5.1 / 4.1, SATTC 5.2 / 5.4 / 3.8, Hungarian 6.2 / 6.0 / 4.3, SCORE
+  5.7 / 6.1 / 4.3, GALA 5.9 / 5.2 / 3.4. All within about 2 points of zero-shot on every stream.
+
+## 2026-11-15 21:40 — Alljoined causal streams; THINGS-MEG ATM folds and batch test
+
+- **Alljoined, causal streams (`alljoined/cvpr/causal`, 20 people, 3 orders, K = 200, GALA with the 2d prior and the
+  across-people settings, SCORE k = 10, rho = 0.1), accuracy on the queries of the last 30 % of the stream:**
+  q = 20: uniform zero-shot 6.9, CSLS 7.6, SATTC 7.3, Hungarian 8.6, SCORE 8.5, GALA 8.3; skewed 7.1 / 7.6 / 7.5 / 8.6 /
+  8.8 / 8.5; partial 7.1 / 7.4 / 6.7 / 8.1 / 8.7 / 8.5. q = 40: uniform 8.7 / 10.6 / 9.8 / 12.2 / 12.2 / 12.4; skewed
+  8.7 / 10.5 / 9.5 / 11.7 / 11.8 / 11.9; partial 8.4 / 10.5 / 8.8 / 11.0 / 12.1 / 12.1. GALA above zero-shot for 11 to
+  16 of the 20 people, above SCORE for 7 to 11. GALA is the best method over the first 40 % of every stream (by 0.3 to
+  1.1 points), then level with SCORE.
+- **THINGS-MEG, ATM LOSO (`things_meg/cvpr/loso/atm128_vc`, batch 128, lr 3e-4, 19-23 epochs):** zero-shot with 12
+  repetitions 4.5 / 8.0 / 7.0 / 2.5 (mean 5.5). Batch test: CSLS 7.2, SCORE 9.5 (THINGS-EEG-2 settings) / 8.9 (selected
+  across people), GALA without prior 7.4 / 7.8, GALA with the 2d prior 9.5 / 9.2. Causal streams (q = 6, 4, 2, 10
+  orders) running on the interactive node (`things_meg/cvpr/causal`).
+
+## 2026-11-15 19:30 — causal grid on three or more orders: heatmap and stream figures; Alljoined ATM folds done
+
+- **Causal grid (per-query refits, `inc/causal1`; K = 200 orders 0-2 complete at 18:21, extra orders still landing):**
+  `figures/causal_grid_heatmap.pdf` (GALA minus the best of CSLS, SATTC, Hungarian, SCORE with ATM; queries of the last
+  30 % of each stream): GALA ahead in 57 of 60 settings (uniform 20, skewed 20, partial 17), mean margin 6.6
+  (12.6 / 4.9 / 2.3); best competitor = SCORE with ATM in all 60. Behind: partial stream, K = 25, q = 5 / 10 / 20
+  (-2, -2, -1). `figures/causal_stream_full_{uniform,skew,skew25}.pdf` redrawn (windows of 1/15 of the stream).
+- **Alljoined-1.6M, ATM LOSO (job 75263, 20 folds, 20 min each, best epoch 7 everywhere, `alljoined/cvpr/loso/atm128_vc`):**
+  batch test (80 repetitions, 200 queries), mean over 20 people: zero-shot 10.4, CSLS 12.9, SCORE 15.7 with the
+  THINGS-EEG-2 settings and 16.2 with settings selected across people (k = 10, rho = 0.1 for all 20), GALA without prior
+  (the paper's batch setting) 11.4 / 11.9 (SCORE above GALA for 20 of 20 people), GALA with the 2d prior 15.4 / 16.9
+  (grid extended to tau 0.01 and power 3; selected: rho 0.5, tau 0.03, power 1.2 for 17 people). Parameters for the
+  streams: `alljoined/cvpr/gala_params_atm_cv.csv`, SCORE `--score 10 0.1` (new option of `inc_causal.py`).
+- **Running:** Alljoined causal streams (q = 20 and 40, three streams, 3 orders, interactive node, `alljoined/cvpr/causal`);
+  THINGS-MEG: lr 3e-4 chosen over 1e-4 (validation loss 4.112 against 4.174), folds training.
+
+## 2026-11-15 15:10 — the three 3090-node jobs ended (one cancelled on request, two killed by my mistake); rerun on CPU nodes
+
+- **Request (user):** "cancel the ablation we really need to free up one more 3090".
+- **What happened:** job 75225 cancelled (frees node 502). To stop the ablation in 75226 and 75227 I ran
+  `srun --overlap pkill -f K200q20_abl`: xargs aborts when a child is killed, so both jobs ended with all their workers.
+  All three 3090 nodes are free. In-flight streams lost (up to ~1 h each for K = 200 q = 5); every finished stream is in
+  the CSVs (written after each stream).
+- **Recovery:** CSVs reduced to complete streams (K = 200 orders 0-2: 145 of 810 streams kept; ablation 153 of 900;
+  the 28 K = 25/50 extra-order commands 1674 of 4704; K <= 150 orders 0-2 complete). Missing streams -> 397 commands
+  (`inc/queue_causal1f.txt`, outputs `*_r_K<K>_q<q>_<stream>.csv`), job 75327 on Mee_Commun_CPU (commun_short, 24 workers),
+  order: K = 200 orders 0-2, ablation, K = 25/50 extra orders.
+
+## 2026-11-15 15:00 — extra stream orders moved to the CPU-only partition; encoder table and AdaBN / Tent done
+
+- **Done (job 75228, 6 h 08):** `inc/causal1_enc` (5 encoders, uniform, q = 20, 3 orders) and `inc/causal1_model`
+  (AdaBN / Tent, refit every 20 queries, 3 seeds, 3 orders); `inc/causal1_own` (SCORE with its own encoder, main setting).
+- **Move (user: "Are there not CPU only nodes?"):** the CPU jobs on Brain_GPU hold 30 of the 32 CPUs of three 3090 nodes.
+  The remaining extra-order work (orders 3-9) was claimed away from those jobs (lock files) and resubmitted as 644
+  one-order commands (`inc/queue_causal1e.txt`, outputs `*_b_<subject>_o<order>.csv`) to `Mee_Commun_CPU` (account mee):
+  jobs 75315 (commun_long), 75316, 75317 (commun_short, 12 h), 24 workers each on 48 CPUs. Job 75310 (24 CPUs on the
+  3090 node 521, 30 min in) cancelled. Jobs 75225-75227 keep only what they had started: K = 200 orders 0-2, the
+  ablation, and 28 K = 25/50 extra-order commands.
+- **Note:** a skipped command truncates the log of the command that holds the claim (same log name): count " done" with
+  `grep -a`.
+
+## 2026-11-15 11:00 — Alljoined-1.6M and THINGS-MEG: pilot on the existing checkpoints, ATM tuning runs (user request)
+
+- **Request (user):** retrain both datasets with ATM on one GPU (50 epochs max, early stopping patience 5, LOSO: 20 + 4
+  folds, a few tuning runs first) and, at the same time, a pilot on the checkpoints already on disk.
+- **Pilot (CPU, buffer metric, `inc_stream.py`, uniform stream, GALA / SCORE parameters of THINGS-EEG-2 unchanged:
+  `results/{alljoined,things_meg}/cvpr/gala_params_*.csv`):**
+  - THINGS-MEG, TSConv LOSO of May 2026 (`things_meg/inter-subjects/things_meg_mixup_20260505-225744`, seed 3300),
+    cache `things_meg/cvpr/cache/pilot_tsconv_s3300` (`inc_cache.py` now handles 12 test repetitions): end of stream,
+    q = 4: zero-shot 3.8, CSLS 4.0, SATTC 3.4, SCORE 3.1, GALA 3.2; q = 12: 4.5 / 5.2 / 5.2 / 5.8 / 4.9. Nothing helps.
+  - Alljoined, TSConv LOSO of April 2026 (`alljoined/inter-subjects/tsconv_fd512_..._seed3300`, trained elsewhere on a
+    250-sample preprocessing; test sets in `data/alljoined_final/preprocessed_eeg`, paths overridden with
+    INC_EEG_DIR / INC_IMG_DIR; logged zero-shot of sub-01 reproduced, 11.0): 20 people, end of stream, q = 20:
+    zero-shot 5.5, CSLS 5.4, SATTC 4.5, SCORE 5.4, GALA 5.8; q = 40: 7.2 / 7.5 / 6.2 / 8.0 / 7.6. Batch test with the
+    80 repetitions: zero-shot 8.8, CSLS 9.8, SCORE 9.8, GALA 8.6 (9.3 with the prior). Nothing helps either.
+- **ATM tuning (GPU job 75254, `xds_train.sh`, `xds_gpu.sh`, queue `alljoined/cvpr/queue_tune.txt`, fold = person 1):**
+  Alljoined, lr 3e-4: early stop after epoch 12, best epoch 7 (val loss 5.1739; val top-1 at chance, 0.04-0.08 %),
+  zero-shot 12.5 with 80 repetitions; 2 min per epoch, 24 min for the fold. THINGS-MEG at batch 1024: out of memory
+  (ATM's first convolution over 271 channels: 9.3 GB); tuning runs moved to batch 128. Remaining runs: Alljoined lr 1e-3,
+  1e-4, 19 people per image group (12 epochs each); MEG batch 128 at lr 3e-4 and 1e-4.
+
+## 2026-11-15 09:30 — causal runs restructured over four CPU jobs (deadline: Tuesday 2026-11-17, 2 pm, user)
+
+- **Why:** job 75115 ran 2.9 times slower on the batch node than the timing test (main setting: 17 min per subject and
+  order instead of 5 min 50); the full plan would have needed ~80 more hours. Cancelled after the main setting (6 methods)
+  and TransCLIP / EM-Dirichlet on the main setting had finished (`inc/causal1/*K200q20*`).
+- **Now running:** jobs 75225-75227 (30 cores each, `inc/queue_causal1b_{0,1,2}.txt`): SCORE with its own encoder on the
+  main setting only (`inc/causal1_own`; d = 512, ~0.5 s per query: not run on the grid), grid orders 0-2, ablation on the
+  main setting (10 orders), orders 3-9 for K = 25, 50, 100, then for K = 150, 200 if time allows. Job 75228 (48 cores,
+  user: "one more CPU job", `inc/queue_causal1c.txt`): encoder table (`inc/causal1_enc`: 5 encoders, uniform, q = 20,
+  3 orders, ~2.2 s per GALA fit at d = 512) and AdaBN / Tent (`inc/causal1_model`, `inc_model.py --step 20`: refit every
+  20 queries, 3 seeds, 3 orders; a per-query Tent refit is out of reach on CPU).
+- **Main setting, per-query refits (K = 200, q = 20, 10 orders, 3 seeds; queries within +-30 % of the time, last 10 % for
+  53 min), 1 / 5 / 20 / 53 min:** uniform: zero-shot 30.1 / 27.8 / 28.4 / 27.9, CSLS 35.8 / 34.9 / 35.4 / 34.2, SATTC
+  28.2 / 32.0 / 35.5 / 35.9, TransCLIP 27.5 / 33.3 / 39.5 / 42.3, EM-Dirichlet 26.6 / 35.4 / 38.7 / 42.2, Hungarian
+  30.5 / 31.1 / 38.4 / 45.0, SCORE with ATM 28.5 / 42.2 / 52.2 / 54.1, GALA 36.9 / 45.3 / 58.2 / 68.5. Skewed: SCORE
+  28.9 / 42.5 / 52.4, GALA 37.8 / 44.3 / 58.5. Partial: SCORE 28.7 / 44.0 / 50.5, GALA 37.2 / 46.4 / 55.1. GALA is the
+  best method in every column (CSLS second at 1 min, SCORE with ATM later).
+
+## 2026-11-14 17:30 — causal protocol becomes the main metric; refit after every query (user decisions)
+
+- **Decisions (user, 2026-11-14):** the paper moves to the causal metric ("we are going to go this way"); refits at a
+  regular step instead of the geometric schedule ("switch everything to regular step with more total refittings");
+  10 stream orders. Compute may be large as long as it fits in 3 days.
+- **Protocol:** `inc_causal.py` rewritten: the calibration is refitted after every query; query t is decoded by the
+  calibration fitted on queries 1 .. t-1 (first 5 queries: zero-shot), once. GALA variants, SCORE, CSLS: frozen map,
+  gallery hubness term from the past queries. SATTC, Hungarian, TransCLIP, EM-Dirichlet (batch only): run on
+  [past queries; the query], its row read, on at most 600 random queries per stream (100 for TransCLIP and
+  EM-Dirichlet: 2 to 12 s per call). Output: accuracy per window of ceil(N / 100) queries.
+- **Run:** Slurm CPU job 75115 (30 cores, 340 commands, `inc/queue_causal1.txt`) -> `inc/causal1/`, `inc/causal1_own/`.
+  Order: main setting (K = 200, q = 20, 10 orders, plain / CSLS / SATTC / Hungarian / SCORE / GALA); TransCLIP and
+  EM-Dirichlet on the main setting; SCORE with its own encoder on the grid; grid orders 0-2; ablation on the main
+  setting; grid orders 3-9. One (subject, order) of the main setting: 5 min 50. Estimate for everything: ~30 h.
+  TransCLIP and EM-Dirichlet are NOT run on the grid (cost; never the best competitor there under the buffer metric).
+- **Superseded:** job 75000 (geometric schedule, 10 orders) cancelled and its partial outputs deleted; `inc/causal/`
+  (job 74816, geometric, 3 orders) kept as the first look, figures `causal_*` currently drawn from it.
+- **Still to do for the main text:** AdaBN / Tent (`inc_model.py`) and the encoder table under the causal protocol.
+
+## 2026-11-13 19:20 — causal protocol on the appendix grid (user request; not in the paper)
+
+- **Question (user):** the paper's metric is fitted on the buffer and scored on the same buffer; what happens when a
+  query is decoded before it enters the calibration?
+- **Protocol:** `inc_causal.py`: same streams as `inc_stream.py`, 30 refits; the queries that arrive between two refits
+  are decoded by the calibration fitted on the buffer of the earlier refit (zero-shot before the first one), and a point
+  is the accuracy on those queries alone. GALA and SCORE with ATM: frozen map, gallery hubness term from the past
+  buffer. SATTC (official code, batch only): run on [past buffer; one new query], that query's row read
+  (`sattc(..., logits=True)`), at most 20 random new queries per refit.
+- **Run:** Slurm CPU job 74816 (30 cores, 1 h 45; 74815 cancelled, self-check tolerance) -> `inc/causal/` (3 seeds x
+  10 subjects x 3 orders, K in 25..200, q in 5..40, uniform / skew / skew25); queue `inc/queue_causal.txt`.
+- **Result (60 settings, queries of the last 30 % of each stream, GALA against the better of SATTC and SCORE with ATM):**
+  GALA ahead in 56 (uniform 20, skewed 20, partial 16); mean margin 6.1 (11.4 / 4.6 / 2.2). Buffer metric with the same
+  two competitors: 52 of 60 (20 / 18 / 14), margin 7.5 at the end of the stream and 6.1 at the matched time (0.85 of the
+  stream). Causal minus buffer at the matched time: zero-shot, SATTC and SCORE within 0.5; GALA -2.1 (uniform),
+  -0.3 (skewed), +1.3 (partial). Small-gallery cells have few queries (noise of about 2 points).
+- **Figures:** `figures/causal_stream_full_{uniform,skew,skew25}.pdf` (`make_inc_figures.py`, same layout as
+  `stream_full_*`).
+
+## 2026-11-12 00:45 — AdaBN and Tent on the three training seeds
+
+- **Run:** Slurm CPU job 73882 (20 cores, 53 min): `inc_model.py --methods adabn tent`, seeds 3301 and 3302, 3 orders,
+  12 refits, q = 20 -> `inc/v7/model3` (now 3 seeds x 10 subjects x 3 orders).
+- **Result (1 / 5 / 20 min, uniform also 53):** AdaBN 28.9 / 28.2 / 28.8 / 29.8, 33.5 / 30.1 / 30.3, 32.2 / 31.2 / 30.0;
+  Tent 28.8 / 28.1 / 28.6 / 29.6, 32.8 / 29.7 / 30.1, 31.7 / 30.6 / 29.8 (zero-shot 27.2 / 26.6 / 27.1 / 28.2,
+  33.8 / 28.9 / 28.8, 29.1 / 29.2 / 28.4): 1.5 to 1.7 points above zero-shot at 20 min.
+- **Status:** paper.tex still holds the seed-3300 rows; update on the user's go-ahead, with a caption note that only
+  SCORE with its own encoder is one seed.
+
+## 2026-11-11 23:50 — model-level baselines with 3 stream orders; re-centering baselines dropped (user decision)
+
+- **Run:** `inc/v7/model3` (seed 3300, 10 subjects, 3 orders, 12 refits, q = 20): job 73853 (OOM after 9 subjects at
+  30 G for 10 workers) + job 73869 (subject 5 alone). `make_inc_figures.py` now reads `v7/model3`.
+- **Result (1 / 5 / 20 min, uniform also 53):** AdaBN 27.6 / 29.0 / 29.0 / 30.2, 32.3 / 30.6 / 30.6, 33.6 / 31.9 / 30.8;
+  Tent 27.5 / 28.8 / 28.9 / 30.2, 32.4 / 30.4 / 30.4, 33.2 / 31.3 / 30.6. Zero-shot on the same seed and streams:
+  27.5 / 27.3 / 27.6 / 28.8, 32.2 / 29.5 / 29.4, 28.4 / 29.6 / 29.1. In Table 1 (replaces the 1-order rows).
+- **Euclidean / Riemannian re-centering removed from the paper:** test-time-only use on a frozen encoder is not how these
+  methods are meant to be used, and the source reference covariance was computed on 80-repetition averages while the
+  buffer holds 20-repetition averages (trace ratio ~2.3). With a matched reference (3 subjects, 1 order, end of the
+  uniform stream): 23.0 / 15.9 / 24.9 vs 21.1 / 14.4 / 23.8 as run and 33.5 / 22.1 / 24.8 without re-centering.
+- **Ablation table** reduced to component rows (prior of d and post-hoc damping removed, user request).
+
+## 2026-11-11 21:45 — MAIN TEXT MOVED TO q = 20 (user decision); paper.tex updated
+
+- **Why:** with 20 repetitions per query the uniform, skewed and partial (= skew25) streams last 53.3, 28.6 and 21.5 min at
+  K = 200, so every table reports 1 / 5 / 20 min. Supersedes all q = 10 main-text numbers of the entries below.
+- **Runs:** Slurm CPU job 73807 (30 cores, 62 min) on `inc/queue_v7.txt` -> `inc/v7/main` (3 seeds, 3 orders, 30 refits,
+  every embedding-level method and GALA ablation, one file per seed x stream x subject), `v7/own` (SCORE own encoder),
+  `v7/model` (AdaBN, Tent, EA, RA; seed 3300, 1 order, 12 refits), `v7/enc` (5 other encoders, 1 order). Job 73852
+  (7 min) -> `v7/enc3` = the other encoders with 3 stream orders (used by Table 3). Job 73853 (running, ~2 h) ->
+  `v7/model3` = model-level baselines with 3 orders, to replace the starred rows of Table 1.
+- **Table 1 (top-1 at 1 / 5 / 20 min; uniform also 53 min):** GALA 33.8 / 44.3 / 56.7 / 70.7, 40.7 / 44.5 / 58.5,
+  34.7 / 45.2 / 55.0; SCORE with ATM 32.5 / 42.2 / 49.7 / 53.9, 38.1 / 43.0 / 51.5, 35.7 / 45.1 / 50.0; zero-shot ~28
+  (1-min values are on 15 queries and noisy: 27.2 / 33.8 / 29.1). GALA above SCORE with ATM for 10 / 10 subjects at 20 min
+  on the three streams. Partial: SCORE ahead by <= 1.9 until ~2 min, level until ~9 min.
+- **Ablation (1 / 20 min x 3 streams):** see Table 2 in paper.tex. New facts: the 2d prior costs 2.5 points at the end of
+  the uniform stream (70.7 vs 73.2 without, 72.8 with d); removing CSLS or Sinkhorn on the partial stream gains ~1 point.
+- **Table 3 (uniform, 1 / 5 / 10 / 20 / 53 min):** GALA above SCORE for every encoder at 1 and 53 min; LaBraM is the
+  exception at 5, 10 and 20 min (SCORE +0.9 at 20 min). GALA gain over zero-shot at 20 min: 9 to 15 points (ATM 30).
+- **Abstract (user-approved wording):** over the 60 grid configurations (uniform, skew, skew25) GALA minus the best other
+  embedding-level method is -0.1 at 1 min, +7.4 at the end of the stream, GALA best in 52.
+- **Paper:** 18 pages; main text + LLM statement fill page 8 exactly, references start on page 9.
+
+## 2026-11-11 20:00 — skew25 becomes the paper's partial stream (user decision); all methods rerun on it
+
+- **Run:** Slurm CPU job 73768 (30 cores, 34 min, COMPLETED) on `inc/queue_v6.txt`: `inc/v6/main` (K=200, q=10, 30 refits,
+  3 seeds, 3 orders, every embedding-level method and GALA ablation), `v6/own` (SCORE own encoder), `v6/model` (AdaBN, Tent,
+  EA, RA; seed 3300, 1 order, 12 refits), `v5/skew25/*_b_*` (grid: csls, hungarian, transclip, em_dirichlet), `v5/skew25own`.
+- **Main table, partial = skew25, top-1 at 1 / 5 / 15 min (stream lasts 16.8 min):** GALA 28.7 / 33.3 / 40.1; SCORE with
+  ATM 28.8 / 35.0 / 36.9; zero-shot 22.6 / 23.2 / 23.5; TransCLIP 30.7, EM-Dirichlet 29.0, Hungarian 28.0, SATTC 26.5,
+  CSLS 26.8, SCORE own encoder 24.8 at 15 min. GALA above SCORE with ATM for 8 / 10 subjects at 15 min; SCORE ahead from
+  ~1 to ~8 min (up to 1.9).
+- **Ablation at 1 / 15 min:** prior d 27.4 / 38.5, w/o prior 10.4 / 35.8, damping 25.0 / 38.5, w/o whitening 29.1 / 38.5,
+  w/o CSLS 28.8 / 42.7, w/o Sinkhorn 29.1 / 42.2, single iteration 28.8 / 37.3, w/o rotation 26.3 / 28.8.
+- **Grid (uniform, skew, skew25; 60 configurations; GALA minus best other embedding-level method, mean over the
+  configurations whose stream lasts that long):** 1 min -0.1 (n=60), 5 min +1.7 (n=49), 10 min +4.0 (n=37), 20 min +8.2
+  (n=20), end of stream +7.4 (n=60; GALA best in 52: uniform 20, skew 18, skew25 14).
+- **Status:** `make_inc_figures.py` now treats skew25 as the partial stream; preview figures only (scratchpad). paper.tex
+  NOT updated: waiting for the user's authorisation.
+
+## 2026-11-11 19:18 — skewed stream with 25% of the gallery never queried (user request; not in the paper yet)
+
+- **Run:** new scenario `skew25` in `inc_stream.py` (K - K//4 images queried, counts 80/q .. 1 on them). Slurm CPU job 73764
+  (30 cores, 3 min, COMPLETED) on `inc/queue_s25.txt` -> `inc/v5/skew25/`; same grid, seeds, orders and methods as
+  `partial25`. Figure `figures/stream_full_skew25.pdf`.
+- **Result (end of stream):** GALA above zero-shot, SATTC and SCORE with ATM in 14 / 20 configurations (18 / 20 on the
+  skewed stream with every image queried); GALA minus best competitor min / median / max -5.7 / 2.3 / 7.4 (all queried:
+  -1.8 / 6.2 / 10.9). SCORE with ATM ends above GALA for K=25 and K=50 with q <= 20 (by 1 to 6 points); GALA is ahead for
+  every K >= 100 (1 to 7 points). GALA never ends below zero-shot.
+- **Verdict:** skew and absent images compound; these streams are also 25% shorter than the skewed ones.
+
+## 2026-11-11 19:05 — partial stream with 25% of the gallery never queried (user request; not in the paper yet)
+
+- **Run:** new scenario `partial25` in `inc_stream.py` (K - K//4 images queried; `partial` unchanged). Slurm CPU job 73756
+  (30 cores, 4 min, COMPLETED) on `inc/queue_p25.txt` -> `inc/v5/partial25/`: ATM seeds 3300-3302, K in {25..200},
+  q in {5, 10, 20, 40}, 3 orders, 15 refits, methods plain / sattc / score / gala. Figure `figures/stream_full_partial25.pdf`.
+- **Result (end of stream):** GALA above zero-shot, SATTC and SCORE with ATM in 19 / 20 configurations (12 / 20 with 50%
+  never queried); GALA minus best competitor min / median / max -0.2 / 9.3 / 13.9 (50%: -12.5 / 1.1 / 6.6); the one
+  exception is K=25, q=20 (79.0 vs 79.2). GALA never ends below zero-shot (50%: twice, K=25, q<=10).
+- **Verdict:** the failure on small menus is specific to half of the gallery being absent; awaiting the user's decision
+  on which partial stream the paper reports.
+
+## 2026-11-11 17:45 — SATTC on the five other encoders; encoder table at 1 / 5 / 10 / 20 / 53 min (user request)
+
+- **Run:** `inc_stream.py --scenarios uniform --n_refits 20 --orders 1 --methods sattc` on tsconv / eegnet / eegproject /
+  conformer / labram `_vc_s3300` (CPU, interactive node, < 1 min) -> `inc/v5/encsattc/`. Same streams as `v3/enc`.
+- **Result (uniform, q = 10, top-1 at 1 / 5 / 10 / 20 / 53 min):** SATTC TSConv 12.7 / 14.3 / 14.7 / 14.5 / 13.9,
+  EEGNet 11.6 / 15.9 / 16.1 / 15.3 / 15.5, EEGProject 7.8 / 13.9 / 13.9 / 13.9 / 13.6, Conformer 11.7 / 15.7 / 15.3 /
+  14.8 / 14.7, LaBraM 16.6 / 23.1 / 23.0 / 22.7 / 22.5: below zero-shot for the four non-LaBraM encoders from 5 min on.
+  GALA above SCORE from 5 min on for every encoder except LaBraM (SCORE ahead until 20 min).
+- **Verdict:** feeds Table 3 (`tab:encoders`, now time x method); rows printed by `make_inc_figures.py`.
+- Same day: figures got bands of +-1 std over the 3 seeds; protocol figure bottom panel redone (6 queries, steps 2/4/6).
+
+## 2026-11-11 03:15 — appendix grid with 3 seeds and 3 stream orders; figure changes
+
+- **Run:** Slurm CPU job 72922 (30 cores, 3 h 14, COMPLETED), `inc_slurm.sh` on `results/things_eeg/cvpr/inc/queue_v5.txt`
+  (run list also in `inc_queue.sh`). Output `inc/v5/full/`: ATM seeds 3300-3302, K in {25, 50, 100, 150, 200},
+  q in {5, 10, 20, 40}, 3 streams, 3 orders per subject, 15 refits; methods plain, sattc, score, gala (files `_a_`) and
+  csls, hungarian, transclip, em_dirichlet (files `_b_`); SCORE with its own encoder `score30s2_orig_s3300_*.csv` (1 seed).
+  Same hyper-parameters as the main text. Supersedes the 1-seed, 1-order grid of `v3/full`, `v3/full2d`.
+- **Result (end of stream, mean over seeds, subjects and orders):** GALA is above every other method in 50 / 60 streams
+  (uniform 20 / 20, skewed 18 / 20, partial 12 / 20); SCORE with ATM is the best method in the other 10 (skewed: K=25,
+  q<=10, by up to 2; partial: all K=25, K=50 with q>=10, K=100 with q=20, by up to 12.5). The best competitor is SCORE
+  with ATM in 58 streams and the Hungarian assignment in 2 (uniform, K=25 and 50, q=40; GALA +4.1 and +8.0).
+  GALA minus best competitor, min / median / max: uniform 4.1 / 15.2 / 23.6, skewed -1.8 / 6.2 / 10.9, partial
+  -12.5 / 1.1 / 6.6. GALA ends below zero-shot on the partial stream with K=25, q<=10. SCORE with its own encoder ends
+  8.3 to 16.3 below SCORE with ATM in all 60 streams.
+- **Verdict:** feeds Appendix A (three figures and the commentary, which awaits the user's review).
+- **Figures (user requests):** `make_inc_figures.py` plots only zero-shot, SATTC, SCORE with ATM and GALA, with a linear
+  time axis and y-limits adjusted per menu size; `make_protocol_figure.py` rewritten (zero-shot and batch panels on top,
+  incremental panel full-width below; Fig. 1, single column); the clouds figure was removed from the paper.
+
+## 2026-11-10 23:50 — FINAL configuration of the incremental results (supersedes the GALA numbers of the entry below)
+
+- **User decision (23:10):** GALA uses a prior of 2d observations in the incremental setting and no prior in the batch
+  evaluation (81.8 / 92.9; 76.8 with the prior; the d prior gave 82.2). `gala.fit` default `prior=2`; batch = `shrink=False`.
+- **Runs:** `v3/main2d` (ATM, 3 seeds, 3 orders, 30 refits), `v3/full2d` (K x q x stream grid), `v4/abl` (ablations and
+  post-hoc damping with the 2d weight), `v4/enc` (5 other encoders), Slurm CPU job 72891. Competitors unchanged.
+- **Result** (q = 10, top-1 at 1 / 5 / 20 min, + end of the uniform stream):
+
+  | | Uniform | Skewed | Partial |
+  |---|---|---|---|
+  | SCORE with ATM | 29.6 / 35.3 / 38.6 / 39.8 | 29.8 / 35.0 / 38.2 | 28.5 / 33.4 / 35.3 |
+  | GALA, prior d | 27.3 / 33.8 / 47.3 / 56.6 | 28.6 / 32.1 / 44.5 | 26.1 / 28.4 / 37.8 |
+  | **GALA, prior 2d (paper)** | 29.5 / 36.6 / 47.5 / 55.7 | 30.0 / 35.3 / 45.1 | 28.5 / 32.2 / 38.6 |
+
+- GALA minus SCORE with ATM at 20 min: +8.8 (10 / 10 subjects), +6.9 (10 / 10), +3.3 (9 / 10). On the partial stream SCORE
+  is up to 2 points ahead until ~10 min.
+- **Ablation at 20 min, uniform:** w/o rotation 29.5, single iteration 39.7, w/o whitening 43.4, w/o prior 44.7 (11.1 at
+  1 min), post-hoc damping 46.1 (26.3 at 1 min), w/o Sinkhorn 46.3, prior d 47.3, w/o CSLS 47.7. Partial stream: w/o CSLS
+  42.4 and w/o Sinkhorn 41.5 against 38.6.
+- **Encoders at 20 min, uniform (zero-shot / SCORE / GALA):** TSConv 18.6 / 23.0 / 26.8, EEGNet 15.8 / 23.0 / 27.1,
+  EEGProject 14.5 / 20.1 / 22.2, Conformer 16.6 / 22.9 / 24.5, LaBraM 18.0 / 28.2 / 27.9.
+- **Full grid:** GALA best at the end in 51 / 60 cells (uniform 20, skew 18, partial 13); SCORE with ATM is the best
+  competitor in 58 cells and wins the small menus with partial coverage (K <= 50: 6 of 8 cells, up to 15 points).
+
+## 2026-11-10 — Incremental transductive calibration (advisor rewrite): main table, ablation, encoders, full grid — DONE
+
+- **Protocol** (`inc_stream.py`, `inc_model.py`, core `gala.py`): gallery = 200 test images (or a random menu of K), query =
+  average of q repetitions, streams uniform / skew (counts 80/q..1, exponential) / partial (random half never queried),
+  random arrival order, every method re-fitted on the whole buffer at geometrically spaced sizes, metric = top-1 on the
+  buffer. Checkpoints `checkpoint_test_best.pth` of the `_vc` arms; GALA / TransCLIP / EM-Dirichlet hyper-parameters =
+  cross-fold batch ones, unchanged. Embedding caches `inc/cache/<arm>_s<seed>` (`inc_cache.py`).
+- **GALA** = shrinkage towards the zero-shot decoder inside the fit, a = t/(t+d): mean a*mu, covariance weight (1-rho)a,
+  d identity pseudo-pairs in the Procrustes (`gala.fit`, default). Also used in batch: 82.17 / 96.35 (seeds +-1.59), against
+  81.75 / 92.92 without. Rejected by the user as too complicated: prior strength cross-fold in {d, 2d, 4d} with CSLS scaling
+  (first run, `inc/main` rows gala / gala_n1 / gala_n4). Post-hoc damping (`damp=True`) kept as an ablation row.
+  With 2d instead of d: +3 to 4 at 5 min, 0 at 20 min, batch 76.8.
+- **SCORE** is reported twice (user, final decision 22:45): its own pipeline, encoder `score30s2_orig` seed 3300
+  (`checkpoint_last.pth`) + deployment step with k = 5, rho = 0.05 (batch 52.35 / 84.0; paper constants 50.80; reported
+  53.23), and the same step on ATM ("SCORE with ATM": batch 66.8 / 92.3; `v2/main` method score, `v3/encscore`,
+  `v3/full/*_score_*`). SCORE with ATM is ahead of GALA at 1 and 5 min on the three streams (by 1 to 5 points); GALA leads
+  from ~8 min (uniform, skew) and ~15 min (partial). Full grid with SCORE with ATM: GALA best at the end in 48 / 60 cells
+  (uniform 20 / 20, skew 17 / 20, partial 11 / 20); SCORE with ATM wins small menus with partial coverage.
+- **Runs** (`results/things_eeg/cvpr/inc/`): `main/` ATM 3 seeds, 3 orders, 30 refits (zero-shot, CSLS, Hungarian, SATTC,
+  TransCLIP, EM-Dirichlet; gala_noprior = GALA without shrinkage); `v2/main` (gala = post-hoc damping); `v3/main` (GALA),
+  `v3/abl`, `v3/enc` (5 other encoders, 1 order, 20 refits), `v3/ownfast` (SCORE), `model/` (AdaBN, Tent, EA, RA: seed 3300,
+  1 order, 12 refits), `v3/full` (K in {25,50,100,150,200} x q in {5,10,20,40} x 3 streams, seed 3300, 1 order, 15 refits;
+  one CPU-only Slurm job 72825, `inc_slurm.sh`). Tables and figures: `make_inc_figures.py`.
+- **Result** (q = 10, top-1 at 1 / 5 / 20 min, + end of the uniform stream):
+
+  | | Uniform | Skewed | Partial |
+  |---|---|---|---|
+  | Zero-shot | 22.5 / 24.1 / 23.2 / 23.3 | 23.3 / 23.8 / 23.5 | 23.3 / 24.2 / 23.7 |
+  | Hungarian | 23.7 / 27.0 / 32.0 / 34.2 | 23.9 / 25.5 / 30.2 | 23.2 / 23.0 / 25.2 |
+  | TransCLIP | 22.7 / 28.5 / 30.4 / 31.4 | 23.8 / 27.9 / 30.8 | 23.4 / 26.9 / 30.8 |
+  | SCORE (own encoder) | 19.8 / 23.9 / 26.4 / 26.7 | 20.7 / 23.8 / 25.6 | 19.2 / 22.2 / 23.8 |
+  | SCORE with ATM | 29.6 / 35.3 / 38.6 / 39.8 | 29.8 / 35.0 / 38.2 | 28.5 / 33.4 / 35.3 |
+  | GALA | 27.3 / 33.8 / 47.3 / 56.6 | 28.6 / 32.1 / 44.5 | 26.1 / 28.4 / 37.8 |
+
+- **Ablation at 20 min, uniform:** w/o rotation 29.5, single iteration 39.6, w/o whitening 43.7, w/o shrinkage 44.7 (11.1 at
+  1 min), post-hoc damping 45.6, w/o Sinkhorn 45.7, w/o CSLS 47.3. On the partial stream w/o CSLS / w/o Sinkhorn are +3.
+- **Encoders at 20 min, uniform (zero-shot -> GALA):** TSConv 18.6 -> 27.5, EEGNet 15.8 -> 28.1, EEGProject 14.5 -> 21.2,
+  Conformer 16.6 -> 24.2, LaBraM 18.0 -> 27.9 (all d = 512).
+- **Full grid without SCORE with ATM:** GALA best at the end in 55 / 60 cells (exceptions: partial, K = 25 with q <= 20,
+  6 to 8 below zero-shot, and K = 50 with q = 10 / 20).
+- **Negative:** label-free marginal estimation (EM proportions, prediction counts, capacity plans, Ward grouping) never beat
+  uniform marginals; SCORE's training gain is not reproduced (see the October entries).
+
 ## 2026-10-23 14:15 — E3.2d faithful-recovery SCORE variants (30 epochs) — QUEUED (strengthening the baseline)
 
 - **Gap.** Our SCORE training adds +0.95 over Standard at 30 epochs (E3.2c / 30-epoch entry). The paper reports

@@ -162,7 +162,10 @@ def batch_transform_wknn(Ps, F, wccn, K=4):
     """The lean test-time adaptation of the best ensemble (HISTORY.md T5, T23, T39; HISTORY.md), inside one predict() batch,
     label-free and stateless: each member's output is divided by its batch mean norm and every trial is centred on the
     mean of its K most similar batch-mates in the within-person-whitened fingerprint space (cosine, batch-centred),
-    keeping the batch mean; the members are summed, then ONE uncentred Ledoit-Wolf shrink with d = D / (D + B).
+    keeping half the batch mean (beta = 0.5: 4-fold opt4 45.17 vs 44.55 at 1, nested 45.05; NIGHT_LOG N27); the members
+    are summed, then ONE uncentred Ledoit-Wolf shrink with d = D / (D + B); finally every output is scaled by sqrt of its
+    norm (the scorer averages raw outputs, so norm = vote weight and high-agreement trials count more: 45.48 vs 45.17,
+    nested; NIGHT_LOG N33).
     Ps: list of member outputs (B, D); F: eeg_fingerprint of the batch; wccn: fit_fingerprint_wccn."""
     Z = ((F - wccn['m0']) / wccn['sd']) @ wccn['T']; Z = Z - Z.mean(0)
     Z = Z / Z.norm(dim=1, keepdim=True).clamp_min(1e-12); S = Z @ Z.T; S.fill_diagonal_(-9)
@@ -170,8 +173,11 @@ def batch_transform_wknn(Ps, F, wccn, K=4):
     out = 0
     for P in Ps:
         P = P.float() / P.float().norm(dim=1).mean()
-        out = out + (P - W @ P / W.sum(1, keepdim=True) + P.mean(0, keepdim=True) if W is not None else P)
-    return lw_shrink(out, out.shape[1] / (out.shape[1] + len(out))) if len(out) > 1 else out
+        out = out + (P - W @ P / W.sum(1, keepdim=True) + 0.5 * P.mean(0, keepdim=True) if W is not None else P)
+    if len(out) == 1:
+        return out
+    out = lw_shrink(out, out.shape[1] / (out.shape[1] + len(out)))
+    return out * out.norm(dim=1, keepdim=True).sqrt()
 
 
 @torch.no_grad()

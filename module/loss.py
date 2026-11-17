@@ -4,6 +4,9 @@ import torch
 import numpy as np
 
 class ContrastiveLoss(nn.Module):
+    soft_label, soft_tau, gce_q = 0.0, 0.05, 0.0  # set from train.py (--soft_label, --soft_tau, --gce_q); EEG -> image direction only
+    bank, bank_soft, bank_sep = None, False, 0.0  # --open_bank [--open_bank_soft | --open_bank_sep L]: unit embeddings of images with no EEG in the EEG -> image loss
+
     def __init__(
         self,
         init_temperature,
@@ -87,6 +90,27 @@ class ContrastiveLoss(nn.Module):
 
         # Construct labels
         labels = torch.arange(eeg_feature.shape[0], device=eeg_feature.device)
+        if self.soft_label:  # SoftCLIP: part of the target mass goes to the batch images that resemble the trial's own image
+            k = F.normalize(image_feature, dim=1)
+            eye = torch.eye(len(k), device=k.device)  # the own image is left out of the softmax: the share a goes to OTHER images, by similarity
+            labels = (1 - self.soft_label) * eye + self.soft_label * torch.softmax(k @ k.T / self.soft_tau - 1e9 * eye, 1)
+        extra = 0.0
+        if self.bank is not None and self.bank_sep:  # a softmax over the bank ALONE (bank images in the batch's softmax give a domain shortcut: Y02, obs run):
+            kb = F.normalize(image_feature, dim=1) @ self.bank.T  # the trial's similarity profile over the bank should be its image's profile
+            extra = self.bank_sep * self.criterion_cls(eeg_feature @ self.bank.T * logit_scale, torch.softmax(kb.float() / self.soft_tau, 1))
+        elif self.bank is not None:  # open bank in the batch's softmax (MI_NEURIPS_LOG Y02): every trial is also scored against images that nobody saw
+            assert self.asymmetric and self.alpha == 1.0 and self.soft_label and not self.gce_q
+            kb = k @ self.bank.T; dup = kb > 0.999  # a bank copy of the trial's own image is neither a negative nor a neighbour
+            logits = torch.cat([similarity_matrix_ie, (eeg_feature @ self.bank.T * logit_scale).masked_fill(dup, -1e9)], 1)
+            if self.bank_soft:  # the soft share a goes to the batch AND bank images that resemble the own image
+                eye = torch.cat([eye, torch.zeros_like(kb)], 1)
+                labels = (1 - self.soft_label) * eye + self.soft_label * torch.softmax(torch.cat([k @ k.T, kb.masked_fill(dup, -1e9)], 1) / self.soft_tau - 1e9 * eye, 1)
+            else:  # bank images are plain negatives
+                labels = torch.cat([labels, torch.zeros_like(kb)], 1)
+            return self.criterion_cls(logits, labels)
+        if self.gce_q:  # generalised cross-entropy (1 - p^q) / q: the gradient of a trial is scaled by p^q, so trials with no readable signal weigh less (q -> 0 is the cross-entropy)
+            p = torch.softmax(similarity_matrix_ie, 1).diagonal()
+            return ((1 - p ** self.gce_q) / self.gce_q).mean()
 
         # Calculate two parts of the loss
         loss_eeg_ie = self.criterion_cls(similarity_matrix_ie, labels)
@@ -104,7 +128,7 @@ class ContrastiveLoss(nn.Module):
         else:
             loss = loss_contrastive
 
-        return loss
+        return loss + extra
 
 
 def build_image_positive_mask(object_indices, image_indices):

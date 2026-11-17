@@ -106,7 +106,10 @@ def cross_subject_stimulus_mix(
     return mixed
 
 
-def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, eps=1e-8, boundary=0):
+DONORS = {}  # --op_donors path -> (K, C, C) operators, loaded once
+
+
+def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, eps=1e-8, boundary=0, donors=''):
     """do(subject := t): re-render a trial through another subject's channel-mixing operator.
 
     Model the sensor signal as x_s = A_s . (sources), so the subject-specific nuisance is the
@@ -140,12 +143,45 @@ def cross_subject_operator_transfer(eeg_batch, subject_ids, shrink=0.05, eps=1e-
         inv_sqrt_ops[s] = (evecs * evals.rsqrt()) @ evecs.T
 
     out = eeg_batch.clone()
+    donors = DONORS.setdefault(donors, torch.as_tensor(np.load(donors)['S'])) if donors else None
     for s, j in zip(uniq.tolist(), draw_op_partners(subject_ids, boundary)):
-        if s == j:
+        # donors (K, C, C): R^(1/2) of people of other cohorts (scripts/mi/nq08_op_donors.py). ponytail: half of the partners are donors, no knob
+        target = donors[random.randrange(len(donors))].to(eye) if donors is not None and random.random() < 0.5 else None
+        if target is None and s == j:
             continue
         mask = subject_ids == s
-        transfer = sqrt_ops[j] @ inv_sqrt_ops[s]
+        transfer = (sqrt_ops[j] if target is None else target) @ inv_sqrt_ops[s]
         out[mask] = torch.einsum('cd,...dt->...ct', transfer.to(eeg_batch.dtype), eeg_batch[mask]).to(out.dtype)  # autocast einsum returns bf16
+    return out
+
+
+FUNC_OPS = None
+
+
+def functional_operator_transfer(eeg_batch, subject_ids, ops_paths):
+    """do(subject := t) with decoder-fitted operators: x_s -> M_t^-1 M_s x_s.
+
+    M_s (channels x channels) is the spatial re-mix that best aligns person s to a model that never trained on it
+    (scripts/mi/ne19_fit_operators.py, MI_NEURIPS_LOG E17-E19), so M_t^-1 M_s re-renders s as t along the directions
+    that matter to the decoder. People without an operator are left alone; the target is any other person whose
+    operator is well conditioned.
+    """
+    global FUNC_OPS
+    if FUNC_OPS is None:
+        ops = {}
+        for path in ops_paths:
+            ops.update(torch.load(path))
+        # targets need a well-conditioned operator: inverting a near-singular one would blow one direction up
+        FUNC_OPS = {s: m.double() for s, m in ops.items()}, {s: torch.linalg.inv(m.double()) for s, m in ops.items() if torch.linalg.cond(m.double()) < 10}
+    fwd, inv = FUNC_OPS
+    out = eeg_batch.clone()
+    for s in torch.unique(subject_ids).tolist():
+        if s not in fwd:
+            continue
+        t = random.choice([j for j in inv if j != s])
+        mask = subject_ids == s
+        transfer = (inv[t] @ fwd[s]).to(eeg_batch.device, eeg_batch.dtype)
+        out[mask] = torch.einsum('cd,...dt->...ct', transfer, eeg_batch[mask]).to(out.dtype)
     return out
 
 

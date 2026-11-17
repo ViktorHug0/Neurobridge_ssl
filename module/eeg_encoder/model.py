@@ -534,6 +534,8 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
                 backbone_dim=getattr(args, 'tsconv_backbone_dim', 0),
                 domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
             )
+        elif args.eeg_encoder_type in ('Mixer3', 'FlatMLP'):
+            extra = dict(domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0))
         extra.update(json.loads(getattr(args, 'arch_kwargs', None) or '{}'))
         return build_architecture_encoder(
             args.eeg_encoder_type, feature_dim, eeg_sample_points, channels_num, **extra
@@ -541,7 +543,35 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
     raise ValueError(f"Unsupported EEG encoder type: {args.eeg_encoder_type}")
 
 
+def _band_split(x):
+    """(B, C, T) -> lp (< ~3 Hz), bp (~4-15 Hz), vhp (> ~15 Hz), summing exactly to x (N65)"""
+    ma = nn.functional.avg_pool1d(x, 25, 1, padding=12, count_include_pad=False)
+    ma5 = nn.functional.avg_pool1d(x, 5, 1, padding=2, count_include_pad=False)
+    return ma, ma5 - ma, x - ma5
+
+
 def run_eeg_backbone(model, args, eeg_batch, subject_id_batch, return_intermediate=False):
+    if getattr(args, 'band_drop', 0) > 0 and model.training:  # training only: with prob band_drop a trial keeps ONE random
+        # band (lp, bp, vhp, or lp+bp, bp+vhp), so the encoder cannot lean on any single band (N65)
+        lp, bp, vhp = _band_split(eeg_batch)
+        views = torch.stack([eeg_batch, lp, bp, vhp, lp + bp, bp + vhp])
+        pick = torch.where(torch.rand(len(eeg_batch), device=eeg_batch.device) < args.band_drop,
+                           torch.randint(1, len(views), (len(eeg_batch),), device=eeg_batch.device), 0)
+        eeg_batch = views[pick, torch.arange(len(eeg_batch), device=eeg_batch.device)]
+    if getattr(args, 'input_band', ''):  # every encoder reads one band: the 0.2 s moving average ('lp'), the rest ('hp'), or
+        # the 5-sample moving average minus the 25-sample one ('bp': gain .89 at 5 Hz, .51 at 10, .03 at 20); N65: the band sets the error family
+        ma = nn.functional.avg_pool1d(eeg_batch, 25, 1, padding=12, count_include_pad=False)
+        if args.input_band in ('bp', 'vhp'):  # 'vhp': the input minus its 5-sample moving average (> ~15 Hz)
+            ma5 = nn.functional.avg_pool1d(eeg_batch, 5, 1, padding=2, count_include_pad=False)
+            eeg_batch = ma5 - ma if args.input_band == 'bp' else eeg_batch - ma5
+        else:
+            eeg_batch = ma if args.input_band == 'lp' else eeg_batch - ma
+    if getattr(args, 'adaptive_filter', 0) > 0:  # per-trial adaptive spatial filter D C_s^-1 x (MI_NEURIPS_LOG O04): C = the trial's own
+        # channel covariance (a trial is almost all noise), D its diagonal, C_s = (1 - a) C + a D; the identity at a = 1
+        with torch.autocast(device_type='cuda', enabled=False):
+            x = eeg_batch.float(); C = x @ x.transpose(1, 2) / x.shape[-1]; d = torch.diagonal(C, dim1=1, dim2=2)
+            Cs = (1 - args.adaptive_filter) * C + torch.diag_embed(args.adaptive_filter * d + 1e-4 * d.mean(1, keepdim=True) + 1e-12)
+            eeg_batch = (d[:, :, None] * torch.linalg.solve(Cs, x)).to(eeg_batch.dtype)
     if args.eeg_encoder_type == 'ATM':
         return model(eeg_batch, subject_id_batch)
     elif args.eeg_encoder_type in ['TSConv', 'TSConv_parameterizable']:

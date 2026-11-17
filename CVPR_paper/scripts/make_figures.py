@@ -14,7 +14,7 @@ F = 'results/things_eeg/cvpr/final/atm128_vc_s33*'  # s3300 = symlink to atm128_
 OUT = 'CVPR_paper/figures'
 # categorical slots 1-3 (dataviz reference palette, validated light); markers carry identity in print / CVD
 STYLE = {'sage': ('GALA', '#2a78d6', 'o'), 'score': ('SCORE', '#eb6834', 's'), 'plain': ('Zero-shot', '#1baf7a', '^'),
-         'sage_a1': ('GALA, undamped', '#eb6834', 's'), 'full1_3': ('GALA, damped', '#2a78d6', 'o')}
+         'sage_a1': ('GALA, undamped', '#eb6834', 's'), 'full_dim': ('GALA, damped', '#2a78d6', 'o')}
 STYLE['plain'] = ('Zero-shot', '#8a8a8a', '^')  # v2: SCORE no longer drawn; grey zero-shot reference
 plt.rcParams.update({'font.size': 9, 'axes.spines.top': False, 'axes.spines.right': False, 'axes.linewidth': 0.6,
                      'xtick.major.width': 0.6, 'ytick.major.width': 0.6, 'legend.frameon': False})
@@ -29,11 +29,11 @@ os.makedirs(OUT, exist_ok=True)
 fig, axs = plt.subplots(1, 2, figsize=(6.9, 2.7))  # two-column, as Fig. 2
 # (a) R2 stream, three seeds. x = refit rank (25 per stream): every (menu K, repetitions q, order) weighs equally at
 # each point. Binning by t/K instead mixes menu sizes and makes even the plain decoder drift.
-s = pd.concat([pd.read_csv(f) for f in glob.glob(f'{F}/stream50_sage/part_*/stream_rows.csv')])
-s = s[s.method.isin(['plain', 'sage_a1', 'full1_3'])]
+s = pd.concat([pd.read_csv(f) for f in glob.glob(f'{F}/stream50_free/part_*/stream_rows.csv')])
+s = s[s.method.isin(['plain', 'sage_a1', 'full_dim'])]
 s['refit'] = s.groupby(['subject', 'menu', 'reps', 'seed', 'method']).t.rank(method='dense')
 g = s.groupby(['method', 'refit']).top1.mean()
-for key in ('plain', 'sage_a1', 'full1_3'):
+for key in ('plain', 'sage_a1', 'full_dim'):
     h = g.loc[key]
     axs[0].plot(h.index, h.values, color=STYLE[key][1], marker=STYLE[key][2], ms=3.5, lw=1.6, markevery=8,
                 label=STYLE[key][0])

@@ -1,6 +1,8 @@
 """Paper Fig. 3: which encoders benefit from calibration. Writes CVPR_paper/figures/encoders.pdf.
 The 6 encoders of Table 2 (ValCon, 10 LOSO folds, cross-fold parameters) and ATM trained against 5 other image targets.
 y = fraction of the zero-shot errors fixed by GALA. (a) x = zero-shot top-1, (b) x = RSA.
+2026-11-16: GALA = the final method (estimated column masses) without the prior, settings selected on the batch evaluation of
+the other folds (appendix_c.py -> analysis/encoder_gain_final.csv); before: uniform masses (encoder_gain_diagnostics*_vc.csv).
 Least-squares line with its 95% confidence band over all 11 points; rho = Spearman over all 11 points.
 The five ATM image-target variants (open diamonds) were added on 2026-10-26 (user: merge into panel b).
 usage: make_encoder_figure.py
@@ -19,14 +21,15 @@ plt.rcParams.update({'font.size': 9, 'axes.spines.top': False, 'axes.spines.righ
 ENC = {'atm128': 'ATM', 'tsconv': 'TSConv', 'eegnet': 'EEGNet', 'eegproject': 'EEGProject', 'conformer': 'Conformer',
        'labram': 'LaBraM'}
 
-e = pd.read_csv(f'{A}/encoder_gain_diagnostics_vc.csv')  # ValCon checkpoints
+g = pd.read_csv(f'{A}/encoder_gain_final.csv').rename(columns={'m_gala': 'm_sage'})
+e = g[~g.arm.isin([f'{k}_vc_s3300' for k in ('atm128_iv20', 'atm128_iv44', 'atm128_dino40', 'atm128_cliph', 'atm128_bigg27')])].copy()  # ValCon checkpoints
 e['enc'] = e.arm.str.replace(r'_(vc|valcon)_s33\d\d', '', regex=True)
 e = e.groupby('enc')[['m_plain', 'm_sage', 'rsa']].mean().loc[list(ENC)].rename(columns={'m_plain': 'plain', 'm_sage': 'sage'})
 e['ff'] = 100 * (e.sage - e.plain) / (100 - e.plain)
 # ATM-128 trained against other image targets (ValCon, seed 3300): final / near-final layers vs intermediate ones
 TGT = {'atm128_iv20': 'InternViT L20', 'atm128_iv44': 'InternViT L44', 'atm128_dino40': 'DINOv2 L40',
        'atm128_cliph': 'CLIP-H final', 'atm128_bigg27': 'bigG L27'}
-t = pd.read_csv(f'{A}/encoder_gain_diagnostics_targets_vc.csv')
+t = g[~g.index.isin(e.index)].copy()
 t['enc'] = t.arm.str.replace(r'_vc_s33\d\d', '', regex=True)
 t = t.groupby('enc')[['m_plain', 'm_sage', 'rsa']].mean().loc[list(TGT)].rename(columns={'m_plain': 'plain', 'm_sage': 'sage'})
 t['ff'] = 100 * (t.sage - t.plain) / (100 - t.plain)

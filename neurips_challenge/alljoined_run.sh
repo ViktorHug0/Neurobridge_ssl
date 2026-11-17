@@ -45,7 +45,8 @@ if [ -n "$SLURM_JOB_ID" ]; then
   for d in /tmp/${USER}-aj-*; do id=${d##*-}
     [ "$id" = "$SLURM_JOB_ID" ] || squeue -h -j "$id" 2>/dev/null | grep -q . || rm -rf "$d"; done
 else trap 'rm -rf "$LOCAL"' EXIT; fi
-EEG=$(.venv/bin/python neurips_challenge/stage_eeg_cache.py "$DATA" "$LOCAL" --subjects $TRAIN --test_subjects $TEST \
+STAGE_TEST=$TEST; [[ " $* " == *" --train_test_reps "* ]] && STAGE_TEST="$TEST $TRAIN"  # train.py reads their test trials too
+EEG=$(.venv/bin/python neurips_challenge/stage_eeg_cache.py "$DATA" "$LOCAL" --subjects $TRAIN --test_subjects $STAGE_TEST \
   --selected_channels $CHANNELS --time_window 0 120)
 .venv/bin/python train.py --train_subject_ids $TRAIN --test_subject_ids $TEST --output_name "$ARM" --output_dir "$OUT" \
   --eeg_data_dir "$EEG" --selected_channels $CHANNELS --time_window 0 120 \

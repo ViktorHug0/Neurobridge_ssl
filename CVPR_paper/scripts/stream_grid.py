@@ -57,7 +57,7 @@ def main():
     p.add_argument('--alphas', nargs='*', type=float, default=[0.5, 1.0])
     p.add_argument('--ramps', nargs='*', default=[], help='E4.2 damping arms cap:const, alpha = cap*u/(u+const), u = t/K')
     p.add_argument('--score_only', action='store_true', help='arms plain + SCORE (deployment step re-fitted on the buffer) only')
-    p.add_argument('--fullramps', nargs='*', default=[], help='same alpha, but it also damps SAW whitening (feature blend) '
+    p.add_argument('--fullramps', nargs='*', default=[], help='cap:const (alpha as --ramps), or lin = min(1, t/K), or dim = t/(t+d); also damps SAW whitening (feature blend) '
                    'and CSLS (score blend (1-a) cos + a CSLS): a = 0 is plain, a = 1 is SAGE')
     p.add_argument('--support', action='store_true', help='E4.7: + full1_3s / full1_3sf = full1_3 fitted on the SCORE '
                    'top-1 support of the buffer only (balanced / free marginal), scored on the full menu')
@@ -114,11 +114,16 @@ def main():
                                 m = lambda x, R=geodesic_blend(form, a): apply_orthogonal_map(saw(x), R)
                                 fits[name] = frozen_scorer(m, pool[buf], gallery, params.csls_k)
                             for r in args.fullramps:
-                                cap, const = map(float, r.split(':'))
-                                a = cap * (t / K) / (t / K + const)
+                                if r == 'lin':  # constant-free: full strength once the buffer is as large as the gallery
+                                    a, name = min(1.0, t / K), 'full_lin'
+                                elif r == 'dim':  # constant-free: t / (t + embedding dimension)
+                                    a, name = t / (t + pool.shape[1]), 'full_dim'
+                                else:
+                                    cap, const = map(float, r.split(':'))
+                                    a, name = cap * (t / K) / (t / K + const), f'full{cap:g}_{const:g}'
                                 m = lambda x, a=a, R=geodesic_blend(form, a): apply_orthogonal_map(
                                     (1 - a) * normalize_rows(x) + a * normalize_rows(saw(x)), R)
-                                fits[f'full{cap:g}_{const:g}'] = frozen_scorer(m, pool[buf], gallery, params.csls_k, a)
+                                fits[name] = frozen_scorer(m, pool[buf], gallery, params.csls_k, a)
                             if args.support:  # E4.7: SAGE fitted only on the menu items SCORE's map puts first for some query
                                 sup = np.unique(frozen_scorer(score_fit(pool[buf], gallery), pool[buf], gallery, 10)(pool[buf]).argmax(1))
                                 a = (t / K) / (t / K + 3)

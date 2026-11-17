@@ -63,7 +63,7 @@ class TokenREVE(nn.Module):
     def __init__(self, feature_dim=1536, eeg_sample_points=120, channels_num=32, tokens='electrode', virtual=64,
                  patch=24, readout='mean', d_model=256, depth=6, heads=8, stride=None, patch2=0, time_source='patch',
                  tsc_pool=1, time_conv=0, attn='full', registers=0, elec_patch=0, type_ffn=False, tsc_axis='time',
-                 elec_embed='linear', filt_tokens=False):
+                 elec_embed='linear', filt_tokens=False, jepa=0):
         super().__init__()
         from module.eeg_encoder.alljoined_encoders import _SwitchBlock
         self.tokens, self.patch, self.readout = tokens, patch, readout
@@ -114,6 +114,8 @@ class TokenREVE(nn.Module):
             self.fpos = pos(40)
             n += 40
         self.blocks = nn.Sequential(*[_SwitchBlock(d_model, heads, 'rms', False, 'geglu', 4) for _ in range(depth)])
+        if jepa:  # training only (train.py --xperson_lambda): the token mean after block `jepa` predicts the final token mean of another person's trial of the same image
+            self.jepa = jepa; self.jepa_pred = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model))
         self.reg = pos(registers) if registers else None  # learned register tokens (shared workspace), appended last
         if type_ffn:
             from braindecode.models.reve import RMSNorm
@@ -171,7 +173,7 @@ class TokenREVE(nn.Module):
         if self.filt_tokens:
             toks.append(self.fembed(self.fstem(z)) + self.fpos)
         if self.reg is not None:
-            toks.append(self.reg.expand(len(z), -1, -1))
+            toks.append(self.reg.expand(z.shape[0], -1, -1))
         h = torch.cat(toks, 1)
         if hasattr(self, 'mask'):
             for blk in self.blocks:
@@ -181,6 +183,9 @@ class TokenREVE(nn.Module):
                 h = blk(h)
                 t = h[:, self.n_elec:]
                 h = torch.cat([h[:, :self.n_elec], t + conv(norm(t).transpose(1, 2)).transpose(1, 2)], 1)
+        elif self.training and hasattr(self, 'jepa'):
+            mid = self.blocks[:self.jepa](h); h = self.blocks[self.jepa:](mid)
+            self.aux = (self.jepa_pred(mid.mean(1)), h.mean(1))
         else:
             h = self.blocks(h)
         if self.readout == 'attnstat':
@@ -193,7 +198,31 @@ class TokenREVE(nn.Module):
         return self.head(h.flatten(1) if self.readout == 'flatten' else h.mean(1))
 
 
-HYBRIDS = {'TokenREVE': TokenREVE}
+class RecurrentEEG(nn.Module):
+    """Recurrent (state-scan) member: time tokens from TSConv's stem (40 filters x 36 steps at 120 Hz), residual
+    bidirectional GRU layers, time-locked flatten readout through the 64-d bottleneck head. boundary: per-dataset
+    BatchNorm in the stem (subject ids >= boundary = second dataset).
+    ponytail: GRU, not Mamba: transformers' pure-PyTorch MambaMixer costs ~0.5 s per 64-trial step here (27 h per run)
+    and compiled mamba-ssm kernels cannot ship in the submission; at 36 steps the inductive bias is the same."""
+
+    def __init__(self, feature_dim=1536, eeg_sample_points=120, channels_num=32, d_model=160, depth=3, boundary=0):
+        super().__init__()
+        self.stem = _Stem(channels_num, boundary=boundary)
+        n = self.stem.n_time(eeg_sample_points)
+        self.embed = nn.Linear(40, d_model)
+        self.pos = nn.init.trunc_normal_(nn.Parameter(torch.zeros(1, n, d_model)), std=0.02)
+        self.rnns = nn.ModuleList(nn.GRU(d_model, d_model // 2, batch_first=True, bidirectional=True) for _ in range(depth))
+        self.norms = nn.ModuleList(nn.LayerNorm(d_model) for _ in range(depth))
+        self.head = _bottleneck_head(n * d_model, feature_dim)
+
+    def forward(self, x, subject_ids=None):
+        h = self.embed(self.stem(x, subject_ids).transpose(1, 2)) + self.pos
+        for rnn, norm in zip(self.rnns, self.norms):
+            h = h + rnn(norm(h))[0]
+        return self.head(h.flatten(1))
+
+
+HYBRIDS = {'TokenREVE': TokenREVE, 'RecurrentEEG': RecurrentEEG}
 
 if __name__ == '__main__':
     x, sid = torch.randn(6, 32, 120), torch.tensor([1, 2, 3, 21, 22, 25])

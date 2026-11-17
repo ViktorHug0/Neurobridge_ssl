@@ -43,3 +43,20 @@ CVPR_paper/*.fdb_latexmk
 CVPR_paper/*.fls
 CVPR_paper/*.log
 CVPR_paper/*.out
+
+# Run logs, job outputs and paper backups (~100 GB)
+logs/
+*.pyc
+
+# NeurIPS challenge: submission archives (~19 GB) and job queues
+neurips_challenge/submissions/
+neurips_challenge/queue_*.txt
+
+# CVPR paper: build products, submission PDFs, figure previews and drafts
+CVPR_paper/*.bbl
+CVPR_paper/submission/
+CVPR_paper/figures/drafts/
+CVPR_paper/figures/*.png
+!CVPR_paper/figures/GALA*.png
+# the figures the paper includes are PDFs: keep them despite the global *.pdf rule
+!CVPR_paper/figures/*.pdf

@@ -217,6 +217,7 @@ def _process_eeg_array(
 
 
 class EEGPreImageDataset(Dataset):
+    repeat_mix = 0.0  # set by train.py --repeat_mix
     def __init__(
         self, 
         subject_ids: list[int], 
@@ -473,6 +474,10 @@ class EEGPreImageDataset(Dataset):
             if self.train:  # ponytail: RNG parity with the removed rep-avg/xsubj/noise/band-swap draws (one each)
                 for _ in range(4):
                     random.random()
+                if self.repeat_mix and random.random() < self.repeat_mix:  # SNR augmentation (train.py --repeat_mix): mean of this trial and another repeat of the same person and image
+                    other = self.eeg_data_list[subject_idx][object_idx][image_idx][random.choice([r for r in range(self.num_repetitions) if r != repetition_idx])]
+                    if np.abs(other).sum() > 0:  # a missing repeat is zero padding
+                        eeg_data = (np.asarray(eeg_data, dtype=np.float32) + np.asarray(other, dtype=np.float32)) / 2
         
         # If it's the training set and a transform is specified, apply the EEG data transformation
         if not self.frozen_eeg_prior:
@@ -495,7 +500,8 @@ class EEGPreImageDataset(Dataset):
             object_idx, 
             image_idx, 
             repetition_idx
-        )
+        ) + ((torch.tensor(self.distill_targets[index], dtype=torch.float32),)
+             if getattr(self, 'distill_targets', None) is not None else ())
 
     def decode_index(self, index: int):
         repetition_idx = 0
@@ -562,6 +568,46 @@ class GroupedSubset(Subset):
             if sub:
                 out[key] = sub
         return out
+
+
+class TestRepTrials(Subset):
+    """Every (num_reps // n_reps)-th repetition of single-trial test data (spread over the sessions), as extra
+    training trials (final sealed models). Object indices are shifted past the training ones so the positive
+    mask never pairs a test image with a training image."""
+
+    def __init__(self, test_trials, n_reps, object_offset):
+        step = test_trials.num_repetitions // n_reps
+        super().__init__(test_trials, [i for i in range(len(test_trials)) if i % test_trials.num_repetitions % step == 0])
+        self.object_offset = object_offset
+
+    def __getitem__(self, index):
+        item = super().__getitem__(index)
+        return item[:4] + (item[4] + self.object_offset,) + item[5:]
+
+
+class ExtraTrials(Dataset):
+    """Single trials of another cohort with its own image set (MSS: scripts/mi/nq02_mss_export.py writes
+    <path>/export/sub-XX_ses-YY.npz with X (n, 32, 120) and img = row of <path>/targets.npz F). Items mirror
+    EEGPreImageDataset: subject id = subject_offset + XX, object index = object_offset + image row (never a THINGS
+    image), image index 0. shift: content moved by this many samples (negative = earlier), edge replicated."""
+
+    def __init__(self, path, subject_offset, object_offset, shift, feature_dim):
+        files = sorted(glob.glob(os.path.join(path, 'export', 'sub-*.npz'))); z = [np.load(f) for f in files]
+        self.X, self.img = np.concatenate([d['X'] for d in z]), np.concatenate([d['img'] for d in z])
+        T = np.load(os.path.join(path, 'targets.npz')); self.F = T['F'].astype(np.float32)
+        # a cohort on THINGS images (ds007964, nq06) gives its images' training object and image ids, so its trials pair with ours, and its own subject offset
+        self.obj, self.image = (T['obj'], T['image']) if 'obj' in T else (object_offset + np.arange(len(self.F)), np.zeros(len(self.F), int))
+        if 'subject_offset' in T:
+            subject_offset = int(T['subject_offset'])
+        self.subj = np.concatenate([np.full(len(d['img']), subject_offset + int(os.path.basename(f)[4:6])) for f, d in zip(files, z)])
+        self.t, self.text = np.clip(np.arange(self.X.shape[-1]) - shift, 0, self.X.shape[-1] - 1), torch.zeros(feature_dim)
+
+    def __len__(self):
+        return len(self.img)
+
+    def __getitem__(self, i):
+        return (torch.tensor(self.X[i][:, self.t].astype(np.float32)), torch.tensor(self.F[self.img[i]]), self.text,
+                int(self.subj[i]), int(self.obj[self.img[i]]), int(self.image[self.img[i]]), 0)
 
 
 class GroupedImageBatchSampler(BatchSampler):

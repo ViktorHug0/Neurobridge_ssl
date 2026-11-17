@@ -76,7 +76,12 @@ class FullAttention(nn.Module):
     def forward(self, queries, keys, values):
         E = queries.shape[-1]
         scores = torch.einsum("blhe,bshe->bhls", queries, keys)
-        A = self.dropout(torch.softmax(1. / sqrt(E) * scores, dim=-1))
+        A = torch.softmax(1. / sqrt(E) * scores, dim=-1)
+        if getattr(self, 'forced', None) is not None:  # ATMS split-key forward: the map computed from the subject key
+            A = self.forced
+        if getattr(self, 'record', False):
+            self.last = A
+        A = self.dropout(A)
         V = torch.einsum("bhls,bshd->blhd", A, values)
         return V.contiguous()
 
@@ -344,7 +349,16 @@ class ATMS(nn.Module):
 
     def forward(self, x:Tensor, subject_ids):
         x = x.squeeze(1)
-        x = self.encoder(x, subject_ids)
+        if x.dim() == 4:  # (B, 2, C, T) = [content, key] (train.py --subject_key split; scripts/mi/MI_LOG.md E13):
+            # the electrode attention map is computed from the subject key alone, then applied to the key-free content
+            fa = self.encoder.encoder.attn_layers[0].attention.inner_attention
+            fa.record = True
+            self.encoder(x[:, 1], subject_ids)
+            fa.forced, fa.record = fa.last, False
+            x = self.encoder(x[:, 0], subject_ids)
+            fa.forced = fa.last = None
+        else:
+            x = self.encoder(x, subject_ids)
         if any(isinstance(layer, DomainBatchNorm2d) for layer in self.enc_eeg[0].tsconv):
             z = x.unsqueeze(1)
             for layer in self.enc_eeg[0].tsconv:

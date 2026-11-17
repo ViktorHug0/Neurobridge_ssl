@@ -1,7 +1,7 @@
 """Appendix figure: R2 streams for every menu size K and number of averaged repetitions q (ATM, ValCon, three seeds,
 10 subjects, 3 stream orders). x = total stimulus time needed to collect the buffer: t queries x q repetitions x 200 ms
 (100 ms image + 100 ms blank, THINGS-EEG-2 RSVP). Writes CVPR_paper/figures/stream_grid.pdf.
-usage: make_stream_appendix.py [stream dir name, default stream50_sage]
+usage: make_stream_appendix.py [stream dir name, default stream50_free]
 """
 import glob, sys
 
@@ -10,11 +10,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-SUB = sys.argv[1] if len(sys.argv) > 1 else 'stream50_sage'
+SUB = sys.argv[1] if len(sys.argv) > 1 else 'stream50_free'
 F = 'results/things_eeg/cvpr/final/atm128_vc_s33*'  # s3300 = symlink to atm128_valcon_s3300
 SOA = 0.2  # seconds per repetition
 STYLE = {'plain': ('Zero-shot', '#8a8a8a', '^'), 'sage_a1': ('GALA, undamped', '#eb6834', 's'),
-         'full1_3': ('GALA, damped', '#2a78d6', 'o')}
+         'full_dim': ('GALA, damped', '#2a78d6', 'o')}
 plt.rcParams.update({'font.size': 7.5, 'axes.spines.top': False, 'axes.spines.right': False, 'axes.linewidth': 0.5,
                      'xtick.major.width': 0.5, 'ytick.major.width': 0.5, 'legend.frameon': False})
 

@@ -46,13 +46,15 @@ _HUB_IDS = {
     'CBraMod': 'braindecode/cbramod-pretrained',
     'REVE': 'brain-bzh/reve-base',
     'EEGPT': 'braindecode/eegpt-pretrained',
+    'STEEGFormer': 'braindecode/STEEGFormer-small',
+    'LUNA': 'PulpBio/LUNA',  # base: 7 M; electrodes pooled into 4 queries per 40-sample patch at 256 Hz -> 6 tokens x 256  # 25 M, 512-wide, 16-sample patches at 128 Hz, electrode x time tokens
 }
 # EEGPT was pretrained at 250 Hz with 64-sample patches (stride 32): 256 samples = 7 patches.
 EEGPT_N_TIMES = 256
 
 # LaBraM/CBraMod emit FM_EMBED_DIM-wide features; REVE's transformer is 512-wide.
 _EMBED_DIMS = {'LaBraM': FM_EMBED_DIM, 'CBraMod': FM_EMBED_DIM, 'REVE': 512,
-               'EEGPT': 4 * 512}  # EEGPT: 4 summary tokens x 512, averaged over patches
+               'EEGPT': 4 * 512, 'STEEGFormer': 512, 'LUNA': 6 * 4 * 64}  # EEGPT: 4 summary tokens x 512, averaged over patches
 
 # REVE was pretrained on z-scored EEG clipped at 15 SD (braindecode reve.py docstring). The
 # grader serves RobustScaler/clamp-20 tensors, so we restandardise per trial -- identically at
@@ -98,7 +100,7 @@ class FoundationEncoder(nn.Module):
         # popped first because it changes no weight shape, so it is valid on a pretrained model too
         final_norm = arch_kwargs.pop('final_norm', True)
         resized = bool(arch_kwargs)
-        if arch_kwargs and pretrained:
+        if set(arch_kwargs) - {'n_times', 'hub'} and pretrained:  # n_times alone (the epoch stretched over several patches) keeps every pretrained shape but the temporal embedding
             raise ValueError('arch_kwargs change the architecture: only valid with pretrained=False')
         if model_name not in _HUB_IDS:
             raise ValueError(f"Unknown foundation model {model_name!r}; expected one of {sorted(_HUB_IDS)}")
@@ -121,7 +123,7 @@ class FoundationEncoder(nn.Module):
             self.register_buffer('eegpt_keep', torch.tensor(keep), persistent=False)
         # Wrapper-level crossovers (LaBraM, scratch only): the input's own rate (n_times), a learned
         # 63 -> K spatial mix feeding K "virtual electrode" tokens, TSConv's band-power branch in the head.
-        self.n_times = arch_kwargs.get('n_times', FM_N_TIMES)
+        self.n_times = arch_kwargs.get('n_times', {'STEEGFormer': 128, 'LUNA': 240}.get(model_name, FM_N_TIMES))  # ST-EEGFormer: 1 s at its 128 Hz
         virtual = arch_kwargs.pop('virtual_channels', 0)
         power = arch_kwargs.pop('power_branch', False)
         self.spatial = nn.Conv1d(channels_num, virtual, 1, bias=False) if virtual else None
@@ -164,6 +166,25 @@ class FoundationEncoder(nn.Module):
             if chan_lora:
                 fm.to_patch_embedding = _ChanLoRAPatchEmbed(fm.to_patch_embedding, channels_num, fm.patch_size,
                                                             fm.embed_dim, chan_lora)
+            return fm
+
+        if model_name == 'STEEGFormer':
+            from braindecode.models import STEEGFormer
+
+            kwargs = {**dict(n_outputs=2, n_chans=channels_num, chs_info=[{'ch_name': n} for n in ch_names], n_times=128, sfreq=128), **(arch_kwargs or {})}
+            hub = kwargs.pop('hub', _HUB_IDS[model_name])  # {"hub":"braindecode/STEEGFormer-base"}: the 86 M checkpoint (768-wide, depth 12)
+            return STEEGFormer.from_pretrained(hub, **kwargs) if pretrained else STEEGFormer(**kwargs)
+
+        if model_name == 'LUNA':
+            import mne
+            from braindecode.models import LUNA
+
+            info = mne.create_info(list(ch_names), 256.0, 'eeg')
+            info.set_montage('standard_1005', match_case=False)  # LUNA embeds each electrode's 3-D position
+            kwargs = {**dict(n_outputs=2, n_chans=channels_num, n_times=240, sfreq=256, chs_info=info['chs'],  # 240 = 6 patches of 40 (1 s at ~its 256 Hz)
+                             embed_dim=64, num_queries=4, depth=8), **(arch_kwargs or {})}
+            fm = LUNA.from_pretrained(_HUB_IDS[model_name], filename='LUNA_base.safetensors', **kwargs) if pretrained else LUNA(**kwargs)
+            fm.final_layer = nn.Identity()  # forward then returns the normalised (time-patch, queries x width) tokens
             return fm
 
         if model_name == 'EEGPT':
@@ -256,6 +277,10 @@ class FoundationEncoder(nn.Module):
             x = ((x - mean) / std).clamp(-REVE_CLIP_SD, REVE_CLIP_SD)
             # return_output bypasses the dummy classification head; last layer -> (B, tokens, 512)
             feats = self.fm(x, return_output=True)[-1]
+        elif self.model_name == 'LUNA':
+            feats = self.fm(x).flatten(1)  # 6 time patches kept in order, not pooled
+        elif self.model_name == 'STEEGFormer':
+            feats = self.fm(x, return_features=True)['features']  # layer-normalised (electrode, time-patch) tokens, pooled below
         elif self.model_name == 'LaBraM':
             # Without ch_names LaBraM requires the full 128-channel canonical order.
             feats = self.fm(x, ch_names=self.fm_names)

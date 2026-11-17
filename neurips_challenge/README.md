@@ -4,8 +4,8 @@ The submission-candidate pipeline for the sealed phase. The cohort is unseen All
 32-channel Emotiv, 120 Hz grader input, and DINOv2-giant targets. Everything is evaluated under the 4×5-subject
 cross-validation described below.
 
-**Best ensemble (optx5): 44.25** official subject-aggregated top-5, mean over the 20 cv4 test people
-(folds 47.90 / 42.40 / 46.70 / 40.00). Five members, every one trained with channel-operator transfer
+**Best ensemble (optx5): 45.20** (add-back beta 0.5 + sqrt-norm vote weight; 44.25 before) official subject-aggregated top-5, mean over the 20 cv4 test people
+(folds 48.90 / 42.50 / 47.20 / 42.20; before: 47.90 / 42.40 / 46.70 / 40.00; opt4 = optx5 minus reve_scratch: 45.48). Five members, every one trained with channel-operator transfer
 (`--op_transfer_prob 0.5`):
 
 | recipe | model |
@@ -44,7 +44,7 @@ bash neurips_challenge/align_dyn.sh                          # worker on neurips
 # ensemble score under the lean adaptation
 .venv/bin/python neurips_challenge/tta_cache.py reve_d6_optx_things rmix_reg_optx_things sqf_dbn_optx_things \
     tsc_dbn40_bn64_optx_things reve_scratch_optx_things
-.venv/bin/python neurips_challenge/lean_tta.py               # -> 44.25
+.venv/bin/python neurips_challenge/lean_tta.py               # -> 45.20
 ```
 
 `cv4.sh` → `alljoined_run.sh` (stages the EEG memmaps via `stage_eeg_cache.py`, runs `train.py`, then `score_track1.py`).
@@ -83,9 +83,9 @@ bash neurips_challenge/align_dyn.sh                          # worker on neurips
 - **Compute:** 3 RTX 3080 in total incl. the interactive node; sbatch with `-p Brain_GPU -A brain -q low
   --gres=gpu:rtx3080:1 -c 8 --mem=30G`. Runs claim themselves (`.claim/job`), so several `align_dyn.sh` workers can share
   the queue. EEG memmaps are staged to `/tmp/$USER-aj-$SLURM_JOB_ID` once per job.
-- **Final sealed model:** retrain each member on all 20 Alljoined people + sub-21..30, stopping at its cv4 budget:
-  `SPLIT=final/<recipe> TRAIN_SUBJECTS="$(seq -s ' ' 1 30)" TEST_SUBJECTS=1 bash neurips_challenge/alljoined_run.sh <arm>
-  <recipe flags> --select_best_on fixed --stop_after_epoch <budget>` (the test person is only a smoke score). Before
+- **Final sealed model:** retrain each member on all 20 Alljoined people + sub-21..30, stopping at its cv4 budget,
+  plus 10 of the 80 test reps of every person (`--train_test_reps 10`: every 8th rep, +3% trials):
+  `bash neurips_challenge/final.sh <recipe> <budget>` (the test person, sub-01, is only an in-sample smoke score). Before
   submitting, check: fewer repeats per image (1-20), mixed-person batches of other sizes, channel order permuted by name.
 
 ## Two constraints that shape everything
@@ -96,3 +96,20 @@ bash neurips_challenge/align_dyn.sh                          # worker on neurips
 - **The metric is subject-aggregated.** Predictions of an image's repeats are averaged within each person, ranked
   by cosine, and the per-person top-5 is averaged. Single-epoch numbers (the warm-up leaderboard) are a different
   measurement.
+
+## Sealed-phase notes (2026-11-10)
+
+- **Judge: the 5k clean gallery at r=3, exact ranks.** Two corrections from a review by the MI session
+  (`scripts/mi/MI_NEURIPS_LOG.md`). (1) The proxy scripts scored the target with a separate dot product from the
+  gallery matmul, so rounding put the target above itself in 47% of queries. Top-5 was under-read by ~9% and top-1 by
+  ~44%, and paired comparisons were noisier. This is fixed in `logs/*.py` and `package_submission.py --verify` (the
+  target is now read from the same matmul). (2) The board's rank-shape statistics (aggregation gain 1.91 top-5 / 2.02
+  top-1, per-epoch top-5/top-1 4.29) match the 5k proxy at r=3 (1.89 / 2.11 / 4.47), not the 14k "sealed-like" gallery
+  (2.04 / 2.37 / 4.97). The sealed set is harder per trial (~4.4x chance vs 7-8x on the proxy), so its 40k gallery
+  behaves like a smaller proxy gallery. 14k readings overstate levers whose gain grows with the gallery (later epochs,
+  REVE weighting, fewer members).
+- **Repeats: about 3 per (person, image), mixed.** The board's aggregation gain (1.84-1.98 for good teams, sub 2 1.90)
+  matches r=3 on the 5k judge (1.89). The near-constant bottom entry has per-epoch > subject-aggregated, which only
+  happens if repeat counts vary across (person, image). **r=3 is the main metric.**
+- **Keep the 5-member ensemble.** rmix@10 + 0.5 × SQF-X tied sub 6 only at 14k; on the 5k judge it is 3-5% behind
+  (`logs/pair_ens.py`). `submissions/sub9_rmix_sqfx05_sum.zip` is not an upload candidate.

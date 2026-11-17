@@ -84,6 +84,7 @@ class _FusedTemporalConvPool(nn.Module):
         self.bias = nn.Parameter(torch.empty(out_channels))
         self.pool_stride = pool_stride
         self.effective_kernel = temporal_kernel + pool_kernel - 1
+        self.box_pad = pool_kernel - 1
         self.register_buffer(
             'box',
             torch.full((1, 1, pool_kernel), 1.0 / pool_kernel),
@@ -98,7 +99,7 @@ class _FusedTemporalConvPool(nn.Module):
         effective_weight = nn.functional.conv1d(
             temporal_weight,
             self.box,
-            padding=self.box.shape[-1] - 1,
+            padding=self.box_pad,  # a Python int: torch.jit.trace turns self.box.shape[-1] - 1 into a traced size
         ).unsqueeze(2)
         return nn.functional.conv2d(
             x,
@@ -338,9 +339,134 @@ class MultiScaleTSMixer(nn.Module):
         return self.head(self.norm(z).flatten(1))
 
 
+def _mlp(dim, hidden, drop):
+    return nn.Sequential(nn.Linear(dim, hidden), nn.GELU(), nn.Dropout(drop), nn.Linear(hidden, dim), nn.Dropout(drop))
+
+
+class _CellBatchNorm(nn.Module):
+    """BatchNorm of a (B, C, T, d) grid with one channel per (electrode, feature), statistics over batch and time
+    (the analogue of TSConv's per-filter BatchNorm)."""
+
+    def __init__(self, channels, d):
+        super().__init__()
+        self.bn = nn.BatchNorm1d(channels * d)
+
+    def forward(self, z):
+        B, C, T, d = z.shape
+        return self.bn(z.transpose(2, 3).reshape(B, C * d, T)).reshape(B, C, d, T).transpose(2, 3)
+
+
+def _cell_norm(norm, channels, d):
+    return {'ln': lambda: nn.LayerNorm(d), 'bn': lambda: _CellBatchNorm(channels, d), 'none': nn.Identity}[norm]()
+
+
+class _Mixer3Block(nn.Module):
+    """Pre-norm residual dense MLPs along time, electrodes, then features of a (B, C, T, d) grid."""
+
+    def __init__(self, channels, times, d, time_hidden, elec_hidden, feat_hidden, drop, norm='ln'):
+        super().__init__()
+        self.norms = nn.ModuleList([_cell_norm(norm, channels, d) for _ in range(3)])
+        self.time = _mlp(times, time_hidden, drop)
+        self.elec = _mlp(channels, elec_hidden, drop)
+        self.feat = _mlp(d, feat_hidden, drop)
+
+    def forward(self, z):
+        z = z + self.time(self.norms[0](z).transpose(2, 3)).transpose(2, 3)
+        z = z + self.elec(self.norms[1](z).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        return z + self.feat(self.norms[2](z))
+
+
+class Mixer3(nn.Module):
+    """MLP-only encoder on the raw (electrode x time) grid (NIGHT_LOG N65): each cell is lifted to d features, then
+    blocks alternate dense MLPs over all time samples (position-specific: absolute latency, no shift invariance),
+    over all electrodes and over features. No convolution, no patches; the flatten head keeps latency."""
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63, d=8, depth=4,
+                 time_hidden=128, elec_hidden=64, feat_hidden=32, drop=0.3, domain_bn_boundary=0,
+                 time_attn=0, spectral=False, time_tokens=0, norm='ln', band=''):
+        # time_attn > 0: one single-head attention over the time axis after block 2, query/key dim time_attn, from
+        # each position's whole (electrode x feature) slice, values = the grid itself (content-dependent re-timing)
+        # spectral: mix the orthonormal rFFT of each electrode instead of its samples (cells = (Re, Im) per bin)
+        # norm 'bn': BatchNorm per (electrode, feature) over batch and time inside the blocks instead of LayerNorm
+        # over features (N65: the conv members' error family may come from their in-network BatchNorm); 'none': neither
+        # time_tokens > 0: a learned dense time map (shared across electrodes) compresses the samples to this many
+        # steps first: a smooth low-dimensional time basis (the mixers overfit: train loss 6.03 vs TSC 6.48, N65)
+        # band 'lp': TSConv's 25-sample/stride-2 average pool on the input (its ~5 Hz smoothing, 48 steps); 'hp': the input
+        # minus its 25-sample moving average (N65: do the two error families differ by the frequency band they read?)
+        super().__init__()
+        self.spectral, self.band = spectral, band
+        if band == 'lp':
+            eeg_sample_points = (eeg_sample_points - 25) // 2 + 1
+        self.tcomp = nn.Linear(eeg_sample_points, time_tokens) if time_tokens else None
+        n = eeg_sample_points // 2 + 1 if spectral else time_tokens or eeg_sample_points
+        self.bn = (DomainBatchNorm2d(channels_num, domain_bn_boundary, nn.BatchNorm1d) if domain_bn_boundary > 0
+                   else nn.BatchNorm1d(channels_num))
+        self.lift = nn.Linear(2 if spectral else 1, d)
+        self.blocks = nn.ModuleList([
+            _Mixer3Block(channels_num, n, d, time_hidden, elec_hidden, feat_hidden, drop, norm)
+            for _ in range(depth)
+        ])
+        if time_attn:
+            self.attn_norm = nn.LayerNorm(channels_num * d)
+            self.qk = nn.Linear(channels_num * d, 2 * time_attn)
+            self.qk_pos = nn.Parameter(torch.zeros(n, 2 * time_attn))
+            self.attn_out = nn.Linear(d, d)
+        self.time_attn = time_attn
+        self.norm = _cell_norm(norm, channels_num, d)
+        self.head = _head(channels_num * n * d, feature_dim)
+
+    def forward(self, x, subject_ids=None):
+        x = self.bn(x, subject_ids) if isinstance(self.bn, DomainBatchNorm2d) else self.bn(x)
+        if self.band == 'lp':
+            x = nn.functional.avg_pool1d(x, 25, 2)
+        elif self.band == 'hp':
+            x = x - nn.functional.avg_pool1d(x, 25, 1, padding=12, count_include_pad=False)
+        if self.spectral:  # outside the compiled bf16 trunk: cuFFT has no bf16 for length 120
+            f = torch.fft.rfft(x.float(), dim=-1, norm='ortho')
+            return self._trunk(torch.stack([f.real, f.imag], -1))
+        return self._trunk((self.tcomp(x) if self.tcomp is not None else x).unsqueeze(-1))
+
+    # fuses the memory-bound LayerNorm/GELU/dropout chain over the 32 x 120 x d cells: 0.12 vs 0.49 s/step
+    # (bf16, batch 1024, d 8; d 16 uncompiled was 0.83 s = 15 h for 40 epochs)
+    @torch.compile
+    def _trunk(self, x):
+        z = self.lift(x)
+        for i, block in enumerate(self.blocks):
+            z = block(z)
+            if i == 1 and self.time_attn:
+                B, C, T, d = z.shape
+                q, k = (self.qk(self.attn_norm(z.permute(0, 2, 1, 3).reshape(B, T, C * d))) + self.qk_pos).chunk(2, -1)
+                a = (q @ k.transpose(1, 2) / self.time_attn ** .5).softmax(-1)
+                z = z + self.attn_out(torch.einsum('bts,bcsf->bctf', a, z))
+        return self.head(self.norm(z).flatten(1))
+
+
+class FlatMLP(nn.Module):
+    """EEGProject (one dense map over the flattened grid + a residual MLP, no weight sharing) with Mixer3's input
+    BatchNorm and head: the unfactorised ablation of Mixer3 (NIGHT_LOG N65)."""
+
+    def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63, width=1024, drop=0.3,
+                 domain_bn_boundary=0):
+        super().__init__()
+        self.bn = (DomainBatchNorm2d(channels_num, domain_bn_boundary, nn.BatchNorm1d) if domain_bn_boundary > 0
+                   else nn.BatchNorm1d(channels_num))
+        self.body = nn.Sequential(
+            nn.Linear(channels_num * eeg_sample_points, width),
+            ResidualAdd(nn.Sequential(nn.GELU(), nn.Linear(width, width), nn.Dropout(drop))),
+            nn.LayerNorm(width),
+        )
+        self.head = _head(width, feature_dim)
+
+    def forward(self, x, subject_ids=None):
+        x = self.bn(x, subject_ids) if isinstance(self.bn, DomainBatchNorm2d) else self.bn(x)
+        return self.head(self.body(x.flatten(1)))
+
+
 _REGISTRY = {
     'FastTSConvSqueezeformer': FastTSConvSqueezeformer,
     'MultiScaleTSMixer': MultiScaleTSMixer,
+    'Mixer3': Mixer3,
+    'FlatMLP': FlatMLP,
 }
 from module.eeg_encoder.hybrid_encoders import HYBRIDS  # noqa: E402
 _REGISTRY.update(HYBRIDS)
