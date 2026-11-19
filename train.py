@@ -30,7 +30,7 @@ from module.augment import (
     functional_operator_transfer,
     cross_subject_stimulus_mix,
 )
-from module.dataset import EEGPreImageDataset, ExtraTrials, GroupedImageBatchSampler, GroupedSubset, TestRepTrials
+from module.dataset import EEGPreImageDataset, ExtraTrials, GroupedImageBatchSampler, GroupedSubset, RepeatPairSampler, TestRepTrials
 from module.eeg_encoder.model import build_eeg_encoder, run_eeg_backbone
 from module.loss import (
     ContrastiveLoss,
@@ -40,6 +40,7 @@ from module.loss import (
 )
 from module.util import collect_trainable_parameters, retrieve_all, seed_everything
 from module.projector import build_projector
+from module.teacher import Teachers
 from module.training_plots import (
     empty_alignment_sparsity_accumulator,
     finalize_alignment_sparsity_accumulator,
@@ -111,6 +112,10 @@ def parse_args():
     parser.add_argument('--distill_targets', default='', type=str, help='per-trial teacher predictions (neurips_challenge/export_teacher_cv4.py .npy, row = train index)')
     parser.add_argument('--distill_lambda', default=0.0, type=float, help='weight of KL(teacher || student) over the batch images')
     parser.add_argument('--distill_tau', default=0.005, type=float)
+    parser.add_argument('--kd_teacher', default='', help='ensemble distillation (scripts/subject_key/KEY_LOG.md): a file from scripts/subject_key/export_teacher.py with the members\' embeddings of every clean training trial; the student matches softmax(mean teacher cosine / --kd_tau) over the batch images (a SubjectMix pair gets the same mix of its two trials\' teacher cosines)')
+    parser.add_argument('--kd_lambda', default=1.0, type=float)
+    parser.add_argument('--kd_tau', default=0.05, type=float)
+    parser.add_argument('--kd_members', type=int, nargs='*', default=[], help='with --kd_teacher and --aux_targets --aux_dim: one teacher member per student head (main head first, then the --aux_targets heads in order); each head matches ITS member instead of the main head matching the ensemble mean (multi-head distillation, KEY_LOG K25)')
     parser.add_argument('--save_epochs', type=int, nargs='*', default=[], help='also save checkpoint_epXX.pth at these epochs (epoch-budget checks under the sealed metric, NIGHT_LOG N71)')
     parser.add_argument('--concept_smooth', default=0.0, type=float, help='> 0: training target = (1 - a) * image embedding + a * mean (L2-normalised) embedding of its concept\'s training images (held-out images excluded): less memorisation of exact training images (NIGHT_LOG N72)')
     parser.add_argument('--holdout_images', default=0, type=int, help='> 0: drop this many training images (seed 0, flat ids object*10+image; holdout_images()) from training and from the --bank_lambda bank: held-out people x these unseen images = a large novel-image gallery proxy (logs/holdout_eval.py, NIGHT_LOG N71)')
@@ -138,9 +143,12 @@ def parse_args():
     parser.add_argument('--repeat_mix', default=0.0, type=float, help='probability that a training trial is replaced by its mean with another repeat of the same person and image (single-trial datasets): cleaner examples of the same response, an SNR augmentation for the few-repeat sealed regime')
     parser.add_argument('--aux_targets', nargs='*', default=[], help='auxiliary image targets, training only: image-feature dirs (image_train.npy, same image index as --image_feature_dir); each is predicted from the input of model.head by one linear head, same contrastive loss as the main target')
     parser.add_argument('--aux_lambda', default=0.5, type=float, help='weight of each --aux_targets loss')
+    parser.add_argument('--aux_dim', default=0, type=int, help='> 0: every --aux_targets space gets its own alignment space of this size (EEG head Linear(width, aux_dim) against a learned linear projection of the image features, like the main head) instead of a head into the raw feature space, and the heads are saved (aux_state_dict) to score a query in all the spaces (scripts/subject_key/KEY_LOG.md K24)')
     parser.add_argument('--aux_concept_lambda', default=0.0, type=float, help='auxiliary loss, training only: cross-entropy over the 1,654 THINGS training concepts from the input of model.head (one linear head)')
     parser.add_argument('--soft_label', default=0.0, type=float, help='SoftCLIP targets: (1 - a) one-hot + a softmax(image-image cosine / --soft_tau) over the batch images (MI_NEURIPS_LOG round 11, T2)')
     parser.add_argument('--soft_tau', default=0.05, type=float)
+    parser.add_argument('--repeat_agg', default=0.0, type=float, help='> 0: batches of B/2 trials + another repeat of the same person and image each (RepeatPairSampler); loss = the single-trial loss of each half + this x the loss of the pair\'s raw mean output, which is what the grader ranks (MI_NEURIPS_LOG Y17)')
+    parser.add_argument('--soft_until', default=0, type=int, help='> 0: --soft_label up to this epoch, hard targets after (MI_NEURIPS_LOG Y11: soft labels raise per-trial top-5 but lower the gain of the repeat average)')
     parser.add_argument('--alljoined_after', default=0, type=int, help='> 0: after this epoch the THINGS-EEG2 trials (ids >= 21) are dropped from every batch, so the last epochs see the target cohort only (round 11, T4)')
     parser.add_argument('--open_bank', default='', type=str, help='.npy of image embeddings with no EEG, added as columns of the EEG -> image loss (needs --soft_label; MI_NEURIPS_LOG Y02)')
     parser.add_argument('--open_bank_sep', default=0.0, type=float, help='weight of a softmax over the --open_bank images alone: target = softmax(image-bank cosine / --soft_tau)')
@@ -150,7 +158,7 @@ def parse_args():
     parser.add_argument('--extra_repeat', default=1, type=int, help='the --extra_trials_dir trials are seen this many times per epoch (a small cohort is otherwise a few percent of the batches)')
     parser.add_argument('--extra_shift', default=0, type=int, help='time shift of the --extra_trials_dir trials in samples (negative = earlier); MSS needs -3 against Alljoined (scripts/mi/nq03_mss_zeroshot.py)')
     parser.add_argument('--things_lag', default=0, type=int, help='shift the trials of THINGS-EEG2 subjects (ids >= 21 in the Alljoined dir) later by this many samples: Alljoined responses lag THINGS-EEG2 by ~42 ms = 5 samples at 120 Hz (scripts/mi/MI_NEURIPS_LOG.md D03)')
-    parser.add_argument('--subject_key', default='keep', choices=['keep', 'demean', 'swap', 'split'], help="the subject's image-independent mean ERP (scripts/mi/MI_LOG.md E07: the encoder uses it as a subject key). demean: subtract it, train and test (test subject: mean of its own test trials, label-free); swap: training only, replace it by a random training subject's; split (ATM): the key only sets the electrode attention map, the readout sees the key-free signal")
+    parser.add_argument('--subject_key', default='keep', choices=['keep', 'demean', 'swap', 'swap_split', 'split', 'comb', 'comb_split'], help="the subject's image-independent mean ERP (scripts/mi/MI_LOG.md E07: the encoder uses it as a subject key). demean: subtract it, train and test (test subject: mean of its own test trials, label-free); swap: training only, replace it by a random training subject's (swap_split, ATM: only in what the readout sees, the attention map comes from the raw trial); split (ATM): the key only sets the electrode attention map, the readout sees the key-free signal; comb / comb_split: as demean / split with the key estimated from the trial itself, as its 200 ms-periodic part (scripts/subject_key/KEY_LOG.md K36): no other data of the subject, train and test")
     parser.add_argument('--train_image_targets', default=[], nargs='+', type=str, help='(16540, D) .npy replacing the TRAINING image targets only (test / sealed scoring keep image_feature_dir): one file = fixed target (e.g. the NeuroBridge CPA prior aug_cpa4.npy, logs/aug_features.py); several = a uniformly random one per trial and step (augmented views)')
     parser.add_argument('--image_mixup_prob', default=0.0, type=float, help='probability per batch of cross-image mixup: EEG and image target both lam*x + (1-lam)*x[perm], lam ~ U(0,1) per trial (virtual images; the clean proxy scales steeply with distinct training images, NIGHT_LOG 11-10)')
     parser.add_argument('--func_transfer_prob', default=0.0, type=float, help='probability per batch of re-rendering each person through another person`s decoder-fitted spatial operator (--func_transfer_ops); takes precedence over --op_transfer_prob on that batch')
@@ -226,6 +234,7 @@ def parse_args():
     parser.add_argument('--tsconv_domain_bn_boundary', default=0, type=int, help='use separate primary/auxiliary TSConv BatchNorm paths split at this subject ID (0 disables)')
     parser.add_argument('--atm_d_model', default=250, type=int, help='ATM channel-token hidden dimension')
     parser.add_argument('--atm_d_ff', default=256, type=int, help='ATM feed-forward hidden dimension')
+    parser.add_argument('--atm_e_layers', default=1, type=int, help='ATM: number of attention layers over the electrode tokens (scripts/subject_key/KEY_LOG.md, msL_atm)')
     parser.add_argument('--frozen_eeg_prior', action='store_true', help='whether to use frozen eeg prior')
     parser.add_argument('--projector', type=str, choices=['direct', 'linear', 'bottleneck'], default='direct')
     parser.add_argument(
@@ -539,6 +548,10 @@ def build_datasets(args, seed, device):
             f'Grouped batch sampler enabled: images_per_batch={batch_sampler.images_per_batch}, '
             f'samples_per_image={batch_sampler.samples_per_image}, effective_batch_size={effective_batch_size}'
         )
+    elif args.repeat_agg:
+        assert not (args.data_average or train_dataset.random or args.alljoined_after) and isinstance(train_main_dataset, (Subset, EEGPreImageDataset)), '--repeat_agg indexes single trials of one dataset'
+        data.train_loader = DataLoader(train_main_dataset, batch_sampler=RepeatPairSampler(getattr(train_main_dataset, 'indices', range(len(train_dataset))), len(train_dataset),
+                                       train_dataset.num_repetitions, args.batch_size, seed=seed), num_workers=args.num_workers, pin_memory=data.pin_memory)
     else:
         data.train_loader = DataLoader(train_main_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
                                        num_workers=args.num_workers, pin_memory=data.pin_memory)
@@ -553,7 +566,7 @@ def build_datasets(args, seed, device):
     test_dataset = EEGPreImageDataset(args.test_subject_ids, *sources, average=True, eeg_transform=eeg_transform,
                                       train=False, frozen_eeg_prior=args.frozen_eeg_prior)
     data.test_loader = DataLoader(test_dataset, batch_size=200, shuffle=False, num_workers=args.num_workers)
-    if args.subject_key != 'keep':
+    if args.subject_key in ('demean', 'swap', 'swap_split', 'split'):
         global SUBJECT_KEYS
         SUBJECT_KEYS = torch.zeros(max(args.train_subject_ids + args.test_subject_ids) + 1, train_dataset.num_channels, train_dataset.num_sample_points, device=device)
         for ds in (train_dataset, test_dataset):  # test subject: mean over its own (unlabelled) test trials
@@ -600,17 +613,21 @@ SUBJECT_KEYS = None
 
 
 def apply_subject_key(args, eeg_batch, subject_id_batch, train):
-    if args.subject_key == 'keep' or (args.subject_key == 'swap' and not train):
+    if args.subject_key == 'keep' or (args.subject_key in ('swap', 'swap_split') and not train):
         return eeg_batch
+    if args.subject_key in ('comb', 'comb_split'):  # the key is the steady-state response to the 5 Hz image stream: period = 50 samples at 250 Hz
+        per = eeg_batch.unflatten(-1, (-1, 50)).mean(-2)
+        content = eeg_batch - (per - per.mean(-1, keepdim=True)).repeat(1, 1, eeg_batch.shape[-1] // 50)
+        return content if args.subject_key == 'comb' else torch.stack([content, eeg_batch], dim=1)  # the attention map comes from the raw trial
     if args.subject_key == 'split':
         return torch.stack([eeg_batch - SUBJECT_KEYS[subject_id_batch], SUBJECT_KEYS[subject_id_batch]], dim=1)
-    eeg_batch = eeg_batch - SUBJECT_KEYS[subject_id_batch]
-    if args.subject_key == 'swap':
+    raw, eeg_batch = eeg_batch, eeg_batch - SUBJECT_KEYS[subject_id_batch]
+    if args.subject_key in ('swap', 'swap_split'):
         ids = torch.tensor(args.train_subject_ids, device=eeg_batch.device)
         pick = lambda pool: pool[torch.randint(len(pool), (len(eeg_batch),), device=eeg_batch.device)]
         lo, hi = ids[ids < 21], ids[ids >= 21]  # partner from the same dataset (ids >= 21 = THINGS-EEG2 exported next to Alljoined: keys 2x larger, r .09 with Alljoined keys)
         eeg_batch = eeg_batch + SUBJECT_KEYS[torch.where(subject_id_batch >= 21, pick(hi), pick(lo)) if len(lo) and len(hi) else pick(ids)]
-    return eeg_batch
+    return torch.stack([eeg_batch, raw], dim=1) if args.subject_key == 'swap_split' else eeg_batch
 
 
 def write_inference_config(args, data, log_dir):
@@ -662,10 +679,14 @@ def build_model(args, data, device):
                            text_projector=text_projector, criterion=None)
     nets.aux = None
     if args.aux_targets or args.aux_concept_lambda > 0:  # the pre-head feature is caught by a hook; the heads are dropped after training
-        pre = {}; model.head.register_forward_hook(lambda m, i, o: pre.__setitem__('x', i[0]))
+        head_in = model.head if hasattr(model, 'head') else model.proj_eeg  # ATM names its head proj_eeg
+        pre = {}; head_in.register_forward_hook(lambda m, i, o: pre.__setitem__('x', i[0]))
         banks = [F.normalize(torch.as_tensor(np.load(os.path.join(d, 'image_train.npy')).astype(np.float32)).flatten(0, 1), dim=1).to(device) for d in args.aux_targets]
-        width = next(m for m in model.head.modules() if isinstance(m, nn.Linear)).in_features
-        nets.aux = SimpleNamespace(pre=pre, banks=banks, heads=nn.ModuleList([nn.Linear(width, b.shape[1]) for b in banks] + [nn.Linear(width, 1654)] * (args.aux_concept_lambda > 0)).to(device))
+        width = next(m for m in head_in.modules() if isinstance(m, nn.Linear)).in_features
+        if args.aux_dim:  # several spaces next to an encoder that already fills a 10 GB card: keep the banks in half precision
+            banks = [b.half() for b in banks]
+        nets.aux = SimpleNamespace(pre=pre, banks=banks, heads=nn.ModuleList([nn.Linear(width, args.aux_dim or b.shape[1]) for b in banks] + [nn.Linear(width, 1654)] * (args.aux_concept_lambda > 0)).to(device),
+                                   img=nn.ModuleList([nn.Linear(b.shape[1], args.aux_dim) for b in banks] if args.aux_dim else []).to(device))
         log(f'auxiliary targets: {[tuple(b.shape) for b in banks]} from the {width}-d input of model.head, lambda {args.aux_lambda}')
 
     # Before the loss on purpose: the probe heads (and their dummy train-mode forward) draw from the torch RNG.
@@ -719,7 +740,7 @@ def build_optimization(args, nets, train_loader, device):
     opt = SimpleNamespace(scheduler=None, ema_model=None)
     opt.trainable_parameters = (
         collect_trainable_parameters([nets.model, nets.eeg_projector, nets.img_projector, nets.text_projector])
-        + (list(nets.aux.heads.parameters()) if nets.aux else [])
+        + (list(nets.aux.heads.parameters()) + list(nets.aux.img.parameters()) if nets.aux else [])
         + ([p for p in nets.criterion.parameters() if p.requires_grad] if args.t_learnable else [])
     )
     groups = [{'params': opt.trainable_parameters}]
@@ -803,6 +824,8 @@ def save_checkpoint(nets, args, path, epoch_idx, loss_value):
     }
     if args.t_learnable:
         checkpoint['criterion_state_dict'] = nets.criterion.state_dict()
+    if args.aux_dim:
+        checkpoint['aux_state_dict'] = {'heads': nets.aux.heads.state_dict(), 'img': nets.aux.img.state_dict()}
     torch.save(checkpoint, path)
 
 
@@ -923,6 +946,25 @@ def warp_mask(x, warp, mask, onset=24):
     return x
 
 
+def person_centre(eeg_feature_batch, subject_id_batch):
+    """--person_centre_train: x - mean(same-person batch-mates) + batch mean (mirror of score_track1.batch_transform_wknn with true ids)."""
+    _, inv = subject_id_batch.unique(return_inverse=True)
+    n = torch.bincount(inv).float()[inv, None]
+    sums = torch.zeros(int(inv.max()) + 1, eeg_feature_batch.shape[1], device=eeg_feature_batch.device, dtype=eeg_feature_batch.dtype).index_add_(0, inv, eeg_feature_batch)
+    mates = (sums[inv] - eeg_feature_batch) / (n - 1).clamp_min(1)
+    return torch.where(n > 1, eeg_feature_batch - mates, eeg_feature_batch) + eeg_feature_batch.mean(0, keepdim=True)
+
+
+def kd_loss(nets, args, eeg_feature, image_feature, subject_ids, flat, mixup_metadata, member=None):
+    """KL(softmax(teacher cosine / tau) || softmax(student cosine / tau)) over the batch images; a SubjectMix pair gets the same mix of its two trials' teacher cosines."""
+    teacher_cos = nets.teachers.cosine(subject_ids, flat, member)
+    if mixup_metadata is not None:
+        teacher_cos = mixup_metadata['lam'][:, None] * teacher_cos + (1 - mixup_metadata['lam'][:, None]) * teacher_cos[mixup_metadata['partner_indices']]
+    with torch.autocast(device_type='cuda', enabled=False):
+        student_logits = F.normalize(eeg_feature.float(), dim=1) @ F.normalize(image_feature.float(), dim=1).T / args.kd_tau
+        return args.kd_lambda * F.kl_div(student_logits.log_softmax(dim=1), (teacher_cos / args.kd_tau).softmax(dim=1), reduction='batchmean')
+
+
 def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
     total_epochs = args.num_epochs
     set_train_mode(nets, True)
@@ -937,6 +979,7 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
         subject_id_batch = batch[3].to(device)
         object_idx_batch = batch[4].to(device)
         image_idx_batch = batch[5].to(device)
+        real = batch[0].flatten(1).abs().amax(1).to(device) > 0  # --repeat_agg: a missing repeat is zero padding
         if args.alljoined_after and epoch > args.alljoined_after:
             keep = subject_id_batch < 21
             eeg_batch, image_feature_batch, subject_id_batch, object_idx_batch, image_idx_batch = (v[keep] for v in (eeg_batch, image_feature_batch, subject_id_batch, object_idx_batch, image_idx_batch))
@@ -974,9 +1017,9 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
             mixup_out = cross_subject_stimulus_mix(
                 eeg_batch, object_idx_batch, image_idx_batch, subject_id_batch,
                 alpha=args.subject_mixup_alpha, mixup_type=args.mixup_type,
-                return_mixup_metadata=args.subject_mixup_reg_lambda > 0,
+                return_mixup_metadata=args.subject_mixup_reg_lambda > 0 or nets.teachers is not None,
             )
-            if args.subject_mixup_reg_lambda > 0:
+            if args.subject_mixup_reg_lambda > 0 or nets.teachers is not None:
                 eeg_batch, mixup_metadata = mixup_out
             else:
                 eeg_batch = mixup_out
@@ -993,12 +1036,7 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
             )
         eeg_feature_batch = nets.eeg_projector(eeg_backbone_batch)
         if args.person_centre_train:
-            # mirror of score_track1.batch_transform_wknn with true ids: x - mean(same-person mates) + batch mean
-            _, inv = subject_id_batch.unique(return_inverse=True)
-            n = torch.bincount(inv).float()[inv, None]
-            sums = torch.zeros(int(inv.max()) + 1, eeg_feature_batch.shape[1], device=device, dtype=eeg_feature_batch.dtype).index_add_(0, inv, eeg_feature_batch)
-            mates = (sums[inv] - eeg_feature_batch) / (n - 1).clamp_min(1)
-            eeg_feature_batch = torch.where(n > 1, eeg_feature_batch - mates, eeg_feature_batch) + eeg_feature_batch.mean(0, keepdim=True)
+            eeg_feature_batch = person_centre(eeg_feature_batch, subject_id_batch)
 
         loss = eeg_batch.new_tensor(0.0)
 
@@ -1041,6 +1079,11 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
             if args.extra_bank and ex.any():
                 terms.append(extra_bank_loss(eeg_feature_batch[ex], object_idx_batch[ex], image_idx_batch[ex], nets, args) * ex.sum())
             cl_loss = sum(terms) / len(ex)
+        elif args.repeat_agg:  # first half = anchors, second half = another repeat of each (RepeatPairSampler): the same image twice is a false negative in one loss
+            h = len(eeg_feature_batch) // 2; A, P = slice(0, h), slice(h, 2 * h); ok = real[A] & real[P]
+            cl_loss = sum(compute_cross_modal_loss(nets.criterion, eeg_feature_batch[s], image_feature_proj[s], positive_mask[s, s], args.multi_positive_loss) for s in (A, P)) / 2
+            mean = (eeg_feature_batch[A] + eeg_feature_batch[P]) / 2  # raw mean, as the grader averages the repeats of a (person, image)
+            cl_loss = cl_loss + args.repeat_agg * compute_cross_modal_loss(nets.criterion, mean[ok], image_feature_proj[A][ok], positive_mask[A, A][ok][:, ok], args.multi_positive_loss)
         else:
             cl_loss = compute_cross_modal_loss(
                 nets.criterion, eeg_feature_batch, image_feature_proj, positive_mask, args.multi_positive_loss,
@@ -1049,8 +1092,12 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
         total_cl_loss += cl_loss.item()
         if nets.aux:
             flat = object_idx_batch * 10 + image_idx_batch; ok = (flat < 16540) & (subject_id_batch < 100)  # training images of our people only
-            for head, bank in zip(nets.aux.heads, nets.aux.banks):
-                loss = loss + args.aux_lambda * compute_cross_modal_loss(nets.criterion, head(nets.aux.pre['x'][ok]), bank[flat[ok]], positive_mask[ok][:, ok], args.multi_positive_loss)
+            for k, (head, bank) in enumerate(zip(nets.aux.heads, nets.aux.banks)):
+                target = nets.aux.img[k](bank[flat[ok]].float()) if args.aux_dim else bank[flat[ok]]
+                head_out = head(nets.aux.pre['x'][ok])
+                loss = loss + args.aux_lambda * compute_cross_modal_loss(nets.criterion, head_out, target, positive_mask[ok][:, ok], args.multi_positive_loss)
+                if args.kd_members:  # THINGS-EEG2 batches only (ok is all True there)
+                    loss = loss + kd_loss(nets, args, head_out, target, subject_id_batch, flat, mixup_metadata, args.kd_members[k + 1])
             if args.aux_concept_lambda > 0:
                 loss = loss + args.aux_concept_lambda * F.cross_entropy(nets.aux.heads[-1](nets.aux.pre['x'][ok]).float(), object_idx_batch[ok])
         if args.xperson_lambda > 0:
@@ -1064,6 +1111,8 @@ def train_one_epoch(nets, opt, args, device, train_loader, writer, epoch):
             loss = loss + args.bank_lambda * bank_loss(eeg_feature_batch, object_idx_batch, image_idx_batch, args)
         if args.prior_lambda > 0:
             loss = loss + args.prior_lambda * output_prior_loss(eeg_feature_batch, args)
+        if nets.teachers is not None:
+            loss = loss + kd_loss(nets, args, eeg_feature_batch, image_feature_proj, subject_id_batch, object_idx_batch * 10 + image_idx_batch, mixup_metadata, args.kd_members[0] if args.kd_members else None)
         if args.distill_lambda > 0:
             # ensemble distillation: match the teacher's softmax over this batch's images
             with torch.autocast(device_type='cuda', enabled=False):
@@ -1153,6 +1202,8 @@ def evaluate_split(nets, args, device, split_loader, split_name):
             eeg_batch = apply_subject_key(args, eeg_batch, subject_id_batch, train=False)
             eeg_backbone_batch = run_eeg_backbone(nets.model, args, eeg_batch, subject_id_batch)
             eeg_feature_batch = nets.eeg_projector(eeg_backbone_batch)
+            if args.person_centre_train:  # scored as trained (a one-person batch, i.e. the LOSO test subject, is left as it is: scripts/subject_key K03 calibrates it)
+                eeg_feature_batch = person_centre(eeg_feature_batch, subject_id_batch)
             image_feature_proj = nets.img_projector(image_feature_batch)
 
             positive_mask = build_image_positive_mask(object_idx_batch, image_idx_batch)
@@ -1384,6 +1435,7 @@ def main(args):
     data = build_datasets(args, seed, device)
     write_inference_config(args, data, log_dir)
     nets, probes = build_model(args, data, device)
+    nets.teachers = Teachers(args.kd_teacher, args, device) if args.kd_teacher else None
     opt = build_optimization(args, nets, data.train_loader, device)
     total_epochs = args.num_epochs
 
@@ -1407,6 +1459,8 @@ def main(args):
         torch.clear_autocast_cache()
         if opt.ema_model is not None and epoch > 1:
             nets.model.load_state_dict(raw_state)
+        if args.soft_until:
+            nets.criterion.soft_label = args.soft_label if epoch <= args.soft_until else 0.0
         avg_loss = train_one_epoch(nets, opt, args, device, data.train_loader, writer, epoch)
 
         if opt.ema_model is not None:

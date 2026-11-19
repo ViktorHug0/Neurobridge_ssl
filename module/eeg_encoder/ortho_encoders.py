@@ -165,7 +165,7 @@ class FastTSConvSqueezeformer(nn.Module):
     def __init__(self, feature_dim=1024, eeg_sample_points=250, channels_num=63,
                  d_model=160, depth=3, heads=4, conv_kernel=15,
                  expansion=2, drop=0.15, stem_filters=40,
-                 pool_kernel=51, pool_stride=5, backbone_dim=0, domain_bn_boundary=0, ffn=True):
+                 pool_kernel=51, pool_stride=5, backbone_dim=0, domain_bn_boundary=0, ffn=True, temporal_kernel=25, st_blocks='', electrode_attn=False):
         # domain_bn_boundary > 0: every BatchNorm keeps separate statistics for subject IDs at or above it
         # (THINGS-EEG2 mapped onto Alljoined); unseen subjects take the primary path (cf. TSConv's)
         # pool_kernel/pool_stride: 51/5 is the 250 Hz design (10 tokens at 120 Hz); 25/2 keeps
@@ -174,7 +174,7 @@ class FastTSConvSqueezeformer(nn.Module):
         super().__init__()
         self.temporal = _FusedTemporalConvPool(
             out_channels=stem_filters,
-            temporal_kernel=25,
+            temporal_kernel=temporal_kernel,  # 25 = 100 ms at the 250 Hz design, 208 ms at 120 Hz
             pool_kernel=pool_kernel,
             pool_stride=pool_stride,
         )
@@ -190,6 +190,10 @@ class FastTSConvSqueezeformer(nn.Module):
             nn.ELU(),
             nn.Dropout(drop),
         )
+        # electrode_attn: one attention layer ACROSS electrodes (per time step, on the filter-bank features) before the spatial
+        # collapse, so that the spatial filter depends on the trial (ATM's electrode attention in the Squeezeformer's front end)
+        self.electrode_attn = nn.TransformerEncoderLayer(stem_filters, 4, 2 * stem_filters, dropout=0.1, batch_first=True, norm_first=True) if electrode_attn else None
+        self.electrode_pos = nn.Parameter(torch.zeros(1, channels_num, stem_filters)) if electrode_attn else None
         self.token_projection = nn.Sequential(
             nn.Linear(stem_filters, d_model),
             nn.LayerNorm(d_model),
@@ -208,6 +212,11 @@ class FastTSConvSqueezeformer(nn.Module):
             )
             for _ in range(depth)
         ])
+        if st_blocks:  # hybrid: the conv stem's time tokens through ST-EEGFormer's transformer (needs d_model = its width, 512 for small);
+            # st_blocks = a hub id (pretrained blocks, e.g. braindecode/STEEGFormer-small) or 'scratch' (same blocks, random init)
+            from braindecode.models import STEEGFormer
+            kw = dict(n_outputs=2, n_chans=channels_num, chs_info=[{'ch_name': 'Cz'}] * channels_num, n_times=128, sfreq=128)
+            self.blocks = (STEEGFormer(**kw) if st_blocks == 'scratch' else STEEGFormer.from_pretrained(st_blocks, **kw)).encoder
         self.pool_score = nn.Sequential(
             nn.LayerNorm(d_model),
             nn.Linear(d_model, d_model // 2),
@@ -221,12 +230,15 @@ class FastTSConvSqueezeformer(nn.Module):
 
     def forward(self, x, subject_ids=None):
         z = self.temporal(x.unsqueeze(1))
-        for layer in self.stem_after_pool:
+        for i, layer in enumerate(self.stem_after_pool):
             z = layer(z, subject_ids) if isinstance(layer, DomainBatchNorm2d) else layer(z)
+            if i == 1 and self.electrode_attn is not None:  # after BatchNorm + ELU: (B, filters, electrodes, T)
+                b, f, e, t = z.shape
+                z = self.electrode_attn(z.permute(0, 3, 2, 1).reshape(b * t, e, f) + self.electrode_pos).view(b, t, e, f).permute(0, 3, 2, 1)
         z = z.squeeze(2).transpose(1, 2)
         z = self.token_projection(z) + self.position[:, :z.shape[1]]
         for block in self.blocks:
-            z = block(z, subject_ids)
+            z = block(z, subject_ids) if isinstance(block, _FastSqueezeformerBlock) else block(z)
 
         weights = self.pool_score(z).softmax(dim=1)
         mean = (weights * z).sum(dim=1)

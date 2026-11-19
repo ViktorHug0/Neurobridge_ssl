@@ -99,6 +99,7 @@ class FoundationEncoder(nn.Module):
         # final_norm False drops the backbone's last LayerNorm before the head (REVE's return_output never had one);
         # popped first because it changes no weight shape, so it is valid on a pretrained model too
         final_norm = arch_kwargs.pop('final_norm', True)
+        self.time_pool = arch_kwargs.pop('time_pool', False)  # ST-EEGFormer: mean over electrodes only, the time patches kept in order (8 x 512)
         resized = bool(arch_kwargs)
         if set(arch_kwargs) - {'n_times', 'hub'} and pretrained:  # n_times alone (the epoch stretched over several patches) keeps every pretrained shape but the temporal embedding
             raise ValueError('arch_kwargs change the architecture: only valid with pretrained=False')
@@ -135,8 +136,8 @@ class FoundationEncoder(nn.Module):
         if not final_norm:
             assert isinstance(self.fm.norm, nn.LayerNorm), f'{model_name} has no final LayerNorm to drop'
             self.fm.norm = nn.Identity()
-        width = _EMBED_DIMS[model_name]
-        if resized:  # a resized model: LaBraM's token width follows its tokenizer, so measure it
+        width = self.fm.embed_dim if model_name == 'REVE' else _EMBED_DIMS[model_name]  # reve-large is 1216-wide
+        if resized or self.time_pool:  # a resized model: LaBraM's token width follows its tokenizer, so measure it
             self.head = nn.Identity()
             with torch.no_grad():
                 width = self.forward(torch.zeros(2, channels_num, FM_N_TIMES)).shape[-1]
@@ -162,7 +163,8 @@ class FoundationEncoder(nn.Module):
                 n_times=FM_N_TIMES,
                 chs_info=[{'ch_name': name} for name in ch_names],
             ), **(arch_kwargs or {})}
-            fm = REVE.from_pretrained(_HUB_IDS['REVE'], **kwargs) if pretrained else REVE(**kwargs)
+            hub = kwargs.pop('hub', _HUB_IDS['REVE'])  # {"hub":"brain-bzh/reve-large"}: the 390 M checkpoint (1216-wide)
+            fm = REVE.from_pretrained(hub, **kwargs) if pretrained else REVE(**kwargs)
             if chan_lora:
                 fm.to_patch_embedding = _ChanLoRAPatchEmbed(fm.to_patch_embedding, channels_num, fm.patch_size,
                                                             fm.embed_dim, chan_lora)
@@ -281,6 +283,8 @@ class FoundationEncoder(nn.Module):
             feats = self.fm(x).flatten(1)  # 6 time patches kept in order, not pooled
         elif self.model_name == 'STEEGFormer':
             feats = self.fm(x, return_features=True)['features']  # layer-normalised (electrode, time-patch) tokens, pooled below
+            if self.time_pool:  # tokens are (time patch, electrode), time-major
+                feats = feats.view(len(feats), -1, len(self.fm_names), feats.shape[-1]).mean(2).flatten(1)
         elif self.model_name == 'LaBraM':
             # Without ch_names LaBraM requires the full 128-channel canonical order.
             feats = self.fm(x, ch_names=self.fm_names)

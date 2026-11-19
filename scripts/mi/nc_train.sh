@@ -6,6 +6,7 @@ FOLDS=("" "2 4 5 11 15" "7 14 16 17 20" "3 8 10 12 19" "1 6 9 13 18")
 NAME=$1 K=$2 ARM=$3; shift 3
 TEST=${FOLDS[$K]}; TRAIN=""; for s in $(seq 1 20); do [[ " $TEST " == *" $s "* ]] || TRAIN+="$s "; done; TRAIN+="$(seq -s ' ' 21 30)"
 [ -n "$ALLJ" ] && TRAIN="$ALLJ $(seq -s " " 21 30)"  # ALLJ="1 6 8 ...": a subset of the fold's Alljoined training people (data-size checks)
+[[ $NAME == *_noth* ]] && TRAIN="${TRAIN%% 21 *}"  # a run name with _noth: no THINGS-EEG2 people (21..30)
 J=${JOB:-$(squeue -u $USER -h -n mi_gpu -o %i | head -1)}
 [ -n "$DIRECT" ] && RUN="" || RUN="srun --jobid=$J --overlap"
 SPLIT=cv4/$NAME/fold$K TRAIN_SUBJECTS="$TRAIN" TEST_SUBJECTS="$TEST" $RUN bash neurips_challenge/alljoined_run.sh "$ARM" \

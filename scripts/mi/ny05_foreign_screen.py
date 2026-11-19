@@ -7,6 +7,8 @@ Change in % against the ten, paired bootstrap over (person, image) groups.
     ny05_foreign_screen.py <cohort> <fold>"""
 from nc_lib import *
 from nv02_union_lists import TEN, CANDS
+full = lambda c: c if '_checkpoint_' in c else f'mi_{c}_checkpoint_test_best.pth'  # DROP= / ADD= (comma lists, short names allowed): another base than sub24's ten
+TEN = [c for c in TEN if c not in [full(d) for d in os.environ.get('DROP', '').split(',') if d]] + [full(d) for d in os.environ.get('ADD', '').split(',') if d]
 
 name, k = sys.argv[1], int(sys.argv[2]); X, subj, img, G, g3 = cohort(name); n = len(X) // 64 * 64; g3 = g3[(g3 < n).all(1)]; t = torch.as_tensor(img)[g3[:, 0]]
 
@@ -23,8 +25,9 @@ Y = {c: out(c) for c in TEN + [c for c in CANDS if have(c)]}; S = sum(Y[c] for c
 rk = lambda s: rank(s[g3].mean(1), t, G).numpy(); b = rk(S)
 def line(lab, s):
     a = rk(s); print('%-58s' % lab + ' | '.join('%s %+5.1f +- %.1f' % (m, 100 * ((a < q).mean() / (b < q).mean() - 1), 100 * ((a[bi] < q).mean(1) / (b[bi] < q).mean(1) - 1).std()) for m, q in (('top-5', 5), ('top-20', 20), ('top-100', 100))), flush=True)
-print(f'{name}, fold-{k} models: {len(g3)} groups, gallery {len(G)}; the ten: top-5 %.3f %%, top-20 %.3f %%, top-100 %.2f %%' % tuple(100 * (b < q).mean() for q in (5, 20, 100)))
-print('-- each member of the ten DROPPED'); [line(c, S - Y[c]) for c in TEN]
+print(f'{name}, fold-{k} models: {len(g3)} groups, gallery {len(G)}; the base ({len(TEN)} members): top-5 %.3f %%, top-20 %.3f %%, top-100 %.2f %%' % tuple(100 * (b < q).mean() for q in (5, 20, 100)))
+print('-- each member of the base DROPPED'); [line(c, S - Y[c]) for c in TEN]
+print('-- each member of the base at DOUBLE weight'); [line(c, S + Y[c]) for c in TEN]; [line('all ST-EEGFormer members x%g' % w, S + (w - 1) * sum(Y[c] for c in TEN if '_stf' in c)) for w in (1.5, 2, 3)]
 print('-- each candidate ADDED'); [line(c, S + Y[c]) for c in Y if c not in TEN]
-for slot in (TEN[1], TEN[6]):
+for slot in ([] if os.environ.get('DROP') or os.environ.get('ADD') else (TEN[1], TEN[6])):
     print('-- each candidate SWAPPED for', slot); [line(c, S - Y[slot] + Y[c]) for c in Y if c not in TEN]

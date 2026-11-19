@@ -7,7 +7,7 @@
 #   usage: check_package.sh <submission.zip>
 set -euo pipefail
 zip=$(realpath "$1")
-C=/nasbrain/p20fores/mental_imagery/2026-competition
+C=${COMPET:-/nasbrain/p20fores/mental_imagery/2026-competition}  # COMPET=<checkout>: another version of the organisers repo
 INFO=/nasbrain/p20fores/alljoined/Preprocessed_data_120Hz_neuralbench/info.json
 work=$(mktemp -d -p /nasbrain/p20fores/Neurobridge_SSL/logs); trap 'rm -rf "$work"' EXIT
 cp -rL $C/tracks/image_decoding "$work/track"; mkdir "$work/phase"
@@ -16,15 +16,21 @@ python3 - "$work/track/datasets/simulated.py" "$INFO" <<'EOF'
 import json, random, sys
 p = sys.argv[1]; s = open(p).read()
 ch = json.load(open(sys.argv[2]))['ch_names']; random.Random(0).shuffle(ch)
-i = s.index('STANDARD_1020 = ['); j = s.index(']', i) + 1
-s = s[:i] + 'STANDARD_1020 = ' + repr(ch) + s[j:]
-for a, b in (('"n_chans, n_times": [(8, 120)]', '"n_chans, n_times": [(32, 120)]'), ('"n_outputs": [32]', '"n_outputs": [1536]'),
-             ('self._make_windows(rng, 120, templates', 'self._make_windows(rng, 600, templates')):
+if 'STANDARD_1020 = [' in s:  # organisers' repo of 24 Sep
+    i = s.index('STANDARD_1020 = ['); j = s.index(']', i) + 1
+    s = s[:i] + 'STANDARD_1020 = ' + repr(ch) + s[j:]
+    rep = (('"n_chans, n_times": [(8, 120)]', '"n_chans, n_times": [(32, 120)]'), ('"n_outputs": [32]', '"n_outputs": [1536]'),
+           ('self._make_windows(rng, 120, templates', 'self._make_windows(rng, 600, templates'))
+else:  # later versions (Nov): names from STANDARD_EEG_CHANNELS, sizes in the parameters
+    rep = (('"n_chans, n_times": [(8, 120)]', '"n_chans, n_times": [(32, 120)]'), ('"n_outputs": [32]', '"n_outputs": [1536]'),
+           ('"n_train, n_test": [(300, 120)]', '"n_train, n_test": [(300, 600)]'),
+           ('ch_names = list(STANDARD_EEG_CHANNELS[:self.n_chans])', 'ch_names = ' + repr(ch)))
+for a, b in rep:
     assert s.count(a) == 1, a; s = s.replace(a, b)
 open(p, 'w').write(s)
 EOF
 unzip -q "$zip" -d "$work/sub"
-cd $C; export HOME=/nasbrain/p20fores; source env.sh
+cd $C; export HOME=/nasbrain/p20fores; source /nasbrain/p20fores/mental_imagery/2026-competition/env.sh
 python codabench/ingestion_program/ingestion.py --submission-dir "$work/sub" --output-dir "$work/out" \
   --input-data "$work/phase" --benchmark-dir "$work/track" 2>&1 | grep -v -i warn
 python codabench/scoring_program/scoring.py --prediction-dir "$work/out" --output-dir "$work/score" >/dev/null

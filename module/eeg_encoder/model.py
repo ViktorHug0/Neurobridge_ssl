@@ -479,6 +479,8 @@ def build_eeg_encoder(args, feature_dim, eeg_sample_points, channels_num):
             channels_num=channels_num,
             d_model=getattr(args, 'atm_d_model', 250),
             d_ff=getattr(args, 'atm_d_ff', 256),
+            e_layers=getattr(args, 'atm_e_layers', 1),
+            **json.loads(getattr(args, 'arch_kwargs', None) or '{}'),  # e.g. {"subject_token":false}
             domain_bn_boundary=getattr(args, 'tsconv_domain_bn_boundary', 0),
         )
     if args.eeg_encoder_type == 'EEGNet':

@@ -3109,3 +3109,798 @@ Slate:
   candidate of rounds 11-12, fold-k models, on ds007964 (19 people from another lab, own 1,900-image gallery): dropped / added / swapped,
   paired bootstrap. Fold-1 models on 515, fold-3 models on 513. Why: Y04 shows ST-EEGFormer is worth +9 % there against +1-4 % on held-out
   Alljoined people; the sealed people decode twice worse than held-out Alljoined people (E00), so the right composition may sit between.
+
+## 17:20 (17 Nov) ops: SSH crash, session now in job 77575 (515); 3 GPUs (user); the sub25 build moved inside the batch job on 517
+- Jobs 77299 (515) and 76143 (518) are gone; in use 513 (76146), 515 (interactive), 517 (76147) = the 3 GPUs allowed from now on.
+- The build no longer depends on the interactive session: `bash logs/mi/queue/build_sub25_job.sh` is the first line of `night.list`; the worker
+  inside job 76147 runs it when the plain ST final ends (~17:55): build + checks on 517's GPU (`logs/mi/build_sub25.out`), then
+  `branch_parts.sh` puts sub25b on the LOCAL branch `sub25b-parts` (95 MB parts, one parentless commit, working tree untouched) and touches
+  `logs/mi/queue/push_ready`. I cannot push: the repo key needs the user's passphrase (user asked for the parts branch at 17:00).
+- The git history was rewritten at 16:45 (three old zips, 248-938 MB, removed from three unpushed commits; backup branch
+  `backup-before-bigfile-fix-2026-11-17`, local only); the user pushed after it. Hand-off note: `neurips_challenge/HANDOFF_2026-11-17.md`.
+
+## 17:35 (17 Nov) Y05 foreign-cohort screen (ds007964, own 1,900-image gallery, r=3); hedges queued for the last upload
+`logs/mi/y05_ds007964_f{1,3}.out`, `y05_ds007964_f1_C5.out`; top-5 change against the base, fold-1 models / fold-3 models (errors ~±1.7):
+- Base = sub24's ten. Dropped: ST soft **-7.5 / -5.8**; LaBraM soft -0.9 / -1.0; every Alljoined-only scratch member 0 to +3 (d6 +1.1 / +0.5,
+  rmix +1.7 / -1.3, SQF-X +2.3 / +2.4, SQF +3.1 / +3.4, REVE-scratch +1.1 / +0.8, d6 soft +2.8 / +0.6, rmix soft +3.2 / -0.2).
+- Added: **plain ST +8.0 / +4.0**; LaBraM 4 patches soft +2.6 / +3.1; LaBraM long (sub15's) +3.5 / +2.9; REVE-scratch soft +2.9 / +2.6;
+  pretrained REVE soft +2.5 / -1.1 (mixed); fold-1 models only: ST-base +6.6, CBraMod plain +6.1, ST soft seed 2 +4.9, CBraMod soft +4.9,
+  LUNA soft +4.3; EEGPT -3.5, TSConv / recurrent ~0, `tbs` ~0.
+- Base = sub25b's nine (fold-1 models): dropped ST soft -4.6, plain ST -5.3; added ST soft seed 2 **+5.4 ± 1.8**, ST-base +3.8, CBraMod +3.1,
+  LUNA soft +3.1, LaBraM 4 patches -2.0, pretrained REVE +1.1.
+- Reading: on people from another lab the pretrained members carry the package and each further pretrained model still adds 3-5 %; the
+  Alljoined-only scratch members are dispensable there. On held-out Alljoined people the same additions are neutral: ST soft seed 2 as 11th
+  next to sub24 +1.4 ± 0.9 / -1.3 ± 1.5 (5k / 14k, fold 1); next to sub25b's nine 5k +9.4 -> +8.6, 14k +17.0 -> +19.1 (vs sub16, fold 1).
+  sub25's ST swap is supported by both proxies; a THIRD ST-EEGFormer only by the foreign one. The board score of sub25b says which proxy
+  the sealed people resemble (forecast from held-out Alljoined people: +7 / +13 %).
+- Hedges, so that the last upload can go either way without waiting for trainings (and without this session, which dies with SSH):
+  `night.list` for the worker inside job 76147 (517): the sub25 build, then `final/steegformer_optx_things_lag5jitsoft_s2` (seed 2, ~10 h),
+  then `final/labram4_optx_things_lag5jitsoft` (LaBraM 4 patches soft, ~4 h). On 513 (step of this session, lost if it dies): ST soft seed 2
+  folds 3 then 2. Replacement holders 77578 (after 76147, ~Wed 16:00) and 77579 (after 76146, ~Wed 12:30) run `worker.sh`: 3 GPUs at most.
+
+## 18:40 (17 Nov) sub25b built, half-precision list corrected
+
+- `logs/mi/build_sub25.out`. Fold-1 replay, 3-repeat top-5, no delay / +4 samples: sub24 33.94 / 32.69, **sub25b 35.06 / 33.56**,
+  sub25 (ten, with d6) 35.06 / 33.53: d6 adds nothing on fold 1 either, so sub25b is the package.
+- Build mistake: `--amp 7 8` put plain ST and pretrained REVE in half precision and left the soft ST at fp32 (indices are 0-based in run-dir
+  order). `time_amp.py`: every member has cosine 1.00000 between fp32 and fp16 outputs; fp16 is faster for all but the two SQF.
+  Patched `members.pt` to `amp = [1,3,4,5,6,7,8]`, replay unchanged (35.05 / 33.55), contract check passes.
+- Time per 64-batch on an idle 3080 (node 515): sub16 47.7 ms, sub24 163.7 ms, sub25b 195.3 ms as built -> **136.1 ms** corrected
+  (x2.85 sub16; if all of the grader's 1,533 s scaled with it, 4,375 s of 7,200 s). The earlier 79 / 253 ms were measured next to a training.
+- `sub25b_ens9_lag5jit_soft_st2_revepre_align.zip`, 822,911,456 bytes, sha256 `7b89bd356f173e9d43ee2410be4a1c4ed2e3fc46c508c7fb06749c2a9aaacdaa`.
+
+## 19:10 (17 Nov) sub25b on the other lab's people (Y04) and fold-3 foreign screen around its nine
+
+- `logs/mi/y04_sub25.out`, change against sub19 (= sub16 + alignment), paired bootstrap over (person, image) groups:
+
+| cohort, gallery | sub24 top-5 / top-20 | sub25b top-5 / top-20 | sub25 top-5 / top-20 |
+|---|---|---|---|
+| ds007964 (19 people, THINGS images), own 1,900 | +11.9 ± 3.8 / +11.3 ± 1.8 | **+23.3 ± 4.4 / +19.5 ± 2.1** | +24.5 ± 4.3 / +17.7 ± 2.0 |
+| ds007964 + 14.4k THINGS | +23.5 ± 15.0 / +23.2 ± 7.2 | +35.3 ± 19.4 / +43.3 ± 8.9 | +37.3 ± 17.7 / +41.5 ± 8.6 |
+| ds004018 (16 people, 200 objects), own 200 | +2.0 ± 1.0 / -0.3 ± 0.5 | +4.7 ± 1.2 / -0.0 ± 0.6 | +3.5 ± 1.2 / +0.1 ± 0.5 |
+| ds004018 + 14.4k THINGS | +17.0 ± 7.8 / +31.2 ± 4.3 | +52.5 ± 11.4 / +50.8 ± 5.8 | +42.6 ± 10.1 / +46.0 ± 5.4 |
+
+  (the "+ 40k COCO / ImageNet" rows are in the file and not read: source separation.) The two swaps double sub24's gain on foreign people;
+  sub25b = sub25 within error everywhere. Both proxies now agree on sub25b over sub24.
+- `logs/mi/y05_ds007964_f3_C5.out` (fold-3 models, base sub25b's nine): dropped ST soft -5.4 ± 1.8, plain ST -5.1 ± 1.8 (fold 1: -4.6 / -5.3);
+  every other drop or addition within ±2.6 with errors ±1.7 (rmix soft dropped +2.5, pretrained REVE soft dropped +2.5, LaBraM soft dropped
+  -2.2, LaBraM 4 patches added +2.6 at top-5 but -0.2 at top-20). The seed-2 ST soft has no fold-3 model yet (513, ~03:30).
+- Ops: the batch job on 517 cannot read `~/.config/git/config` ("Expiration de la clé": the home ticket of a day-old batch job has expired),
+  so `branch_parts.sh` failed there and still raised `push_ready`. Removed the flag, built the branch from the interactive session
+  (`sub25b-parts`, 9 parts + README, sha256 in the README = the corrected zip), raised the flag again. Anything that needs HOME (git) must
+  run from a fresh session, not from an old batch job. Trainings are unaffected (HF cache and data are on the NAS).
+- `build_sub25.sh`: half-precision indices fixed for a rebuild (`1 3 4 5 6 7 8` / `0 2 4 5 6 7 8 9`).
+- sub25 (ten) re-zipped with the same fix: replay 35.07 / 33.53, 140.6 ms per batch, contract check passes, 896,334,626 bytes,
+  sha256 `b442108dfd765bb0872583c9f6086a3457353b7db4df396ff73d22051627e7be`. Not recommended over sub25b (equal everywhere, larger).
+
+## 19:50 (17 Nov) Y06 the "more pretrained members" effect of the foreign proxy is a WEIGHT effect: ST-EEGFormer x2 is free
+
+`logs/mi/y06_st_weight.out`, `y06_st2_base_f1.out`. sub25b's nine with both ST-EEGFormer members at weight w (cached outputs, no training):
+
+| w | Alljoined folds 1 / 2 / 3, top-5 vs the six, 5k | 14k | ds007964 top-5 vs w=1, fold-1 / fold-3 models |
+|---|---|---|---|
+| 1 | +9.4 / +3.2 / +7.2 | +17.0 / +6.3 / +15.7 | 0 |
+| 1.5 | +8.9 / +3.0 / +6.8 | +16.3 / +6.8 / +17.0 | +4.3 ± 1.5 / +0.9 ± 1.6 |
+| 2 | +8.0 / +2.2 / +6.3 | +16.4 / +8.9 / +17.9 | **+5.7 ± 2.0 / +4.6 ± 2.1** (top-20 +2.4 / +4.0) |
+| 3 | +7.3 / +0.0 / +6.7 | +13.9 / +7.0 / +16.7 | +6.8 ± 2.5 / +7.5 ± 2.8 |
+
+- On ds007964 every other member doubled is 0 to -4.5; each ST alone doubled +1.5 to +4.7.
+- On held-out Alljoined people w=2 costs about 1 % at 5k (all three folds) and gains about 1.4 % at 14k (two of three): neutral, tilted
+  the same way as the third ST seed was (5k -0.8, 14k +2.1).
+- With w=2 as the base, the third seed (ST soft seed 2) adds only +1.3 ± 1.5 on ds007964 (was +5.4 ± 1.8 at w=1) and 5k +0.6 / 14k -1.5
+  on Alljoined fold 1; ST-base +2.2 ± 1.6, LUNA soft +2.0 ± 1.5, CBraMod plain +2.6 ± 1.5, LaBraM 4 patches -1.2. So what the foreign proxy
+  wanted was more weight on ST-EEGFormer, not more models. The hedge finals lose most of their purpose: the LaBraM 4-patch final is
+  removed from `night.list`; the seed-2 ST final (517, running) and seed-2 folds (513) are left to finish.
+- Candidate for the last upload = **sub26 = sub25b with weights 2 on the two ST members** (same files, same run time; only `members.pt`
+  differs). To be chosen over sub25b only if the board says the sealed people behave like the foreign cohort.
+- 20:15 sub26 built: `sub26_ens9_stx2_align.zip`, 822,911,480 bytes, sha256 `d098fcbc37f8327cb8435c1bf66d27b31c28c04be838d6c971af511f4b9c3588`,
+  contract check passes, replay 35.87 / 33.63 (sub25b 35.05 / 33.55; replay people are trained people: function check only).
+  Final-model packages, sub26 against sub25b (`logs/mi/y04_sub26.out`): ds007964 own 1,900 top-5 +2.6 ± 2.0, top-20 **+4.5 ± 1.0**,
+  top-100 +3.9 ± 0.5; + 14.4k THINGS top-5 +24.6 ± 11.2, top-20 +4.4 ± 3.0; ds004018 own 200 -1.3 ± 0.7 / -1.0 ± 0.3;
+  + 14.4k THINGS +10.2 ± 4.3 / +7.3 ± 2.3. Same sign as the fold-model read wherever the gallery is large; smaller at top-5 (+2.6 vs +5).
+
+## 10:15 (18 Nov) grader run-time model from two uploads (sub25b uploaded by the user this morning)
+
+Idle 3080, `time_pkg.py`: sub1 14.8 ms per 64-batch (744 s on the grader), sub16 46.3 ms (1,533 s) -> grader time = 373 s + 25.05 s per ms
+(about 25k batch-equivalents: the grader's GPU is within ~20 % of an idle 3080 in fp32). sub25b at 135.4 ms -> **about 3,800 s**; if fp16
+gave no speed-up on the grader (about 248 ms): about 6,600 s, still under 7,200 s. sub24 (163.7 ms, all fp32): about 4,500 s.
+Yesterday's "at most 4,400 s" assumed the fp16 speed-up carries over to the grader's GPU; this bound does not need that.
+Third ST seed on three folds (`logs/mi/y06_s2_f123.out`): next to sub25b's nine 5k +6.9 -> +6.0, 14k +13.6 -> +13.0; with ST x2
+5k +5.8 -> +5.6, 14k +14.9 -> +13.2. Closed; the seed-2 final is not used.
+
+# Round 13 (18 Nov, 10:40): retrospective before the last sprint (user: "one big review ... things we might have missed")
+
+Sources: this log read end to end by a second reader (audit, 10:20), NIGHT_LOG / HISTORY / memory notes, and checks run this morning.
+- **Method gaps.** (1) Nothing since sub16 is scored; the only proxy -> board point (sub2 -> sub16) moved +19.4 % against a +10-11 %
+  forecast. (2) Compositions were chosen on the same folds 1-3 that forecast them; fold 4 was never scored -> queued today (7 runs:
+  the missing fold-4 models of sub25b's nine and of the reference LaBraM). (3) One seed per run; seed spread 5-9 % top-5 per fold
+  (l. 1788) exceeds most quoted errors; about a dozen single-fold or old-instrument closures flipped on re-test (jitter, pretrained
+  LaBraM, pretrained REVE, plain ST, uniform weights). (4) Still closed on cv4 / r=80 / rank-bugged / fold-1 evidence only: person-group
+  BN, band-dropout SQF, KD, lr / batch / weight decay, EA-trained members, key-free training, test-batch BN, per-electrode variance match.
+- **Checks made today.** ST-EEGFormer channel names: all 32 in its 142-name vocabulary, right order (config `selected_channels`).
+  Grader time: 373 s + 25 s per ms (two uploads), sub25b ~3,800 s. Third ST seed: nothing on three folds. Soft REVE-scratch next to
+  sub25b's nine (`logs/mi/y07_scr_soft_on_c5.out`, three folds): added 5k +6.9 -> +7.1, 14k +13.6 -> +12.8; swapped for the plain one
+  +7.0 / +14.0: nothing (it was positive in the six, and dropped under the wrong 3,600 s limit: no loss).
+- **Open assumptions** (user to check on the site / Discord): best or last upload counts; whether sealed batches mix people (the
+  alignment detector loses up to 12 % on one-person batches of fold-2-like people, l. 1924-1940).
+- **Sprint list** (in the reply to the user): ST-EEGFormer recipe (lr 5e-4, soft strength, pooling), per-electrode variance matching
+  re-read on the full nine, fold-4 confirmation, sub26 weights, decided by Thursday night; finals Friday; upload Saturday.
+
+## 12:10 (18 Nov) one upload left, no board read: the last package is chosen blind
+- The user cancelled this morning's sub25b upload (Codabench truncated the file name; the file was right). A manual cancellation
+  consumes the slot in the sealed phase (organisers, Discord); the user asked them to restore it. Until then: ONE upload left, Friday,
+  and no board score of anything since sub16. The board-read branch of the plan (sub25b vs sub26 decided by the board) is gone.
+- Decision rule for Friday: a scenario table, every candidate against held-out Alljoined people at 5k and 14k (folds 1-3 and the
+  untouched fold 4), ds007964 and ds004018 (own gallery and + 14.4k THINGS), a stream delayed by +-4, one-person batches. Pick the
+  candidate with no clearly bad cell, not the best mean.
+- Hardened `neurips_challenge/submission.py` (not yet in any zip): a member that fails to load is left out; a member whose half-precision
+  output is not finite is re-run in fp32; the alignment falls back to none on any error; non-finite inputs are zeroed. Rationale: a
+  crash or timeout releases the slot (organisers), but a silent wrong output would not. Replayed as `submissions/test_hard`
+  (sub25b's members + gate 0.10).
+- 11:00-12:00 the interactive node (515) was restarted: lost the LaBraM fold-4 run (epoch 2; dir removed, requeued), the ny08 test and
+  the replay (requeued as `logs/mi/queue/y08_job.sh`). `f4_read.sh` = the fold-4 read, last in the list, requeues itself until the seven
+  fold-4 runs are done. Pooling variant of ST-EEGFormer (`--fm_arch_kwargs {"time_pool":true}`: mean over electrodes only, the eight time
+  patches kept in order, 4,096 -> 1,536 head; self-check passed) queued on fold 1.
+- 12:35 hardened code checked: `test_hard` replay (sub25b's members + gate 0.10) fold 1, delay 0 / +4 / -4: 35.05 / 33.55 / 34.31
+  (sub25b 35.06 / 33.56 at 0 / +4): hardening and gate cost nothing here. `neurips_challenge/check_fallbacks.py` (unloadable member
+  left out, fp16 overflow re-run in fp32, NaN input) passes.
+- 13:10 Y08 fold 1 (`logs/mi/y08_f1.out`, sub25b's nine, fold-1 models, r=3, top-5 vs the unchanged nine): per-electrode variance
+  matching per 64-batch (V) 5k -0.5 ± 2.0, 14k +1.5 ± 3.1, ds007964 +0.3 ± 1.8, ds004018 +0.4 ± 0.6; BatchNorm of the two SQF with
+  25 / 50 % batch statistics (B) 5k +0.2 / +0.7, **14k -3.1 ± 1.4 / -3.1 ± 1.7**, ds007964 -1.1 / -0.6, ds004018 +0.4 / +0.6;
+  V+B.25 5k -0.7, 14k +1.5, foreign +0.4 / +1.0. With all nine members none of these moves beyond ±1.5 % except B at 14k (negative).
+  The single-member gains of S03 / S05 do not survive the ensemble. B closed; V neutral on fold 1 -> fold 3 (queued, cheap), then decide.
+
+## 15:20 (18 Nov) rules re-read; statelessness made exact; alignment questions (user)
+- rules.html (live, 18 Nov): only the BEST sealed score counts for the ranking -> the last upload cannot lose rank against sub16's
+  0.001258; choose the candidate with the highest expected score. Sealed runs on RTX PRO 4500, 2 h. No written rule on predict() state:
+  the organisers' Discord answer stands (batch statistics allowed, no state across predict() calls).
+- `check_stateless.py` on the real package found the same batch giving a different output on its first call (relative 2.4e-4, cosine
+  1.000000) and identical outputs on every later call, whatever came in between: TorchScript's profiling executor optimises a graph
+  after its first calls. Not data-dependent, but now removed: `submission.py` runs every network twice on zeros at load. With it the
+  first call equals later calls bit for bit, attributes untouched (`check_stateless.py`, `check_fallbacks.py` pass).
+- Alignment questions (detector choice, bias, price on four folds, a rule that stays at 0): R10 already showed every architecture's
+  norm peaks 1.8-1.9 samples before the ensemble's decoding optimum on folds 1 / 3 and 0.5-0.9 on fold 2 (so rmix is not special);
+  R11 mixed batches cost nothing at zero delay. New: `DEAD=D` (corrections under D samples skipped) in `ns06` / `nr11`, gate x dead-zone
+  grid on folds 1-3 (`logs/mi/s09_*.out`); fold 4 needs a lag-only rmix detector (queued: `mi_rmix_ho5k_lag5` f4, then `align_f4.sh`).
+
+## 16:50 (18 Nov) S09 which corrections to apply (`ns09_align_policy.py 1,2,3`, `logs/mi/s09_f123.out`)
+Organisers' Track 01 FAQ (repo of 16 Nov): "Sealed examples are shuffled, and a batch may mix participants. Statistics from the current
+`predict` batch are permitted ... must not retain state ... nor assume adjacent epochs belong to the same participant." "Epoch timing,
+preparation and embedding outputs are unchanged" (same Emotiv protocol). Scoring: raw predictions averaged within (participant, image),
+then normalised. Contract check against that repo (`COMPET=.../2026-competition-latest check_package.sh`): sub16 passes, reports subject-agg.
+Detector cost: 57 of 581 ms per batch (10 %) on a busy 3080; the fallbacks cost nothing (sub25b code 581.1 vs new 581.5 ms, interleaved).
+- In batches mixed over 15 people the proposed TOTAL shift does not depend on the delay: 0 / +1 / +2 samples in 39 / 53 / 7 % of batches
+  (odd delays: 0 / +1 26 / 63 %). Single-person batches spread over ±4.
+- Top-5 against no alignment, pooled folds 1-3, sealed-like batches, delay -4 / -2 / -1 / 0 / +1 / +2 / +4:
+  always +76.5 / +17.4 / +5.8 / **+0.8 ± 1.8** / -1.2 / +5.2 / +32.5 (d0 per fold +2.0 / +2.4 / -1.5); gate .10 identical;
+  dead zone 2: d0 **-1.9 ± 0.9** (it blocks the +1 corrections, which move the data to the decoders' optimum at +0.7, and lets +2 through);
+  dead zone 3: d0 +0.2 ± 0.2 but d-2 +10.5, d+2 +0.2, d+3 +7.4 (half the recovery of small delays lost).
+- Single-person batches, d0: always -1.4 ± 1.8 (folds -0.2 / -12.2 / +5.1), gate .10 -0.3 ± 1.8 (-0.2 / -7.8 / +5.1), gate + dead 3
+  -1.8 ± 1.0. Per person (gate .10): S17 -5.6 (-44.4 without the gate), S20 -18.5, S07 -9.1, S14 -3.5; S08 +16.2, S12 +12.0, S04 +8.3.
+  Fold 2 holds the three that lose; the gate rescues S17 only.
+- Verdict: keep the packaged policy (gate 0.10, no dead zone). In the regime the FAQ states (shuffled, mixed) it costs nothing at zero
+  delay and recovers delays; dead zones only lose there. Fold 4 (`align_f4.sh`, detector training on 517) still to come.
+- Per-subject page: https://claude.ai/artifact/9NEkxZZAYBXuABwRTrPkyq (data `ns09_export.py`; refresh with the f1234 npz tonight).
+- 17:25 final candidates rebuilt with the final `submission.py` (md5 5946170e: per-batch finiteness check, load-time warm-up, per-batch
+  alignment fallback), each passing replay, `check_stateless.py` and the contract check on both repo versions (16 Nov: subject-agg reported):
+  finalA (ST x1) `5cbe91ac0c3e057639b7acc81aff18a6579f419dcdfbe4745af60a91511c2b61`, finalB (ST x2) `7cc7fb5fc77aea8206e7a819a19b2e23725657b93b19ec721fd56dc5b4d3b032`,
+  finalC (ST x1.5) `ad5750efc3692fcd0e388601bac2251f875a6a7559ffcb18dca110ed345a0908`, all 822.9 MB, gate 0.10.
+- 18:05 ST-EEGFormer with time-ordered pooling (`mi_stf_ho5k_lag5_jit3_soft3_tp`, `--fm_arch_kwargs {"time_pool":true}`), fold 1
+  (`logs/mi/r11/..._tp_f1.out`, `logs/mi/tp_f1.out`): alone -4.7 ± 5.7 vs LaBraM; 7th next to the six +3.8 / +5.6 (as the plain-pooled
+  one). Inside sub25b's nine, vs the six: plain-pooled ST soft 5k +9.4 / 14k +17.0; SWAPPED for it +6.7 / +13.6 (worse); ADDED as a tenth
+  +8.3 / +19.7 (mixed, the third-seed profile). Closed on fold 1 (swap negative; addition = an extra ST seed, neutral on three folds).
+
+## 18:20 (18 Nov) Y06 alignment policies on the raw foreign cohorts, through finalA (`ny06_align_cohorts.py`, `logs/mi/y06_align_cohorts.out`)
+3,000 trials per person, 64-trial batches mixing the cohort's people, r=3, top-5 against no alignment (own gallery; the 14.4k column of
+ds007964 has too few hits to read). Proposed corrections: ds007964 +6 / +7 / +8 in 11 / 62 / 25 % of batches, ds004018 +7 / +8 in 33 / 67 %
+(labelled optima were +3..+6 and +4..+6; the detector's peak +5.5 plus the 1.5 bias lands at +7, and applying it is still the best read).
+| policy | ds007964 own 1,900 | ds004018 own 200 | ds004018 + 14.4k |
+|---|---|---|---|
+| always / gate 0.10 (finalA) / dead zone 2 or 3 | **+57.4 ± 20.9** | **+22.8 ± 3.0** | **+65.8 ± 23.2** |
+| gate + cap 5 (clip) | +48.5 ± 18.2 | +23.8 ± 2.6 | +45.2 ± 17.4 |
+| gate + clip at 3 | +22.1 ± 11.8 | +17.6 ± 2.1 | +21.9 ± 12.9 |
+| gate + ignore beyond 4 or 3 | 0 (no correction applied) | 0 | 0 |
+A real recording-chain delay needs corrections of 6-8 in the package's convention: ignoring large proposals throws the whole gain away,
+clipping them keeps part of it. No cap goes into the package (the cap option stays in the code, unused).
+
+## 18:30 (18 Nov) S09 on all four folds (20 subjects), sealed-like batches = 11 people per 64-trial batch (`logs/mi/s09_f4.out`)
+Top-5 against no alignment, pooled folds 1-4, delays -4 / -2 / -1 / 0 / +1 / +2 / +3 / +4:
+| policy | -4 | -2 | -1 | 0 (± ; per fold) | +1 | +2 | +3 | +4 |
+|---|---|---|---|---|---|---|---|---|
+| gate 0.10 (finalA) | +52.3 | +10.8 | +4.5 | -1.7 ± 1.5 (-3.0 / -1.7 / +0.2 / -2.4) | -0.5 | +3.0 | +17.3 | +31.7 |
+| gate + dead zone 2 | +52.3 | +10.6 | +4.2 | **-0.3 ± 0.8** (-1.5 / +1.7 / -1.2 / +0.3) | -0.8 | +0.2 | +16.3 | +31.9 |
+| dead zone 3 | +53.0 | +9.5 | +0.2 | -0.6 ± 0.2 | -0.1 | -0.5 | +9.2 | +31.2 |
+| gate + reject beyond 4 / 3 | +19.2 / +2.0 | | | -1.7 | | | | +31.5 / +17.3 |
+With 11 people per batch the zero-delay read turns slightly negative for finalA (-1.7 ± 1.5; with 15-20 people per batch it was +0.8 ±
+1.8): fewer people, noisier batch estimate. Gate + dead zone 2 is better at zero delay on 3 of 4 folds (+1.4 on average, inside the
+noise), costs 2.8 at a +2 delay, equal elsewhere, and is identical on the foreign cohorts (their corrections are +6..+8). Single-person
+batches: finalA -0.4 ± 1.7, gate + dead zone 2 -2.4 ± 1.4 (excluded by the FAQ). Fold 4's own people: S01 -12.3 (mean correction -1.6),
+S09 +18.8 with the gate. Page refreshed with 20 subjects.
+
+## 18:40 (18 Nov) S10 people with DIFFERENT delays in one batch (`ns10_mixed_lag.py 1,2,3,4`, `logs/mi/s10_mixed_lag.out`)
+11 people per 64-trial batch, fold models, top-5 against no alignment (ceiling = the same data undelayed):
+| scenario | gate 0.10 (finalA) | gate + dead 2 | dead 3 | gate + reject > 4 | ceiling |
+|---|---|---|---|---|---|
+| all at 0 | -1.7 ± 1.5 | -0.3 ± 0.8 | -0.6 ± 0.2 | -1.7 | 0 |
+| half at -4 / +4, half at 0 | +6.1 / -1.0 | +4.9 / +0.8 | +4.8 / -0.2 | +6.9 / -0.9 | +17.1 / +9.3 |
+| half at -2 / +2, half at 0 | +0.6 / -2.0 | -0.9 / -2.0 | +0.2 / -0.1 | +0.6 / -2.0 | +4.0 / +1.3 |
+| spread -2..+2 / -4..+4 | +0.4 / -3.8 | +0.1 / -2.2 | +0.1 / -0.7 | +0.6 / -3.8 | +6.3 / +11.2 |
+| spread -4..0 / 0..+4 | +1.4 / +5.7 | +1.5 / +3.8 | +1.6 / +2.3 | +1.8 / +5.7 | +6.4 / +12.9 |
+One shift per batch cannot serve people with different delays: it recovers a third to a half of the ceiling when the delays lean one
+way, and nothing when they cancel; the worst case of any policy is about -4 ± 2 %. No policy wins across scenarios (dead zone 2 vs the
+gate: better in 3, worse in 3, equal in 3). Verdict: finalA uploaded as is (user, 18 Nov evening); the last upload may take gate + dead
+zone 2 (+1.4 at zero delay on 3 of 4 folds, -2.8 at a uniform +2 delay, a wash in mixed delays): a small, unproven edge.
+
+## 19:40 (18 Nov) BOARD: finalA = 0.001321 (3rd), +5.0 % over sub16; the 5k Alljoined proxy is the one that predicts the board
+| team | top-5 subj-agg | top-1 subj-agg | top-5 per trial | top-1 per trial | agg gain | s |
+|---|---|---|---|---|---|---|
+| jmokim | 0.001368 | 0.000349 | 0.000673 | 0.000144 | 2.03 | 1,561 |
+| sazeglio | 0.001362 | 0.000320 | 0.000686 | 0.000154 | 1.99 | 6,424 |
+| **finalA** | **0.001321** | 0.000336 | 0.000681 | **0.000166** | 1.94 | 3,308 |
+| qingyangli | 0.001311 | 0.000351 | 0.000658 | 0.000149 | 1.99 | 3,065 |
+| sub16 (ours, 12 Nov) | 0.001258 | 0.000320 | 0.000629 | 0.000156 | 2.00 | 1,533 |
+- finalA vs sub16: subj-agg top-5 +5.0 %, top-1 +5.0 %; per trial top-5 +8.3 %, top-1 +6.4 %. Forecasts: 5k +6.9 ± 1.4 (consistent with
+  +5.0 given board noise ~±4 %), 14k +13.6 and ds007964 +23 % (both overstated). Use the 5k proxy from now on; ST x2 (finalB) is out.
+- No sealed delay to speak of: a uniform delay of 2-4 samples would have made the alignment worth +11 to +52 % on top of the members.
+  The insurance was not needed; at zero delay with 11 people per batch it costs -1.7 ± 1.5 (gate + dead zone 2: -0.3 ± 0.8).
+- Single-trial decoding is level with the best (top-5 2nd, top-1 1st on the board); the gap is the aggregation over repeats (1.94 vs
+  2.03 for jmokim). At jmokim's aggregation gain finalA would read 0.001382. Gap to first: +3.6 %.
+- Run time 3,308 s against the 3,800 s estimate: the calibration (373 s + 25 s per ms of idle-3080 batch time) holds.
+
+## 20:40 (18 Nov) Y09 per-trial weighting before the grader's repeat average (`nv01 POW=`, `ny09_pow_paired.py`, `logs/mi/y09_pow*.out`)
+Output y -> y |y|^(a-1) (a = 1 deployed; a = 0 equal weights). sub25b's nine vs the six, folds 1-3, 5k / 14k: a 0 -3.8 / +1.4, 0.5 +3.8 / +9.6,
+1 +6.9 / +13.6, 1.5 +7.8 / +14.2, 2 +6.3 / +10.9, 3 +2.7 / +6.0: the norm already carries useful confidence and the raw average
+uses it. Paired against a = 1 (four triplets per group): 5k a 1.25 **+0.49 ± 0.51** (folds +0.4 / +0.8 / +0.4), 1.5 **+0.86 ± 0.68**
+(+0.1 / +1.5 / +1.2), 1.75 +0.10, 2 -0.61; 14k 1.25 +0.23, 1.5 +0.55 ± 1.03, 1.75 -1.10, 2 -2.37. Small, same sign on every fold at
+1.25 and 1.5 (5k). `submission.py` takes `pow` in members.pt (default 1 = unchanged). Fold 4 read tonight (`f4_read.sh`).
+Last-upload candidate: finalA's members + gate + dead zone 2 + pow 1.25-1.5, expected about +1.5 to +2.5 % over finalA (0.001321 -> ~0.00135);
+first place needs +3.6 %.
+- 21:00 Y10 member weights by coordinate ascent on folds 1-3 (5k, four triplets, `logs/mi/y10_weights_sel123.out`): SQF-X 2, SQF 1.5,
+  plain ST 1.5, REVE-pre soft 1.5, the rest 1, power 1.25: +1.96 % over uniform ON THE SELECTION FOLDS (optimistic by construction).
+  The conv members go UP, the opposite of what the foreign proxy wanted. Untouched fold 4 decides (`f4_read.sh`, tonight).
+- 21:20 widened search with plain REVE-d6 and plain rmix from weight 0 (`y10_weights_sel123_extra.out`): stops at +1.51 % (d6 0.5, rmix 0),
+  below the nine-member optimum (+1.96 %): the two extra finals add nothing. The fold-4 check keeps the nine.
+
+## 23:45 (18 Nov) fold 4 (never used for selection; `logs/mi/f4_read.out`)
+- sub25b's nine vs the six on fold 4: 5k +2.2 ± 2.8, 14k +4.0 ± 4.8. Four-fold 5k: +9.4 / +3.2 / +7.2 / +2.2, mean **+5.5 %**, against
+  the board's +5.0 % for finalA: the 4-fold 5k Alljoined proxy reproduces the board. Folds 1-3 alone were optimistic (+6.9).
+- ST x2 on fold 4: 5k +2.3 (x1 +2.2): no difference. finalB stays out.
+- Power on fold 4 (unpaired vs the six): 1 +2.2, 1.5 +1.0, 2 -0.8, 3 -2.3; paired (ny10 check) 1.25 alone -0.07 ± 0.88. The power is out.
+- Member weights chosen on folds 1-3 (SQF-X 2, SQF 1.5, ST 1.5, REVE-pre soft 1.5, others 1; with power 1.25): fold 4 **+1.47 ± 1.30 %**
+  paired against uniform, while the power alone gives -0.07: the weights carry it. Re-search with the power fixed at 1 running (NOPOW).
+
+# Round 14 (19 Nov, 00:00): +10 % over finalA on the 5k Alljoined proxy (user goal; 4 GPUs: 513, 515, 517, 520)
+Target = 5k held-out Alljoined, screen on folds 1 + 3, confirm on 2 / 4 before packaging. In hand: member weights (+1.5 on fold 4),
+gate + dead zone 2 (+1.4 at zero delay). Running:
+- training screens (queue): SQF-X seed 2, SQF-X + EMA, SQF-X + band dropout 0.3, pretrained REVE soft lr 2e-4, plain ST seed 2; folds 1, 3.
+- weight search over an 18-member pool (sub25b's nine + nine existing finals' fold models), select 1+3, check 2 (`y10_pool_sel13_chk2.out`).
+- training-free: snapshot ensembles (cached extra epochs: SQF-X 24/32/36, rmix soft 8, LaBraM 8, REVE-scr 10, REVE-pre 4/5) and
+  shift-averaging (+-1 sample) on the cheap members (`nu09_cache.py`, `logs/mi/nu09_cache.out`). Finals already hold LaBraM ep08,
+  REVE-scr ep10, REVE-pre ep04/05; SQF finals would need a retrain with saved epochs.
+- 00:05 user: no second seeds (sqfx_s2 stopped, stf_s2 removed); be bolder; reconsider choices that cost 5k; explain "best raw top-1,
+  behind in aggregated top-5". Pool search (`y10_pool_sel13_chk2.out`) loaded only one extra (d6_jit3, weight 0): SQF-X 2, LaBraM 1.5
+  -> fold 2 +1.44 ± 1.18 (fold 4 +1.47 with ST/REVE-pre 1.5 too). Re-done one candidate at a time as Y12 (105 cached fold models).
+
+## 00:20 (19 Nov) Y11 the aggregation gap (`ny11_agg_gain.py 1,3,2,4`, `logs/mi/y11_agg_gain.out`; 5k, four folds)
+Board: gain = subj-agg top-5 / per-trial top-5 = sub16 2.00, finalA 1.94, jmokim 2.03. The proxy reproduces it: six 1.98, nine 1.95.
+Per member (per-trial top-5 -> gain -> r=3 top-5): rmix .678 / 1.94 / 1.317 vs rmix soft .712 / 1.83 / 1.305; ST .649 / 1.93 / 1.254
+vs ST soft .675 / 1.81 / 1.223; REVE-pre soft .721 (best single trial) / 1.83; LaBraM soft 1.90 vs LaBraM 1.97; REVE-scr 1.99;
+SQF 1.82, SQF-X 1.88. **Soft labels buy per-trial accuracy with a bias the repeat average cannot remove** (bias-variance: the pull
+toward similar images is the same in every repeat; the noise it fights is what averaging already removes). Four of the nine are soft.
+Trial re-weighting before the average is not the fix: AUC for a per-trial hit norm .70, member agreement .67, bank peak .52; best
+norm^a x agreement^b x bank^g +0.43 ± 0.56 (a 1.5), equal weights -9.0. Next: spectral sharpening of the output (Y13, training-free)
+and soft-then-hard training (`--soft_until`, new flag; rmix soft until ep 7 of 12, REVE-pre soft until ep 3 of 6; folds 1, 3).
+- 00:35 Y13 spectral sharpening q -> V diag(lam^-g) V^T q (training-image axes; `ny13_spectral.py 1,3`, `logs/mi/y13_spectral.out`):
+  negative everywhere, nine g 0.1 -5.5 ± 1.1, g 0.25 -27 %; soft members lose least (rmix soft -2.5 vs rmix -7.6 at g 0.1), the
+  sign of the bias, but nothing gains. Output-side maps stay closed (as 10 Nov).
+- 00:50 Y12 swaps (`ny12_add_one.py 1,3,2,4 'old>new'`, `logs/mi/y12_swap_soft.out`), weighted nine, four folds: rmix soft -> rmix
+  -0.20 ± 0.52, LaBraM soft -> LaBraM long -0.03 ± 0.52, drop ST soft -1.38 ± 0.53, drop REVE-pre soft -0.84 ± 0.48, both swaps
+  -0.52, + drop ST soft -2.80. **Soft vs hard is a wash in the nine**: per-trial gain and aggregation loss cancel. The board pattern
+  (best per-trial, lower gain) is the signature of that trade, not lost accuracy; a member must keep both to gain (soft-then-hard).
+- 01:00 Y14 shift-averaging (mean output over input shifts -1, 0, +1; `@avg` in ny12; `logs/mi/y14_shift_avg.out`), folds 1 + 3:
+  per member -0.5..+0.1, all seven -0.27 ± 0.51. Closed.
+- Screens: SQF-X screens read at epoch 24 against the reference's own epoch 24 (cached) to save ~1 h (`y15_sqfx_ep24_f1.out`);
+  analyses stay on 515 (they slowed the 520 start to 16 min). SQF-X EMA f3 stopped (fold rule: f1 first), re-queued at the end.
+- 01:00 Y12 add-one (105 cached fold models, weighted nine, `logs/mi/y12_add_one.out`, partial): best LUNA soft +1.1 ± 0.7 (fold 1 only;
+  LUNA weak alone and not traceable), the rest <= +0.6 and inconsistent across folds; snapshots (REVE-pre ep04/05, LaBraM ep08,
+  rmix soft ep08) negative. The pool is saturated.
+- 01:05 Y16 constant vs per-batch member scaling (`ny16_scale.py`) running.
+- 01:10 **Y17 repeat-aggregate training** (`--repeat_agg L`, new; `RepeatPairSampler` in module/dataset.py): batch = B/2 trials + another
+  repeat of the same person and image each; loss = single-trial loss of each half + L x loss of the pair's RAW mean (what the
+  grader ranks). Same compute per epoch (N // B batches). `mi_rmix_ho5k_lag5_jit3_soft3_ragg1` f1 on 520 (21 it/s, as plain), f3
+  queued. Band-dropout SQF-X stopped (memory: better singles, no ensemble gain) for it.
+- 01:10 Y12 complete (105 models x 2 weights): with >= 2 folds the best addition is +0.63 ± 0.50 (d6 auxpix, folds -0.1 / -0.2 / +2.8);
+  no-jitter twins add nothing (rmix ep10 +0.1, sqfx -0.0, d6 -0.2 at w 0.5). Closed. Y16 constant member scaling +0.20 ± 0.33
+  (folds +0.5 / +0.4 / +0.2 / -0.5): closed.
+- 01:10 finalD building (`build_last.sh finalD 2,1,1.5,1.5,1,1,1,1,1.5 1 0 noalign`, new `noalign` = detector=None, no detector file):
+  the nine with the fold-4-checked weights, no alignment. Expected over finalA on 5k ~ +3.2 % (weights +1.47 on fold 4, alignment
+  price at zero delay -1.7 removed). The banked candidate if no training screen confirms.
+- 01:25 **finalD built** (`neurips_challenge/submissions/finalD.zip`, 803,032,148 B, sha256 42ac2f76e0f069aecc6485bc00b840e6a6a09ce882dc4fe7c083903a90436527):
+  in-sample replay fold 1 34.63 at delay 0 (finalA 35.05), 31.76 at delay -4 (finalA 34.31: the insurance given up), stateless,
+  contract clean on both repo versions. No detector: expect ~3,000 s on the grader (finalA 3,308 s).
+- 01:20 Y15 SQF-X + EMA at matched epoch 24 (fold 1, in the nine): -1.8 % against plain SQF-X ep24 -> stopped, f3 dropped.
+- 01:35 Y18 epoch swaps in the nine (folds 1 + 3; every fold model's test_best = its LAST epoch): SQF-X ep24 +1.04 ± 0.59 (+1.8 / +0.3),
+  ep32 -0.44, ep36 -0.60 (non-monotone: likely noise; folds 2 + 4 being cached); every other member's earlier epoch loses
+  (REVE-pre ep04 -1.0, ep05 -0.9; REVE-scr ep10 -0.9; rmix soft ep08 -0.6; LaBraM soft ep08 -0.5; LaBraM ep08 -0.1).
+- 01:45 Y18 SQF-X epoch on folds 2 + 4: ep24 +0.51 ± 0.76 (+0.4 / +0.6), ep32 +0.22, ep36 -0.44. **ep24 positive on all four folds
+  (+1.8 / +0.3 / +0.4 / +0.6, mean ~+0.8 %)**; queued the final twin at the head: `final.sh sqf_dbn_optx_things 24 lag5jit_e24
+  --things_lag 5 --time_jitter 3` (same 40-epoch schedule, stopped at 24 instead of 39).
+- 02:05 **soft-then-hard rmix, fold 1** (`mi_rmix_ho5k_lag5_jit3_soft3h7`, soft to ep 7 then hard; `logs/mi/read_..._soft3h7_f1.out`):
+  identical to rmix soft through ep 7 (same seed). ep10 per-trial top-5 .788 (soft .811, hard .768), gain 1.90 (soft 1.88, hard
+  1.91), r=3 1.496 (soft 1.527, hard 1.468); in the nine for rmix soft -0.22 ± 0.83 (ep08 -0.45). The hard phase does not buy back
+  the gain. Neutral -> f3 stays queued (behind the repeat-aggregate screens).
+- 02:05 fp32 everywhere (finalD with amp = []): replay 34.63 = fp16 34.63. fp16 costs nothing; kept.
+- 02:30 **repeat-aggregate rmix, fold 1** (`mi_rmix_ho5k_lag5_jit3_soft3_ragg1`; `logs/mi/read_..._ragg1_f1.out`): the 200-image dev
+  curve led rmix soft by 1-2 points at every epoch on f1 and f3 (~+10 % rel.), but at 5k: ep10 per-trial .793 (soft .811), gain 1.87
+  (1.88), r=3 1.484 (1.527); in the nine for rmix soft ep08 +0.61 ± 0.83, ep10 -0.06, best +0.28. Neutral -> f3 running (517).
+- 02:40 rmix trained to 16 epochs (fold 1 cache, `e16`): per-trial top-5 ep8 .784 / 10 .768 / 12 .761 / 14 .704 / 16 .693, gain
+  1.84 / 1.91 / 1.94 / 2.08 / 2.01, r=3 1.446 / 1.468 / 1.479 / 1.464 / 1.396. **Every member-level change tonight (soft labels,
+  soft-then-hard, repeat-aggregate loss, longer training) trades per-trial accuracy for aggregation gain one for one; r=3 barely
+  moves.** The 14k-chosen REVE budget is also right at 5k.
+- 03:00 Y19 norm power per member (`ny19_member_pow.py 1,3 2,4`, finalD weights): select +0.30 % (SQF-X .75, REVE-scr .75, rmix soft .5),
+  check fold 2 -1.18 ± 0.87, fold 4 -1.11 ± 0.71. Overfit; raw norms are right per member too. Closed.
+- 03:05 repeat-aggregate rmix, fold 3: gain 1.93 (rmix soft 1.86: the loss DOES raise the gain), per-trial top-5 .780 (.816), r=3 1.503
+  (1.515); in the nine ep08 -0.97, ep10 -0.38, best +0.32. Folds 1 + 3: neutral (best +0.3, ep10 -0.2). Fold rule: f2 queued last.
+  SQF-X (520) and REVE-pre (517) repeat-aggregate f1 running.
+- 03:30 Y20 weights re-searched with SQF-X ep24 in the nine (select 1-3, NOPOW): SQF-X 1.5, REVE-scr .5, LaBraM soft .5, others 1;
+  fold 4 +2.22 ± 1.17 vs uniform. **Y21 configurations vs finalA's members (uniform, ep40), no alignment in any, 4 folds**
+  (`ny21_compare.py`, `logs/mi/y21_compare.out`): D finalD weights +1.04 ± 0.49 (+0.6 / +0.9 / +1.4 / +1.5); E1 finalD weights +
+  SQF-X ep24 +1.56 ± 0.55; **E2 SQF-X ep24 + its weights +2.77 ± 0.55 (+2.0 / +3.0 / +2.8 / +3.4)**. With the alignment price
+  removed (+1.7 at zero delay), E2 ~ +4.5 % over finalA on 5k. finalE = E2 (build_swap.sh after the e24 final, ~04:00).
+- 03:45 E2 + the ep40 SQF-X as a tenth member: x0.5 +2.42, x1 +1.74 (E2 alone +2.77): no. Queued at the head: SQF-X saving ep12/16/20
+  (stop 20) and plain SQF saving ep16-32 (stop 32), folds 1 + 3, same recipes and seeds: does the conv family gain at earlier epochs?
+- 04:15 **finalE built** = E2: finalD with member0 = SQF-X final stopped at 24 of 40 (`final/sqf_dbn_optx_things_lag5jit_e24`, 01:47-03:58 on 513),
+  weights 1.5 / .5 / 1 / 1 / 1 / .5 / 1 / 1 / 1, no alignment (`build_swap.sh finalE finalD 0 <run> <weights>`, new). In-sample replay
+  fold 1 34.40, stateless, contract clean on both repo versions. `neurips_challenge/submissions/finalE.zip` 803,034,250 B, sha256
+  c11092236fe47fee295db6e0adbe4a083b1c93fe913874b7832f70da7c78de63. Forecast on 5k vs finalA ~ +4.5 % (Y21 +2.77 ± 0.55 + no alignment
+  +1.7); expected grader time ~3,000 s (finalD members, no detector). The current upload candidate.
+- 04:20 REVE-pre soft at lr 2e-4 (fold 1): alone r=3 1.367-1.415 vs 1.528, swapped into E2 -2.0 to -2.9 %. Negative -> f3 dropped.
+- 04:30 Y22 against E2 (folds 1 + 3): SQF-X ep32 -2.30, REVE-pre ep04 -2.24 / ep05 -1.66, LaBraM ep08 -1.07, LaBraM soft ep08 -1.04, rmix
+  soft ep08 -1.55, REVE-scr ep10 -0.75; drop REVE-scr -1.52, drop LaBraM soft -1.36. E2 is a local optimum on every cached axis.
+- 04:45 repeat-aggregate SQF-X, fold 1: alone ep40 r=3 1.136 vs 1.173 (gain up 1.86 -> 1.94, per-trial down .631 -> .585); in E2 for
+  SQF-X ep24: ep24 -4.13, ep32 -2.39, ep36 -3.70, ep40 -2.77. Negative -> closed for SQF-X.
+- 05:00 repeat-aggregate REVE-pre soft, fold 1: gain 1.82 -> 1.95, per-trial top-5 .838 -> .753, r=3 1.528 -> 1.471; in E2 -2.6 to -3.5.
+  **Repeat-aggregate family closed** (rmix neutral on two folds, SQF-X and REVE-pre negative): it raises the gain and never r=3.
+  rmix f2 dropped; REVE-pre soft-then-hard moved to the end of the queue.
+- 05:15 Y23 Y12's top eight additions re-tested against E2 (folds 1, 3, 2): all negative, -0.5 to -2.1 % (d6 jit3 -1.4, LaBraM long -0.8
+  at w .5). E2 saturates: weights + the SQF-X epoch used the remaining combination headroom.
+- 05:30 SQF-X earlier epochs (same recipe re-run saving 12/16/20, fold 1), swapped into E2 for ep24: ep12 -4.35, ep16 -1.69, ep20 -3.81.
+  ep24 is the sweet spot; finalE keeps it.
+- 06:05 plain SQF earlier epochs (re-run saving 16-32 reproduces ep32 exactly: swap +0.00), fold 1 in E2: ep16 -2.61, ep20 -2.77, ep24 -1.58,
+  ep28 -1.58. SQF-X early epochs fold 3: ep12 -3.41, ep16 -3.36, ep20 -2.94. Epoch question settled (SQF-X 24, SQF 32); SQF f3 stopped.
+  (correction: that entry was 05:40, not 06:05. The SQF f3 run on 517 ended at 05:38:52 without a traceback while I was looking up its
+  pid; the 517 worker then found an empty queue and exited. 517 idle until a new worker is started.)
+- 05:50 Y24 SQF-X + soft labels (existing fold runs, ep24/32 cached on 517), folds 1, 3, 2: swapped for E2's SQF-X ep24 -4.31 (ep24) / -4.49
+  (ep32) / -4.16 (ep40); added at w .5 -1.35. The conv member must stay hard-label. Closed.
+- 05:50 building `finalE_dz2` = finalE + the alignment detector back (gate 0.10, dead zone 2): the hedge if a delayed sealed stream is a
+  worry (S09: dead zone 2 costs -0.3 ± 0.8 at zero delay vs no alignment; ~+10 % run time).
+- 06:05 **finalE_dz2 built** (hedge): in-sample replay delay 0 34.41 (finalE 34.40), delay -4 33.72 (no-alignment packages ~31.8),
+  stateless, contract clean (16 Nov repo). 822,914,699 B, sha256 154b7f6d003b5ecfbf1c3fd15dd51a577db5b983760cab1fcaff0ac59a7176ac.
+  Expected ~3,300 s (finalA's time: same members + detector).
+- 06:35 timing on idle 517 (`time_pkg.py`): finalA 134.1 ms per 64-batch, finalE 110.9, finalE_dz2 135.2. Scaled to finalA's measured
+  3,308 s: finalE ~2,800 s, finalE_dz2 ~3,330 s.
+- 07:00 soft-then-hard rmix, fold 3 (in E2 for rmix soft ep10): ep08 -0.89, ep10 -1.79, best -0.37 (gain 1.81-1.99, r=3 1.479-1.509 vs
+  1.515). Negative on f3 -> closed. REVE-pre soft-then-hard f1 / f3 still running (513, 520), readers armed.
+- 07:45 REVE-pre soft-then-hard (soft to ep 3 of 6), in E2 for REVE-pre soft: f1 ep04 -1.14, ep05 -1.41, best -1.58 (alone r=3 1.540 vs
+  1.528); f3 -2.36 / -2.57 / -2.26 (alone 1.597 vs 1.604). Negative on both folds -> closed. Soft-then-hard closed for every member.
+  Queue empty; all screens of round 14 read. Round-14 outcome: finalE (E2), forecast ~ +4.5 % over finalA on 5k.
+- 08:10 Y25 weights on a 0.25 grid starting from E2 (select 1-3, check 4): only SQF 1 -> 1.25, select +0.20, fold 4 -0.20 ± 0.59. E2's
+  weights stand. Every axis that cached outputs can test is now at its optimum for E2; GPUs idle, queue empty.
+- 08:00 (stop hook: +10 % not met; keep going) Y26 no-jitter SQF-X (ep24 / 32 / 40) for E2's SQF-X: -2.98 / -2.84 / -2.96 (folds 1, 3, 2):
+  jitter is an augmentation here, not only insurance. Y27 every cached same-family variant swapped into each E2 slot (20 swaps, folds
+  1 + 3): all -0.75 to -2.32. SignalJEPA (stride-128 tokenizer: no token in a 120-sample window), BENDR / BIOT / CodeBrain: no fit.
+- 08:03 SQF-X augmentation round (the member whose tuning paid), 40-epoch schedule stopped at 24: jitter 5 (f1, f3), time warp .05 (f1),
+  operator transfer always (f1); workers restarted on all four GPUs; readers swap ep20 / ep24 into E2. Results ~09:30.
+- 09:40 SQF-X augmentation round (in E2 for SQF-X ep24): jitter 5 f1 -2.72 / f3 -2.21, time warp .05 -3.32, operator transfer 1.0 -2.61
+  (ep20 worse still). SQF-X's recipe stays. Closed.
+- 10:15 Y28 packages on the two foreign cohorts (`ny04_packages_out_of_things.py finalA finalE finalE_dz2`, `logs/mi/y28_cohorts_finalE.out`;
+  cohorts 4-5 samples off Alljoined), change vs finalA: finalE (no alignment) -18.9 / -37.8 / -40.5 (ds004018 own / +40k / +14.4k),
+  -42.3 / -39.5 / -55.1 (ds007964); finalE_dz2 +0.2 / -11.7 / -15.3 and -4.3 / -14.5 / +0.0. Without alignment a delayed stream is a
+  collapse; with it, E2's weights + SQF-X ep24 still trail finalA on big foreign galleries (partly Alljoined-specific tuning; the foreign
+  proxy disagreed with the board before). Pick stays finalE for the board's own data (no delay); finalA is the most robust across cohorts.
+- 10:20 Y29 move outputs along the training-image bank neighbourhood (`ny29_bank.py`, E2, four folds): toward (a > 0) +.05 -6.1, +.15 -22,
+  +.3 -40; away (a < 0) -.05 -3.8, -.15 -34, -.3 -70 (tau .02 / .05 alike). A 3-degree rotation already costs 4-6 %: the outputs sit at
+  a sharp optimum. Output side closed for good (linear and nonlinear).
+- 10:01 double-width SQF-X (temporal / spatial / projection filters 80 instead of 40; never varied for Track 1), same recipe, stop 24,
+  folds 1 + 3 (513, 520); readers swap ep20 / ep24 into E2. ~11:35.
+- 10:20 **REVE-large** (brain-bzh/reve-large, 390 M, 1216-wide; never tried: only reve-base so far). `foundation.py`: REVE takes
+  {"hub": ...} like ST-EEGFormer, head width from the loaded model. Check (`ny30_reve_large_check.py`, batch 64 fwd+bwd bf16): base 17 ms /
+  1.6 GB, large 47 ms / 5.2 GB. REVE-pre soft recipe + hub large; batch 128 OOMs with EMA (weights + grads + Adam + EMA ~ 7.9 GB) -> no EMA,
+  4 activation-checkpoint chunks, expandable segments: 8.1 GB, 1.7-1.9 it/s (~1.4 h per epoch), `mi_prevL_ho5k_lag5_jit3_soft3` f1 (515) and
+  f3 (517), done ~19:00; readers swap it into E2 for REVE-pre soft. Confound: no EMA. 517's holder job has an expired Kerberos key:
+  `env bash` fails on the PATH lookup ("Expiration de la clé"); queue lines there call /bin/bash explicitly.
+- 10:45 (user: does 5k > 14k hold on sub 2 and sub3?) Board steps vs proxies, aggregated top-5: sub 1 -> sub 2 +14.4 % (never replayed on
+  the 5k judge; the r=3 200-image target-only proxy of 5 Nov gave ~+13 % for dropping the TTA); sub 2 -> sub3 (sub16) +19.4 % vs 5k +11.7
+  (folds 1 / 3: +4.9 / +18.5) and 14k +13.3 (+7.9 / +18.6) (R12, ep10 stand-ins): both low, 14k slightly closer; sub3 -> finalA +5.0 % vs
+  5k +5.5 (4 folds), 14k ~+11 (4 folds), foreign +23. Shape (C02): only 5k r=3 reproduces the board's aggregation gain and top-5/top-1
+  ratios. Y21 on 14k (`BIG=1`): D -0.73 ± 0.79, E1 -0.29, **E2 +1.02 ± 0.91** (+2.3 / -1.8 / +0.7 / +3.8) vs +2.77 at 5k.
+
+# Round 15 (19 Nov, 11:00): hand-over (user: "Fable, you are in charge"; revisit, find bold levers and a good proxy for the last upload)
+
+## 11:00 Y31 the scored submissions replayed on the 5k judge (`ny31_board_replay.py`, cached fold models; `logs/mi/y31_board_replay.out`)
+sub 2 = ENS5 from the old cache `logs/holdout/f<k>` (rows re-ordered: that evaluator shuffled with seed k*100+7, cell() with 7; a first
+run without the re-ordering read chance level). r=3 top-5 % by fold (1 / 3 / 2 / 4): sub 2 1.517 / 1.523 / 1.132 / -; sub3 1.645 / 1.713 /
+1.242 / 1.405; sub4 1.804 / 1.851 / 1.255 / 1.426; E2 1.840 / 1.906 / 1.290 / 1.475.
+| step | 5k per-trial | 5k aggregated | board per-trial | board aggregated |
+|---|---|---|---|---|
+| sub 2 -> sub3 (3 folds) | x1.062 | x1.102 ± .016 | x1.135 | x1.194 |
+| sub3 -> sub4 (4 folds) | x1.070 | x1.055 ± .012 | x1.083 | x1.050 |
+| sub4 -> E2 (4 folds) | x0.996 | x1.028 ± .006 | ? | ? |
+5k predicted sub3 -> sub4 and under-predicted sub 2 -> sub3 by ~8 points (known part: the real sub 2 had d6 / rmix at epoch 9, ~1-2 %;
+rest unexplained: finals vs fold models, board noise ~4 % per score). 5k never over-predicted.
+
+## 11:20 Y32 the same steps by person and by image novelty (`ny32_stratified.py`, hits saved in `y32_hits.npz`)
+Novelty of a held-out image = cosine to its nearest TRAINED image (terciles .870 / .897). People by their sub3 score (terciles).
+| stratum (share of sub3 hits) | sub 2 -> sub3 | sub3 -> sub4 | sub4 -> D | sub4 -> E2 |
+|---|---|---|---|---|
+| all | x1.102 | x1.055 | x1.010 | x1.028 |
+| weak / middle / strong people (17 / 33 / 51 %) | 1.063 / 1.103 / 1.116 | 1.081 / 1.036 / 1.060 | 1.014 / 1.013 / 1.008 | 1.046 / 1.036 / 1.016 |
+| novel / middle / familiar images (36 / 30 / 34 %) | 1.070 / 1.096 / 1.148 | **0.829 / 1.111 / 1.248** | 1.039 / 1.011 / 0.990 | 1.037 / 1.025 / 1.023 |
+**The sub3 -> sub4 gain is a mix of -17 % on the images farthest from the training set and +25 % on the nearest.** No stratum explains
+the sub 2 -> sub3 excess (max 1.176, strong people x familiar images). E2's gain is flat across novelty and larger for weak people:
+it does not depend on the novelty mix of the sealed set; D's does.
+
+## 11:35 Y33 hard vs soft members of E2 by target novelty (`ny33_novelty_route.py 1,3 2,4`)
+H + lam F (H = five hard-label members, F = four soft-label members), r=3 top-5 vs E2 (lam 1): lam 0: all -7.4, novel **+16.6**, middle
+-9.4, familiar **-23.2**; lam .5: -1.4 / +6.3 / -2.3 / -6.3; lam 2: -2.9 / -10.3 / -2.6 / +2.3; lam 3: -5.3 / -15.6 / -6.4 / +3.0.
+lam 1 is the optimum of the proxy's mix only. A trial cannot tell its target's novelty (Spearman of bank peak / agreement / norm ratio
+with it <= .065), so per-trial routing gains nothing (five features, select 1+3, check 2+4: no setting beats lam 1).
+Board check: sub3 (no soft member) -> sub4 gave +5.0 %; a sealed set made of 'novel-third' images would have given about -17 %. The
+sealed novelty mix is therefore not far from the proxy's; soft members stay at weight ~1.
+Reporting rule from now on: every candidate by novelty tercile + 14k; trust gains that are flat across them.
+
+## 11:30 corrections to round 14
+- The "double-width SQF-X" (--tsconv_*_filters 80) was a no-op: the Squeezeformer ignores those flags (its width is d_model / depth via
+  --arch_kwargs). The run reproduced the standard SQF-X bit for bit (swap +0.00 on both folds). Real capacity screens queued:
+  `mi_sqfx_..._d256_e24` (d_model 256) f1 on 513, `..._dep5_e24` (depth 5) f1 next.
+- Readers must not run on 515 while REVE-large trains there (8 GB): two reads died of GPU memory; reads now go through srun on 513 / 520.
+- New candidate from Y33: **hard-label pretrained REVE** (`mi_prev_ho5k_lag5_jit3`, no soft labels; the strongest member only exists
+  with soft labels), f1 on 520, f3 next.
+
+## 11:50 Y34 soft vs hard twins ALONE by target novelty (`ny34_soft_by_novelty.py`, r=3 top-5, soft / hard)
+| member | all | novel third | middle | familiar third |
+|---|---|---|---|---|
+| rmix | x0.991 | x0.606 | x1.028 | x1.400 |
+| ST-EEGFormer | x0.976 | x0.674 | x1.000 | x1.290 |
+| LaBraM long | x0.992 | x0.664 | x0.990 | x1.337 |
+| REVE-d6 | x0.993 | x0.656 | x1.017 | x1.358 |
+| REVE-scr | x1.033 | x0.781 | x1.057 | x1.276 |
+| SQF-X | x0.998 | x0.680 | x1.034 | x1.342 |
+| SQF | x1.031 | x0.687 | x1.082 | x1.397 |
+Soft labels are a pure trade on every architecture: about -35 % on held-out images far from any trained image, +35 % on those with a
+close trained sibling, zero overall. (The 5k proxy's images are never trained, but they are held-out images of TRAINED concepts: ~7 of
+the 10 photos of each concept stay in training.)
+
+## 12:05 Y35 board-calibrated mix (`ny35_board_mix.py`, per-group table `y35_groups.npz`)
+Mix over novelty quintiles w_q ~ exp(b (q - 2)); six board statistics of sub3 -> sub4 (steps per-trial / aggregated x top-5 / top-1,
+aggregation gains of both). chi-square: b -0.5: 34; -0.25: 9.8; **0: 0.7**; +0.25: 10.7; +0.5: 30. At b = 0 the proxy gives 1.070 / 1.055 /
+1.086 / 1.072 / 1.98 / 1.95 against the board's 1.083 / 1.050 / 1.064 / 1.050 / 2.00 / 1.94. **The proxy's own novelty mix is the one the
+board supports (|b| < ~0.3)**: the sealed images have trained neighbours about as often as our held-out images do.
+Candidates vs sub4 at b = -0.25 / 0 / +0.25: E2 +3.1 / +2.8 / +2.6; soft members x0: +1.8 / -4.9 / -10.5; x0.5: +3.6 / +1.3 / -0.6;
+x1.5: +0.1 / +0.9 / +1.6; x2: -1.8 / -0.2 / +1.3. E2 (soft weight 1) is best at the supported mix and never far off inside it.
+- 11:55 REVE-large at lr 1e-3 (one-cycle, no EMA) learns slowly: f3 epoch 1 dev 7.5 (REVE-base soft 16.6), train loss 5.06 (4.68).
+  f3 stopped; fold 1 keeps lr 1e-3 (515); **REVE-large lr 3e-4 fold 1** goes to 513 when SQF-X d256 ends (~13:10; `after513.sh`).
+  Queue slip: the old 517 worker took REVE-pre hard f3 when its run was stopped, and the line meant for 517 died of GPU memory;
+  517 now runs REVE-pre hard f3 + SQF-X depth 5 f1 together. Readers armed for all (`read_on.sh`: on the run's own node).
+
+## 13:10 (19 Nov) retrospective audit (user: past levers, bibliography, future levers other than more models)
+Four read-only agents: this log 1-1800 (156 rows), 1800-end (170 rows), NIGHT_LOG / HISTORY / memory / the October logs of tag
+`pre-cleanup-2026-11-02` (163 rows), and a web survey (tables A-H). Ledgers: `logs/mi/audit_r15/audit_{log_part1,log_part2,old_logs,biblio}.md`.
+- **What moved the board:** dropping test-time adaptation + budgets (sub 1 -> 2, +14.4 %); lag + jitter + LaBraM (sub 2 -> 3, +19.4 %); soft
+  members + ST-EEGFormer + pretrained REVE (sub3 -> 4, +5.0 %). A member 10 % better alone moves the stack ~1.5 %; only levers acting on
+  (nearly) all members moved it by 5 % or more. The two steep levers on record are data: same-image people (+16-18 % per doubling, P05) and
+  distinct training images (-18..-22 % for -35 %); neither can be bought (every extra cohort with a per-cohort loss was null).
+- **Closures that stand** (several folds, in the ensemble): output maps / moves / weights, test-time person statistics, confidence other than
+  the norm, open-bank losses, repeat-aggregate loss, extra cohorts, hard negatives (P01), neighbours (O02), aux targets for top-5.
+- **Closed on thin or old-judge evidence** (ranked): (1) ST-EEGFormer recipe: lr 5e-4 best alone, never with soft labels or as a swap; runs
+  stop mid-cycle with test_best = last epoch -> `mi_stf_ho5k_lag5_jit3_soft3_lr5` and `_e14` (stop 14, saves 10 / 12) queued, fold 1;
+  (2) later budgets / cycle shape of LaBraM and pretrained REVE (same truncation); (3) batch 256 for the token members (October: better
+  singles, worse TTA ensemble); (4) augmentations screened only in the d6 / rmix slots, which left the package; (5) pre-stimulus masking
+  (frozen-model occlusion only); (6) EA / person-group BN inside members (absorbed by an output centring that no longer exists);
+  (7) distillation of the current stack; (8) G03 atypical weighting with a logit correction; N08 key-swap rerun never read.
+- **Adopted on thin evidence:** SQF-X epoch 24 (+0.8 %, each fold < 1 SE, final has 1.77x the steps per epoch); E2 weights (chosen on
+  folds 1-3; fold 4 +2.2 ± 1.2); no alignment (zero-delay cost -1.7 ± 1.5, not significant; rests on one board score); soft members at
+  weight 1 (one board step, Y35); the 5k judge itself (two board steps; under-predicted one, never over-predicted).
+- **Bibliography against the ledger:** repeat-aware loss, mid-layer / low-level auxiliary targets, unpaired negatives, cross-image mixup,
+  robust losses, batch centring, layer decay: all already run here. New: weight soups of fine-tunes of one pretrained model (never run);
+  per-trial wavelet thresholding (NEAR: the only denoiser that helps on Alljoined-1.6M, +27-31 % at 1-4 repeats, within-subject, harmful on
+  THINGS-EEG2). Literature facts that match ours: foundation models only marginally above task-specific ones, ensembling decides
+  comparable competitions, blur priors give nothing across subjects, every strong test-time method needs the gallery.
+- **Y36 amplitude clipping, zero-shot** (`ny36_clip.py 1`, `logs/mi/y36_clip_f1.out`; fold 1, frozen E2 members, input clipped at ±c, r=3
+  top-5, four triplets): 2.3 % of trials reach the grader's ±20 clamp, 8.7 % exceed 10, 17.9 % exceed 6. Per member at c = 10 / 6 / 4 / 3:
+  all within about ±1 SE of zero down to 6 (SQF-X +0.1 / -0.7 / -1.8 / -3.1; ST plain +0.4 / +0.4 / -1.3 / -2.6; LaBraM +0.5 / 0.0 / -0.4 /
+  -0.6). The members already ignore the outliers; no zero-shot lever. A member TRAINED on thresholded input is untested (low prior).
+- REVE-large lr 1e-3 fold 1: dev 7.3 after epoch 1 (REVE-base 16.5). lr 3e-4 started on 513 at 13:02. Hard-label pretrained REVE dev
+  25.2 / 26.6 / 27.7 (f1) against 16.5 / 19.8 / 21.4 soft: the dev set is 200 test images, read on 5k pending.
+
+## 14:05 (19 Nov) fold-1 reads; REVE-large cancelled (user); data and stem questions (user)
+Swap into / add to E2, 5k r=3, four triplets (`read_on.sh`, `logs/mi/read_<recipe>_f1.out`):
+- **SQF-X d_model 256** (`mi_sqfx_ho5k_lag5_jit3_d256_e24`): swap ep20 -2.61 ± 1.06, ep24 -4.95 ± 0.99; added -1.8 .. -3.4. Negative, closed.
+- **Hard-label pretrained REVE** (`mi_prev_ho5k_lag5_jit3`): swap for the soft twin ep5 -1.90 ± 0.96, ep6 -1.25 ± 0.95; added -1.4 .. -1.8,
+  although its 200-image dev curve is far above the soft twin's (25.2 / 26.6 / 27.7 / 28.9 vs 16.5 / 19.8 / 21.4 / 20.6): one more case of
+  the dev curve not predicting the 5k read. Fold 3 is already running (517) and will be read; no further fold.
+- **Y36 clipping, E2 line:** c = 10 / 6 / 4 / 3: -0.49 ± 0.30 / -0.60 ± 0.49 / -1.52 ± 0.70 / -1.74 ± 0.84. Closed (zero-shot).
+- **REVE-large cancelled at 13:17 on the user's word** ("too costly and I don't believe it"); lr 1e-3 fold 1 had dev 7.3 after epoch 1
+  (base 16.5), the lr 3e-4 run had just started. Both run dirs removed.
+- **Data lever (user: "absolutely sure?"):** no new public cohort (three web searches); Alljoined-1.6M has 20 people; ds007964 null at the
+  1 % level (expected +1-2 %, below the proxy's resolution); THINGS-EEG1's 6-9k extra images never tested with a per-cohort loss (data
+  deleted, signal ~0 zero-shot); Alljoined-1 "a dead end" (user).
+- **Stem and THINGS questions (user):** the Squeezeformer pooling was rescaled for 120 Hz (25 / 2) but its temporal kernel stayed at 25
+  samples (208 ms here, 100 ms at 250 Hz) and was hard-coded; TSConv's kernel sweep (13 / 25 / 49: flat) was October, old judge, fold 1.
+  `FastTSConvSqueezeformer(temporal_kernel=)` added (self-check: shapes, 42 tokens at kernel 13). Training without THINGS-EEG2 was read
+  on the current proxy for rmix only (-15 % alone, P05b). `nc_train.sh`: a run name containing `_noth` drops people 21..30.
+  Queue (fold 1, same number of steps for the no-THINGS runs: cycle and stop x 25 / 15): `mi_sqfx_ho5k_lag5_jit3_noth_e24` (515, started
+  13:17), `mi_stf_ho5k_lag5_jit3_soft3_lr5` (513, 13:17), `mi_sqfx_ho5k_lag5_jit3_tk13_e24` (520, 13:58), then `mi_stf_..._soft3_e14`,
+  `mi_stf_..._soft3_noth`, `mi_prev_ho5k_lag5_jit3_soft3_noth`. Readers armed on job 78465.
+
+## 14:50 (19 Nov) BOARD (user paste) and two fold-1 reads
+| team | top-5 subj-agg | top-1 subj-agg | top-5 trial | top-1 trial | gain | trial top-1 / top-5 | s |
+|---|---|---|---|---|---|---|---|
+| jmokim (17 Nov) | 0.001368 | 0.000349 | 0.000673 | 0.000144 | 2.033 | .214 | 1,561 |
+| cchen847 (18 Nov, new) | 0.001364 | 0.000296 | 0.000687 | 0.000159 | 1.985 | .231 | 3,834 |
+| sazeglio (14 Nov) | 0.001362 | 0.000320 | 0.000686 | 0.000154 | 1.985 | .224 | 6,424 |
+| qingyangli (19 Nov, was 0.001311) | 0.001353 | 0.000357 | 0.000672 | 0.000148 | 2.013 | .220 | 4,038 |
+| us, finalA | 0.001321 | 0.000336 | 0.000681 | 0.000166 | 1.940 | .244 | 3,308 |
+| hongchaoshu (19 Nov) | 0.001290 | 0.000294 | 0.000627 | 0.000129 | 2.057 | .206 | 3,698 |
+| JLShen | 0.001245 | 0.000363 | 0.000648 | 0.000148 | 1.921 | .228 | 2,631 |
+| _ares_ | 0.001221 | 0.000294 | 0.000606 | 0.000139 | 2.015 | .229 | 1,972 |
+- We are 5th, 3.6 % from first; ranks 1-4 lie within 1.1 %. Per trial we are 3rd at top-5 (0.9 % from the best) and 1st at top-1; our
+  aggregation gain is the second lowest. Across the 8 teams gain and per-trial sharpness (top-1 / top-5) correlate at -0.80 (-0.94
+  without JLShen): the sharper the single-trial output, the less the 3-repeat average adds.
+- On the proxy (y35_groups.npz, 4 folds) our configurations all sit at sharpness .230-.246 with no such relation inside our family
+  (sub3 .234 / gain 1.980, sub4 .238 / 1.952, E2 .246 / 2.015, E2 soft x0 .230 / 1.982): no knob of ours moves along the teams' axis.
+- **finalE forecast on this board:** proxy sub4 -> E2 = x0.996 per trial, x1.028 aggregated, gain 1.952 -> 2.015: about 0.000678 x 2.00
+  = **0.001358**, i.e. inside the 0.001353-0.001368 group (board SE ~4 %), not above it. Being clearly first needs about +3 % on top of
+  finalE, and two teams moved in the last 24 h.
+- **SQF-X without THINGS-EEG2** (`mi_sqfx_ho5k_lag5_jit3_noth_e24`, same steps, fold 1): swap ep33 -4.41 ± 1.16, ep40 -2.88 ± 1.14; added
+  -1.2 .. -2.7. Negative, closed for the Squeezeformer; the pretrained members' no-THINGS runs follow tonight.
+- Ops 14:33: four queued runs started beside SQF-X depth 5 on 517 (6.9 GB) and died of GPU memory within two minutes; dirs removed,
+  lines re-queued (ST no-THINGS, REVE-pre no-THINGS, REVE-pre stop 8, REVE-pre batch 256).
+
+## 16:00 (19 Nov) aggregation gain: four tests (user: "think of new levers that improve our aggregation gain"); weak-cohort alignment
+Frame: the grader ranks by (sum of the repeats' raw outputs) . gallery, i.e. a product of experts with the output norm as each trial's
+weight; a gain lever must change the per-trial outputs so that their SUM is better without the per-trial score paying for it.
+- **Y37 is evidence lost per trial?** (`ny37_coherent.py 1`, `logs/mi/y37_coherent_f1.out`; frozen E2 fold-1 members, r=3, four triplets)
+  Decoding the AVERAGE of the three input trials against the grader's average of the three outputs: SQF-X -23.5 ± 3.0, REVE-scr -30.0,
+  SQF -14.9, LaBraM -22.2, rmix soft -24.5, LaBraM soft -17.8, ST soft -24.1, ST -20.5, REVE-pre soft -20.4; E2 -26.2 ± 2.3 (same with
+  the input rescaled by sqrt 3). The members lose nothing by deciding per trial: output averaging is the BETTER integrator by a
+  quarter. No headroom from "evidence-like" outputs. Member gains on this fold: REVE-scr 2.07, LaBraM 2.02 / 2.02 soft, rmix soft 1.88,
+  ST 1.85, SQF-X 1.84, REVE-pre soft 1.82, ST soft 1.81, SQF 1.80.
+- **Y38 repeat-aware output filter** (`ny38_rwiener.py 3,2,4 1`, `logs/mi/y38_rwiener_fit324_t1.out`): axes = generalised eigen-axes of
+  the E2 output (reproducible covariance against single-trial noise covariance, fitted on folds 3, 2, 4; rho 4.9 / 1.8 / 0.26 / 0.09 /
+  0.03 at axes 1 / 10 / 20 / 100 / 500), read on fold 1 (identity: per-trial 0.880, r=3 1.691, gain 1.92). Un-shrinking for r=3,
+  ((rho + 1) / (rho + 1/3))^g: g .25 -0.30 ± 1.28 (per-trial -1.5, gain 1.945), g .5 +0.18 ± 1.80 (per-trial -4.9, gain 2.02), g 1
+  -10.2. More shrinkage -4.1 / -12.6. Keeping only the 64 / 256 / 768 most reproducible axes -82 / -80 / -75 % (the retrieval lives in the
+  weak axes). Band gains fitted on the r=3 loss -43 %. The gain CAN be moved (1.92 -> 2.02) but the per-trial score pays one for one.
+- **Y39 trial weights from the input, coordinate powers** (`ny39_aggw.py 1,3,2,4`, `logs/mi/y39_aggw.out`, four folds): output norm
+  already falls with the trial's rms (corr of logs -0.27 .. -0.38) and with max |x| > 10 (-0.15 .. -0.26). Extra down-weighting loses:
+  (median rms / rms)^.5 capped -1.09 ± 0.46, ^1 -2.05, ^2 -4.47; max |x| > 10 at weight .5 -1.08 ± 0.33, > 6 at .5 -1.89; trials on the
+  clamp at weight 0 -0.57 ± 0.27. sign(y) |y|^p: p .75 -4.0, .9 -1.5, 1.1 -1.4, 1.25 -4.0 (optimum 1). NOTE: the weight-0 rows for
+  max |x| > 6 and > 10 are invalid (a group whose three trials are all zeroed has a zero query, which the ranker scores as rank 0:
+  the "+37 %" is that artefact, not a result).
+- **Reading:** with Y09 / Y11 / Y13 / Y19 (norm powers, agreement weights, spectral sharpening) every output-side move sits on one
+  line: per-trial x gain = constant. Our lower gain (1.94 on the board) against a top per-trial score is a POSITION on that line, not
+  a recoverable loss; the teams ahead have ~3 % more in the product. E2 moves the position to gain ~2.0 at equal product +2.8 %.
+- **SQF-X stem kernel 13** (`mi_sqfx_ho5k_lag5_jit3_tk13_e24`, fold 1): swap ep20 -3.70 ± 0.98, ep24 -4.08 ± 1.00; added -2.6 .. -3.5.
+  **Hard-label pretrained REVE fold 3:** swap -1.31 / -1.10 ± 0.93 (fold 1 -1.90 / -1.25): closed on two folds. **SQF-X depth 5:** swap
+  -4.46 / -3.32, closed.
+- **Method doubt on the SQF-X screens:** today's five SQF-X variants read -2.6 .. -5.0 as swaps, as did jitter 5, warp, operator
+  transfer 1.0, EMA and soft labels last night: a uniform offset. The incumbent run (and its epoch 24, and its weight 1.5) was SELECTED
+  on these folds, so a fresh run of the SAME recipe may read about -2 to -3 % as well (U01: a member swap moves the stack ±2-3 % from run
+  to run). Without a same-recipe control the variants are "not better", not "worse". The control (one run, other seed) was not launched:
+  the user ruled out second seeds on 19 Nov; asked.
+- **S11 alignment by cohort strength** (`ns11_align_weak.py 1,2,3,4`, `logs/mi/s11_align_weak.out`; ns09's caches = the six, detector =
+  lag-only rmix norm; batches of 64 from 11 people drawn INSIDE the cohort, three batch seeds; r=3 / per-trial top-5 against none):
+  | cohort (r=3 top-5 without alignment) | policy | d -2 | d -1 | d 0 | d +1 | d +2 |
+  |---|---|---|---|---|---|---|
+  | all 20 (1.447 %) | gate .10 (finalA) | +10.7 ± 1.6 / +9.4 | +2.9 ± 1.2 / +0.4 | **-1.4 ± 0.8 / -2.1 ± 0.6** | -2.0 ± 0.9 / +0.5 | +3.3 ± 1.2 / +4.5 |
+  | | gate + dead zone 2 | +10.8 / +9.1 | +1.7 / -0.5 | **-0.6 ± 0.4 / -0.3 ± 0.2** | +0.2 / -0.1 | +2.4 / +2.7 |
+  | 11 weakest (0.854 %) | gate .10 | +2.7 ± 2.6 / +3.9 | -0.3 ± 2.1 / +0.6 | +0.6 ± 1.5 / -2.1 ± 1.0 | -3.3 ± 1.7 / +1.4 | +4.6 ± 2.3 / +8.4 |
+  | | gate + dead zone 2 | +2.9 / +3.7 | +0.4 / -0.5 | -0.2 ± 0.6 / -0.1 | -0.8 / -0.2 | +2.1 / +6.3 |
+  | 6 weakest (0.611 %) | gate .10 | -3.0 ± 4.0 / +6.6 | -8.9 ± 3.4 / +3.3 | -0.2 ± 2.9 / -2.2 ± 1.6 | -2.8 / +0.1 | +11.2 ± 4.5 / +11.6 |
+  | 9 strongest (2.171 %) | gate .10 | +17.7 ± 2.1 / +12.0 | +5.2 ± 1.6 / +0.2 | -0.3 ± 1.0 / -2.4 ± 0.7 | -0.6 / -0.3 | +4.8 / +2.2 |
+  Applied corrections at zero delay (gate .10): 0 / +1 / +2 in 45 / 44 / 6 % of batches (all), 49 / 42 / 3 % (11 weakest): at zero delay
+  the step moves about half of the batches by one sample. The zero-delay price does NOT grow for weak people (per trial -2.1 .. -2.4 in
+  every cohort); the BENEFIT under a real delay does shrink (d -2: +17.7 strongest, +2.7 ± 2.6 weakest 11).
+- 16:20 (user: does ST-EEGFormer actively hurt on Alljoined 5k?) `ny12_add_one.py 1,3,2,4 'old>'` on E2, r=3 top-5, four triplets:
+  drop ST soft -2.28 ± 0.55 (folds 1 / 3 / 2 / 4: -3.5 / -3.2 / -0.8 / -1.0); drop plain ST -2.49 ± 0.53 (-2.1 / -3.2 / -1.9 / -2.6);
+  drop both -4.49 ± 0.68 (-4.6 / -5.0 / -3.5 / -4.5). Both help on every fold, including fold 4 (not used to choose the members).
+  What the board contradicted was the DOUBLE weight (finalB), which only the foreign cohorts wanted.
+- 16:03 the same-recipe SQF-X control (`mi_sqfx_ho5k_lag5_jit3_seed7_e24`, `--seed 7`, fold 1) queued first, on the user's word.
+
+## 17:00 (19 Nov) the ensemble by member and family (user: last search for new members; bigger LUNA? a hybrid? an unexplored family?)
+- **Y40** (`ny12_add_one.py 1,3,2,4 'old>'`, `ny40_family.py 1,3,2,4`; E2, four folds). Dropped from E2: SQF-X -4.09 ± 0.60, SQF -2.35 ±
+  0.51, both -6.10 ± 0.73; ST -2.49, ST soft -2.28, both -4.49; LaBraM -1.94; rmix soft -1.81; REVE-scr -1.21; LaBraM soft -1.12;
+  REVE-pre soft -0.78 ± 0.49 (every fold negative for every member). Alone, r=3 top-5 %: SQF 0.97, SQF-X 1.01, REVE-scr 1.14, ST soft
+  1.19, LaBraM soft 1.21, ST 1.23, rmix soft 1.31, REVE-pre soft 1.35, LaBraM 1.36: the two weakest alone are the two most valuable.
+  Correlation of the target z-score between members: conv-conv .80, conv-token .60 (.56-.65), token-token .76; the four SOFT members
+  form one block whatever the architecture (rmix soft - REVE-pre soft .91, - LaBraM soft .88, ST soft with the three .83-.84), the hard
+  token members sit at .70-.78 with each other. Three error families: conv front end (2), hard-label tokens (3), soft-label tokens (4,
+  redundant; the least valuable member is in it).
+- **Y41 a third conv run at constant family weight** (`ny41_split.py 1,3`; SQF-X's 1.5 split 1.0 + 0.5 / 0.75 + 0.75 with a variant):
+  kernel 13 -2.3 / -2.3, no THINGS -1.8 / -2.7, depth 5 -1.3 / -1.8, d256 -2.0 / -2.3, jitter 5 -0.8 / -0.8 (2 folds), warp -2.2 / -2.5,
+  operator transfer 1.0 -1.4 / -1.5, EMA -1.0 / -1.3, soft -1.8 / -1.8, no jitter -1.5 / -2.4, TSConv soft -2.3 / -3.3; and the
+  incumbent's OWN epoch 32: -0.9 / -1.8 (both folds). No conv variant adds diversity; that even the same run's later epoch loses says
+  the incumbent point is a selected optimum on folds 1 + 3 (the seed control will size it).
+- **LUNA:** base pretrained -28.3 ± 4.5 alone vs LaBraM, scratch with 8 queries and 16-sample patches -24.7 ± 4.9, both negative at 14k
+  (16 Nov). The weak point is the design (electrodes compressed into a few queries per patch), which the Large / Huge sizes keep;
+  Huge is 311 M (REVE-large's cost, cancelled today). Not run. EEGPT (250 ms patches) did not train; BIOT / BENDR / SignalJEPA need
+  long windows. What paid so far: pretrained token models with fine time resolution (LaBraM, ST-EEGFormer, REVE).
+
+## 17:30 (19 Nov) alignment: larger delays by cohort strength (S11), and the zero-delay price with the ACTUAL E2 members (S12)
+
+- **S11 at ±3 / ±4** (`D=-4,-3,3,4 ns11_align_weak.py 1,2,3,4`, `logs/mi/s11_align_weak_d34.out`; the six's caches, 11 people per batch).
+  An uncorrected delay costs, r=3, all 20: -4 -35.8 %, -3 -20.6, +3 -14.5, +4 -25.4 (11 weakest -31.1 / -19.6 / -15.8 / -26.4). Gate 0.10
+  recovers, r=3 vs no alignment: all 20 +53.4 ± 3.7 / +25.1 ± 2.5 / +15.7 ± 2.1 / +32.4 ± 2.8; 11 weakest +42.3 ± 5.6 / +20.3 ± 4.3 /
+  +18.7 ± 3.8 / +37.5 ± 5.3; 9 strongest +62.2 / +27.1 / +16.2 / +33.9. Gate + dead zone 2 is identical to within 1 point everywhere
+  (|d| >= 3). The detector works on weak people for large delays.
+- **S12 zero delay, E2's own members** (`ns12_align_e2.py`, `logs/mi/s12_align_e2.out`; folds 1 + 3, 10 people per batch, 3 batch seeds,
+  E2 outputs cached at shifts -1, 0, +1, +2; the six on the same batches). E2 without alignment: per-trial 0.921 %, r=3 1.872 %, gain 2.03.
+  | | per trial | r=3 |
+  |---|---|---|
+  | E2, every trial shifted -1 / +1 / +2 | -0.4 ± 1.1 / -0.7 ± 1.1 / -1.7 ± 1.4 | -3.2 ± 0.7 / -2.0 ± 0.8 / -3.5 ± 1.0 |
+  | E2, gate 0.10 (finalA's policy) | +0.34 ± 0.38 | **-1.22 ± 0.31** |
+  | E2, gate + dead zone 2 (finalE_dz2) | +0.07 ± 0.06 | **-0.04 ± 0.06** |
+  | six, every trial shifted -1 / +1 / +2 | -2.6 / -2.5 / -4.1 | -4.1 ± 1.2 / -0.1 ± 1.3 / -4.0 ± 1.7 |
+  | six, gate 0.10 | -1.14 ± 0.55 | -0.57 ± 0.47 |
+  | six, gate + dead zone 2 | -0.12 ± 0.09 | +0.00 ± 0.09 |
+  Applied corrections (same detector for both): 0 in 66 % of batches, +1 in 32 %, -1 in 1 %, +2 in 1 % (4 of 9,372 batches clipped);
+  with the dead zone 99 % zero. Reading: (a) E2's decoding optimum is AT zero (every shift costs at r=3), the six's was near +1 (S09),
+  so the gate's habit of proposing +1 was free for sub16's members and is a cost for the jitter-trained ones; (b) the cost shows at r=3
+  and not per trial (per trial +0.3, r=3 -1.2 = gain -1.55 %): the repeats of one (person, image) fall in different batches and get
+  different corrections, which removes coherence between repeats; (c) the board step sub16 -> finalA has that signature: gain ratio
+  board 1.050 / 1.083 = 0.970 against members-only proxy 1.055 / 1.070 = 0.986, residual -1.7 % (S12 predicts -1.55 %); one board
+  observation, noise about ± 2-3 %, so compatible and not proof; (d) the dead zone removes the cost entirely (-0.04 ± 0.06).
+  Policy A (gate alone) is dominated; B (dead zone) vs C (none) differ by < 0.1 % at zero delay.
+
+## 17:40 (19 Nov) user: dz2 is the pick if it is free at zero delay; hybrids of existing models welcome
+
+- **Alignment decision rule (user):** "if dz2 costs nothing in no-misalignment settings and helps sometimes we'll pick it". S12 on folds
+  2 + 4 and on all four folds is running (`logs/mi/queue/s12_cache24.sh` on 515 -> `logs/mi/s12_align_e2_f24.out`, `_f1234.out`;
+  `ns12_align_e2.py` now takes the folds as argument). The six read -0.6 ± 0.4 on four folds against 0.0 on folds 1 + 3, so folds 2 + 4
+  are where a cost of the dead zone would show (the +2 proposals: 1 % of batches on folds 1 + 3, 6 % over four folds).
+- **Two hybrid screens queued, fold 1, after the seed control** (the old judges' rejections are not evidence under the 5k judge: the
+  same P2 table that rejected SQF (23.7) rejected ATM (22.55), and pretrained members flipped as well; a head variant of ST
+  (time_pool) read as "an extra ST seed", so the family is set by the front end / trunk, not by the head):
+  - `mi_atm_ho5k_lag5_jit3`: ATM (electrode tokens with one attention layer, then the TSConv readout; 2.3 M) with the SQF-X recipe,
+    `--arch_kwargs {"subject_token":false,"backbone_dim":512}` (model.py: ATM now takes `--arch_kwargs`; atm.py: `subject_ids=None`
+    default). Never read at r=3 on never-trained images.
+  - `mi_sqst_ho5k_lag5_jit3`: NEW hybrid, the Squeezeformer's conv front end (40 filters, spatial collapse, 36 time tokens, per-dataset
+    BN) feeding ST-EEGFormer-small's eight PRETRAINED transformer blocks instead of the three Squeezeformer blocks (27 M;
+    `FastTSConvSqueezeformer(st_blocks=<hub id> | 'scratch', d_model=512)`; self-check: block weights equal the hub's, default path
+    unchanged). Batch 256, lr 3e-4, bf16, EMA, 12 of 16 epochs. Rationale: the conv front end is the most valuable error family and
+    pretraining is what paid in the token family; the two had not been crossed. Readers armed (swap for SQF, and add).
+
+## 18:05 (19 Nov) Y42 the fold-1 map of every cached model against E2's nine (`ny42_map.py 1`, `logs/mi/y42_map_f1.out`)
+
+User: the pretrained / scratch label may be meaningless (fine-tuned foundation models keep nothing of the original embedding, CKA);
+hybrids deserve thinking and resources. 91 cached runs (one checkpoint each): r=3 top-5 alone, correlation of the target z-score with
+the conv members / hard-label token members / soft-label token members, share unexplained by the nine, added to E2 at weight 1.
+- **Pretrained = scratch as an error family.** Hard-label token models, pretrained or not, have one profile (conv / hard / soft):
+  LaBraM .67 / .85 / .76, pretrained REVE hard .66 / .81 / .75, ST lr5 .64 / .81 / .74, REVE-d6 scratch .65 / .80 / .74, REVE-scratch
+  .65 / .84 / .73, rmix .68 / .80 / .75. Pretraining shows only in the accuracy of some architectures (ST scratch 0.90 alone).
+- **Two axes explain everything: front end (conv stem vs electrode tokens) x labels (hard vs soft).** The body does not move a model
+  (GRU on the TSConv stem .71 / .56 / .73 = conv + soft; ST with another head = ST), nor do auxiliary losses, temperature, epochs,
+  augmentations (all within .02 of their parent). LUNA is in between (.65 / .72 / .68, alone 1.14): its electrode compression is a
+  partial collapse. The 2 x 2 grid is full (conv-soft was read: SQF-X soft, SQF soft, TSConv soft).
+- **All 91 are negative as a tenth member at weight 1** (-0.1 .. -6.4). Copies of members (other checkpoint or seed of the same run)
+  read -1.4 .. -2.8 (mean -2.2): the cost of doubling a member's weight. The best candidates (-0.1 .. -1.0) are what the top of 91
+  copies looks like at ± 0.9 per read. Added value correlates with accuracy alone (+.42) and not with the unexplained share (+.07, it
+  is mostly noise). So a new member has to be a new FRONT END (or a stronger conv-front model: the conv members are the most valuable
+  and the weakest alone, 1.0-1.17 against 1.4-1.6), and its read must be compared with a copy's (-2.2 at weight 1; the seed-7 control
+  gives the swap baseline).
+- Earlier finding that fits (memory, 5 Nov): an MLP mixer joins the conv family when fed the 25-sample moving average: the conv
+  family is the smoothed, linear-filter-first view of the trial.
+- **Hybrid slate, fold 1** (queue order; judged against the copy baseline and by their profile in this map): ATM (electrode tokens
+  over the whole epoch, then the conv readout); `mi_sqst` (conv stem -> pretrained ST blocks) and `mi_sqstscr` (same, random blocks:
+  the user's point predicts no difference); `mi_sqea` (NEW: one attention layer across electrodes on the filter-bank features before
+  the spatial collapse = ATM's electrode attention inside the Squeezeformer's front end, `electrode_attn=True`, 2.17 M, bf16 for
+  memory). The two REVE recipe screens (stop 8, batch 256) moved behind them. Seed-7 control started 17:57 on 520.
+
+## 18:20 (19 Nov) reads and the stem-adaptation question (user: is "TSConv adapted to Alljoined" closed?)
+
+- **REVE-pre soft without THINGS, fold 1** (`read_mi_prev_ho5k_lag5_jit3_soft3_noth_f1.out`): swap for REVE-pre soft -4.0 / -3.8 / -2.7
+  (ep 8 / 9 / test_best), added at .5: -2.2 / -2.6 / -1.8. Negative, closed (a copy reads about -2.2 at weight 1, Y42).
+- **Stem adaptation: NOT closed.** State: pooling was adapted in October (25 / 2 = the 250 Hz durations); the temporal kernel was read
+  once (kernel 13 = 108 ms, fold 1: alone 1.09 against 1.17, swap -3.7 / -4.1, provisional until the seed control); the number of
+  filters and the amount of smoothing were never read. Queued after the three hybrids, fold 1, SQF-X recipe, 70 min each:
+  `_sf20_e24` (20 stem filters), `_pk37_e24` (pool 37 = 308 ms, more smoothing for the noisier recordings), `_tk13sf20_e24` (kernel 13
+  and 20 filters together). Readers armed (swap for SQF-X ep24 and add).
+
+## 19:05 (19 Nov) S12 on folds 2 + 4 and on all four folds; ST soft at lr 5e-4
+
+- **S12, E2's own members, zero delay** (`logs/mi/s12_align_e2_f24.out`, `_f1234.out`; r=3 against no alignment):
+  | folds (people per batch pool) | gate 0.10 (finalA) | gate + dead zone 2 (finalE_dz2) | +2 proposals |
+  |---|---|---|---|
+  | 1 + 3 (10) | -1.22 ± 0.31 | -0.04 ± 0.06 | 1 % of batches |
+  | 2 + 4 (10) | -1.59 ± 0.55 | -0.21 ± 0.33 | 12 % (+3: 1 %) |
+  | all four (20) | -1.31 ± 0.29 | **-0.23 ± 0.13** | 4 % |
+  Uniform shifts of E2 on four folds, r=3: -1 -2.3 ± 0.6, +1 -2.0 ± 0.6, +2 -3.7 ± 0.8 (optimum at zero on every fold pair). The dead
+  zone is not free: about -0.2 % at zero delay, carried by the people of folds 2 + 4 for whom the detector proposes +2. The proposals
+  sit one sample too high for E2's members (bias 1.5 was fitted on the six, whose optimum was near +1; on the foreign cohorts the
+  detector also landed at +7 against labelled optima +3..+6). Running: the same price with bias 1.0 and 0.5, plus uniform delays
+  -1 / +1 / +2 and a dead zone of 3 (`CAL=.. D=0,-1,1,2 WHICH=E2 ns12_align_e2.py 1,2,3,4` -> `logs/mi/s12_cal<bias>.out`). The bias is
+  package aux (`bias`), so a re-calibrated dz2 is a rebuild, not a retrain.
+- **ST soft at lr 5e-4, fold 1** (`read_mi_stf_ho5k_lag5_jit3_soft3_lr5_f1.out`): swap for ST soft -2.9 (ep 8) / -3.4 (best); added at
+  .5: -1.0 / -1.8. Copy level; closed. ATM started 18:23 on 513.
+
+## 19:35 (19 Nov) CALIBRATION CONTROL: a re-seed of SQF-X reads -3.2 % as a swap (`read_mi_sqfx_ho5k_lag5_jit3_seed7_e24_f1.out`)
+
+Same recipe as E2's SQF-X, `--seed 7` instead of 33, stopped at 24, fold 1.
+- Swapped for the incumbent (ep24): **-3.21 ± 0.98** (its ep20: -4.08). Added at .5 / 1: -2.07 / -2.01 (ep20 -1.85 / -2.72).
+- Alone, r=3 top-5 on fold 1: seed 7 ep24 1.066 against the incumbent's 1.149 (ep32 1.170, best 1.174); per trial .605 / .624.
+  Other ep24 models for scale: depth 5 1.206, EMA 1.176, soft 1.159, repeat-aggregate 1.120, operator transfer 1.0 1.092,
+  kernel 13 1.09, d256 1.038; the incumbent's own re-run at ep20 1.039.
+- **Reading.** One seed of one member moves the fold-1 ensemble by about 3 %, and its solo score by about 7 %. The bootstrap errors of
+  the reads (± 1.0) do not contain that. Every "negative" swap of the last day sits at the control's level: kernel 13 -4.1 (ep24),
+  no THINGS -4.4 / -2.9, depth 5 -3.3, d256 -5.0 / -2.6, ST soft lr 5e-4 -2.9 / -3.4, REVE-pre noth -2.7 .. -4.0, hard REVE-pre
+  -1.1 .. -1.9. They are NEUTRAL against a re-seed, not negative; none is positive. E2's incumbents are the best draws among those
+  tried on these folds (Y22 / Y27: a local optimum on every cached axis), so a swap baseline is about -3, an addition at .5 about -2.
+- **What it does to past adoptions.** (a) SQF-X "ep24" (+1.56 ± 0.55 on four folds over the same run's best epoch): other runs are
+  flat across epochs (no-jitter -2.98 / -2.84 / -2.96, soft -4.31 / -4.49), neighbouring checkpoints of the incumbent swing by 2-4 %
+  (ep12 -4.35, ep16 -1.69, ep20 -3.81, ep32 -2.3): a checkpoint draw, expected value about 0 for the retrained final. (b) E2's weights
+  (about +1.2 over uniform): smoother, partly real. (c) No alignment: +1.3 ± 0.3 (S12), solid. The honest forecast of finalE over
+  finalA is about +2 % aggregated, not +2.8.
+- **Seeds are variance, not expectation** (so the user's "no second seeds" stands): Y41's half-and-half splits read the MEAN of the
+  two single reads (kernel 13 -2.3 vs (0, -4.1); depth 5 -1.8 vs (0, -3.3)): no averaging bonus.
+- **Protocol from now:** a candidate is compared with the control in the same slot (candidate swap minus -3.2; candidate addition at .5
+  minus -2.1), and a member-level effect under about 3 % on one fold is not readable; three folds agreeing remain the rule.
+
+## 20:05 (19 Nov) is E2 overfitted to the folds? (user) Decomposition, detector bias, two checks launched
+
+- **E2 over the uniform nine, per fold** (5k, r=3; each fold = other people AND other model draws):
+  | fold | E2 weights, best-epoch SQF-X | uniform, ep24 SQF-X | E2 (both) |
+  |---|---|---|---|
+  | 1 | -0.44 ± 0.98 | +0.78 ± 0.68 | +2.00 ± 1.07 |
+  | 2 | +1.28 ± 1.28 | +0.96 ± 0.81 | +2.79 ± 1.32 |
+  | 3 | +0.38 ± 0.99 | +0.16 ± 0.66 | +2.97 ± 1.13 |
+  | 4 | +1.76 ± 1.13 | +1.19 ± 0.80 | +3.44 ± 1.25 |
+  | all | +0.63 ± 0.50 | +0.73 ± 0.37 | +2.77 ± 0.60 |
+  Positive on four folds, but chosen on those four folds; half of it is the interaction (weight 1.5 on the ep24 model).
+- **Where the fragility sits.** SQF-X alone on fold 1: seed 33 ep20 1.039 (re-run), ep24 1.149, ep32 1.170, ep36 1.175, best (ep27)
+  1.174; seed 7 ep20 1.051, ep24 1.066. The two seeds agree at ep20 and at ep24 one has made its jump and the other has not: epoch 24
+  of a 40-epoch one-cycle schedule is on the slope (learning rate still about half its peak). A model stopped there is a draw; the
+  final SQF-X of finalE (30 people, stopped at 24) is such a draw. Launched: the control continued to 40 epochs
+  (`mi_sqfx_ho5k_lag5_jit3_seed7`, saves 24 / 28 / 32 / 36, head of the queue; reader swaps each for the incumbent): does seed 7
+  reach the plateau, and is a fully trained SQF-X stable across seeds in the ensemble?
+- **Leave-one-fold-out weights** (`ny10_weight_search.py <3 folds> <4th>`, with the best-epoch and with the ep24 SQF-X ->
+  `logs/mi/y43_lofo_w*_c<k>.out`): the unbiased size of what a weight search transfers to new people and new draws. Running.
+- **Detector bias with E2's members, four folds, gate + dead zone 2** (`logs/mi/s12_cal<bias>.out`; r=3; zero delay vs no alignment,
+  then recovery under a uniform delay vs uncorrected, which costs -2.3 / -2.0 / -3.7 at -1 / +1 / +2):
+  | bias | zero delay | -1 | +1 | +2 |
+  |---|---|---|---|---|
+  | 1.5 (finalE_dz2 as built) | -0.23 ± 0.13 | +0.84 ± 0.38 | +0.13 ± 0.13 | +1.77 ± 0.41 |
+  | **1.0** | **-0.05 ± 0.04** | +0.70 ± 0.23 | +0.21 ± 0.22 | +2.56 ± 0.47 |
+  | 0.5 | -0.01 ± 0.06 | +0.22 ± 0.14 | +0.50 ± 0.33 | +2.85 ± 0.53 (many proposals outside the cached shifts) |
+  Bias 1.0 is free at zero delay and symmetric: the hedge package is to be rebuilt with it (aux `bias`, no retraining). Dead zone 3
+  at bias 1.0: +0.01 at zero delay but recovers only +0.57 at +2.
+- User's proposal (a new 8-person fold, 2 people from each fold, all nine members retrained on 12 + 10 people): about 24 GPU-h for the
+  members alone; it removes the selection of the incumbents but not the seed variance (one draw per member, ± 3 % per member-level
+  read), so today's neutrals stay unreadable on it. The four existing folds already are independent people and draws for any choice
+  made on the other three (leave-one-fold-out, from caches, no training). Recommended instead; reported to the user.
+
+## 20:30 (19 Nov) session restart on 515; alignment decision; ST e14 stopped
+
+- The interactive job 78073 was cancelled at 18:46 (new one 78987 on the same node); the previous assistant process (pid 839686, from
+  18 Nov 23:40) survived detached with the leave-one-fold-out loop as its child. Killed by pid (the twin pitfall); the loop goes on.
+  The local worker still carried the dead job id, so `fit.sh` parked its next line: worker restarted with `SLURM_JOB_ID=78987`.
+- `mi_stf_ho5k_lag5_jit3_soft3_e14` (ST soft, 14 epochs) stopped at epoch 7 by me: a recipe tweak that the control says cannot be read
+  under about 3 %, and it held the GPU the analyses share. 515 now trains `mi_sqea_ho5k_lag5_jit3` (20:25); 517 the control to 40
+  epochs (20:19); 520 `mi_sqst` (19:21); 513 ATM (18:23).
+- **User, 20:20: "ok for the alignment decision"** = the upload carries the detector with gate 0.10, dead zone 2 and bias 1.0
+  (-0.05 ± 0.04 at zero delay with E2's members; +0.7 / +0.2 / +2.6 at -1 / +1 / +2). To build once the SQF-X question (stopped at
+  24 or full) is read from the 40-epoch control.
+
+## 20:55 (19 Nov) ATM and ST soft without THINGS, fold 1 (control: swap -3.2, added at .5 / 1: -2.1 / -2.0)
+
+- **ST soft without THINGS** (`read_mi_stf_ho5k_lag5_jit3_soft3_noth_f1.out`): swap for ST soft -3.5 / -3.2 / -3.2 (ep 13 / 15 / best),
+  added at .5: -1.7 / -1.3 / -1.5; alone 0.88 (map), corr .44 / .56 / .69. Control level; closed (no THINGS does not help ST).
+- **ATM** (`read_mi_atm_ho5k_lag5_jit3_f1.out`; `ONLY=atm ny42_map.py 1`): alone **1.20** (SQF-X 1.17, SQF 0.96 on this fold),
+  correlation with conv .70, hard tokens .72, soft .66 = between the families (LUNA: .65 / .72 / .68 at 1.14), unexplained .30.
+  Added at .5: -0.7 (ep24 / 32 / best alike), at 1: -1.6 / -1.4 / -0.7: about 1.4 above a copy, still below zero. Swapped (best)
+  for SQF -2.0, REVE-pre soft -1.5, LaBraM soft -1.4, REVE-scr -2.2, rmix soft -0.7, SQF-X -3.8. Not a member on fold 1; the
+  second-best of the 92 cached models as an addition, so fold 3 is queued (`mi_atm_ho5k_lag5_jit3 3`, reader armed).
+- sqea restarted from the queue (515 could not stage the data: 21.5 GB free on /tmp against 12.4 + 20 reserve, and read the NAS at
+  30 s per step); 515 stays the analysis and packaging node tonight. 513: sf20 since 20:30.
+- 20:51 **user: one more 3080 for the night, 5 GPUs in total.** Holder job 79054 `mi_gpu9` on 518 (`-t 14:00:00`, ends by itself about
+  10:50 on 20 Nov), worker inside; it took `mi_sqea_ho5k_lag5_jit3` (fold 1). Idle and not taken: 523 (3090), 302 (3080).

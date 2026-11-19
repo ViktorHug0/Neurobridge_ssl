@@ -47,6 +47,7 @@ GALA = {'gala': {}, 'gala_d': {'prior': 1}, 'gala_noshrink': {'shrink': False}, 
         'gala_sw_sinkhorn': {'steps': 1, 'warm': True}, 'gala_s_norot': {'sinkhorn': False, 'steps': 0}, 'gala_s16': {'sinkhorn': False},
         # relaxed column constraint with warm start: column step to the power 0.5; column masses estimated from the buffer
         'gala_sw_cp50': {'steps': 1, 'warm': True, 'col_power': 0.5}, 'gala_sw_freq1': {'steps': 1, 'warm': True, 'freq': 1.0},
+        'gala_sw_freq01': {'steps': 1, 'warm': True, 'freq': 0.1},  # pseudo-count 0.1 instead of 1 (2026-11-19 check)
         # ablations of gala_sw_freq1 (from scratch with 16 iterations = gala_freq1)
         'gala_swf_nowhiten': {'steps': 1, 'warm': True, 'freq': 1.0, 'whiten_on': False},
         'gala_swf_nocsls': {'steps': 1, 'warm': True, 'freq': 1.0, 'use_csls': False},

@@ -15,15 +15,15 @@ sys.argv = argv
 
 
 class GM:
-    def __init__(self, d):
+    def __init__(self, d, ckpt='checkpoint_test_best.pth', channels=63):
         from types import SimpleNamespace
         c = json.load(open(f'{d}/train_config.json'))
         c['feature_dim'] = int(str(c['feature_dim']).split(',')[0])
         self.args = a = SimpleNamespace(**{**DEFAULTS, **c})
-        ck = torch.load(f'{d}/checkpoint_test_best.pth', map_location=DEV, weights_only=False)
+        ck = torch.load(f'{d}/{ckpt}', map_location=DEV, weights_only=False)
         img_dim = img_raw().shape[1]
         bb = a.eeg_backbone_dim or img_dim
-        self.enc = build_eeg_encoder(a, bb, 250, 63)
+        self.enc = build_eeg_encoder(a, bb, 250, channels)
         self.eeg_proj = build_projector(a.projector, bb, a.feature_dim, activation=a.projector_activation)
         self.img_proj = build_projector(a.projector, img_dim, a.feature_dim, activation=a.projector_activation)
         self.enc.load_state_dict(ck['model_state_dict'])

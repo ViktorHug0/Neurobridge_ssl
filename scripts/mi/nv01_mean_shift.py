@@ -26,6 +26,8 @@ for k in [int(a) for a in sys.argv[1].split(',')]:
             j, r, *ck = al.split(':'); S = S - Y(*SIX[int(j)]) + Y(r, ck[0] if ck else SIX[int(j)][1])
     for al in filter(None, os.environ.get('ADD', '').split(',')):  # ADD=slot:recipe[:checkpoint][@weight]: an EXTRA member (the slot only names the default checkpoint)
         al, _, w = al.partition('@'); j, r, *ck = al.split(':'); S = S + float(w or 1) * Y(r, ck[0] if ck else SIX[int(j)][1])
+    if os.environ.get('POW'):  # POW=a: each trial's output scaled by its own norm^(a-1) before the grader's repeat average (a=0: unit norm, 1: as is)
+        S = S * S.norm(dim=1, keepdim=True) ** (float(os.environ['POW']) - 1)
     a = S.norm(dim=1).mean(); d = nz(S.mean(0, keepdim=True))[0] if os.environ.get('DIR') == 'b' else m  # DIR=b: the six's own image-independent mean output (from the same trials: a headroom read, not deployable as is)
     for c in (0,) + C:
         for gn, g in gals.items():

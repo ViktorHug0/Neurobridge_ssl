@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1540 1574" width="1540" height="1574" role="img" aria-label="EEGProject, TSConv and ATM as nested encoder architectures">
+<defs><marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1B2430"/></marker></defs>
+<rect width="1540" height="1574" fill="#FFFFFF"/>
+<rect x="20" y="168" width="1500" height="450" rx="12" fill="#F1EFFA"/>
+<rect x="20" y="636" width="1500" height="436" rx="12" fill="#EAF5F3"/>
+<rect x="20" y="1150" width="1500" height="232" rx="12" fill="#FBF4E3"/>
+<rect x="200.0" y="1158" width="380" height="216" rx="10" fill="#FFFFFF" fill-opacity="0.75" stroke="#A8741A" stroke-width="1.6" />
+<rect x="640.0" y="644" width="380" height="420" rx="10" fill="#FFFFFF" fill-opacity="0.75" stroke="#1F7A70" stroke-width="1.6" />
+<rect x="640.0" y="1158" width="380" height="216" rx="10" fill="#FFFFFF" fill-opacity="0.5" stroke="#A8741A" stroke-width="1.1" stroke-dasharray="5 4"/>
+<rect x="1080.0" y="176" width="380" height="434" rx="10" fill="#FFFFFF" fill-opacity="0.75" stroke="#5946B0" stroke-width="1.6" />
+<rect x="1080.0" y="644" width="380" height="420" rx="10" fill="#FFFFFF" fill-opacity="0.5" stroke="#1F7A70" stroke-width="1.1" stroke-dasharray="5 4"/>
+<rect x="1080.0" y="1158" width="380" height="216" rx="10" fill="#FFFFFF" fill-opacity="0.5" stroke="#A8741A" stroke-width="1.1" stroke-dasharray="5 4"/>
+<text x="390.0" y="50" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="23" fill="#1B2430" text-anchor="middle" font-weight="700" >EEGProject</text>
+<text x="390.0" y="74" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13" fill="#5F6B7A" text-anchor="middle" font-weight="400" >MLP on the flattened epoch</text>
+<text x="830.0" y="50" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="23" fill="#1B2430" text-anchor="middle" font-weight="700" >TSConv</text>
+<text x="830.0" y="74" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13" fill="#5F6B7A" text-anchor="middle" font-weight="400" >EEGProject preceded by a convolution stem</text>
+<text x="1270.0" y="50" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="23" fill="#1B2430" text-anchor="middle" font-weight="700" >ATM</text>
+<text x="1270.0" y="74" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13" fill="#5F6B7A" text-anchor="middle" font-weight="400" >TSConv preceded by an electrode transformer</text>
+<line x1="472.0" y1="42" x2="770.0" y2="42" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="622.0" y="33" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#1B2430" text-anchor="middle" font-weight="600" >+ temporal–spatial convolution</text>
+<line x1="888.0" y1="42" x2="1228.0" y2="42" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1059.0" y="33" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#1B2430" text-anchor="middle" font-weight="600" >+ attention across electrodes</text>
+<text x="38" y="379.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#5946B0" text-anchor="start" font-weight="700" >Electrode</text>
+<text x="38" y="398.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#5946B0" text-anchor="start" font-weight="700" >transformer</text>
+<text x="38" y="417.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#5F6B7A" text-anchor="start" font-weight="400" >ATM only</text>
+<text x="38" y="832.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#1F7A70" text-anchor="start" font-weight="700" >Temporal–</text>
+<text x="38" y="851.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#1F7A70" text-anchor="start" font-weight="700" >spatial</text>
+<text x="38" y="870.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#1F7A70" text-anchor="start" font-weight="700" >convolution</text>
+<text x="38" y="886.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#5F6B7A" text-anchor="start" font-weight="400" >TSConv, ATM</text>
+<text x="38" y="1252.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#A8741A" text-anchor="start" font-weight="700" >Projection</text>
+<text x="38" y="1271.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="15" fill="#A8741A" text-anchor="start" font-weight="700" >head</text>
+<text x="38" y="1290.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#5F6B7A" text-anchor="start" font-weight="400" >all three</text>
+<rect x="240.0" y="100" width="300" height="44" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="390.0" y="127.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG epoch</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>63 electrodes × 250 samples</text>
+<text x="402.0" y="397.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="11.5" fill="#5F6B7A" text-anchor="start" font-weight="400" font-style="italic">not present</text>
+<text x="402.0" y="858.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="11.5" fill="#5F6B7A" text-anchor="start" font-weight="400" font-style="italic">not present</text>
+<line x1="390.0" y1="144" x2="390.0" y2="1092" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="401.0" y="160" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >63 × 250</text>
+<rect x="325.0" y="1094" width="130" height="34" rx="17" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="390.0" y="1116.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Flatten</tspan></text>
+<text x="214.0" y="1177" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#A8741A" text-anchor="start" font-weight="700" letter-spacing="0.9">BASE MODEL</text>
+<line x1="390.0" y1="1128" x2="390.0" y2="1186" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="401.0" y="1144" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >15,750</text>
+<rect x="240.0" y="1188" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="390.0" y="1213.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>15,750 → D</text>
+<line x1="390.0" y1="1228" x2="390.0" y2="1254" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="401.0" y="1239" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="240.0" y="1256" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="390.0" y="1281.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">GELU</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>Linear D → D · Dropout 0.3</text>
+<line x1="390.0" y1="1296" x2="390.0" y2="1322" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="240.0" y="1324" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="390.0" y="1349.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Add &amp; LayerNorm</tspan></text>
+<circle cx="390.0" cy="1240" r="2.6" fill="#1B2430"/>
+<path d="M390.0 1240 H220.0 V1344.0 H238.0" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<line x1="390.0" y1="1364" x2="390.0" y2="1406" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="401.0" y="1395" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="240.0" y="1408" width="300" height="40" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="390.0" y="1433.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear projector</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>D → d</text>
+<line x1="390.0" y1="1448" x2="390.0" y2="1472" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="401.0" y="1465.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >d</text>
+<rect x="240.0" y="1474" width="300" height="38" rx="19" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="390.0" y="1498.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG embedding</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>d dimensions</text>
+<rect x="680.0" y="100" width="300" height="44" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="830.0" y="127.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG epoch</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>63 electrodes × 250 samples</text>
+<text x="842.0" y="397.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="11.5" fill="#5F6B7A" text-anchor="start" font-weight="400" font-style="italic">not present</text>
+<text x="654.0" y="663" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#1F7A70" text-anchor="start" font-weight="700" letter-spacing="0.9">ADDED BY TSCONV</text>
+<line x1="830.0" y1="144" x2="830.0" y2="672" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="160" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >63 × 250</text>
+<rect x="680.0" y="674" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="699.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Temporal convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters, 1 × 25</text>
+<line x1="830.0" y1="714" x2="830.0" y2="740" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="732.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 63 × 226</text>
+<rect x="680.0" y="742" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="767.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Average pooling</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>1 × 51, stride 5</text>
+<line x1="830.0" y1="782" x2="830.0" y2="808" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="800.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 63 × 36</text>
+<rect x="680.0" y="810" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="835.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">BatchNorm</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>ELU</text>
+<line x1="830.0" y1="850" x2="830.0" y2="876" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="680.0" y="878" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="903.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Spatial convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters, 63 × 1</text>
+<line x1="830.0" y1="918" x2="830.0" y2="944" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="936.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 1 × 36</text>
+<rect x="680.0" y="946" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="971.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">BatchNorm</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>ELU · Dropout 0.5</text>
+<line x1="830.0" y1="986" x2="830.0" y2="1012" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="680.0" y="1014" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="830.0" y="1039.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">1 × 1 convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters</text>
+<line x1="830.0" y1="1054" x2="830.0" y2="1092" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="1083" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 1 × 36</text>
+<rect x="765.0" y="1094" width="130" height="34" rx="17" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="830.0" y="1116.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Flatten</tspan></text>
+<text x="654.0" y="1177" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#5F6B7A" text-anchor="start" font-weight="700" letter-spacing="0.9">SAME AS EEGPROJECT</text>
+<line x1="830.0" y1="1128" x2="830.0" y2="1186" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="1144" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >1,440</text>
+<rect x="680.0" y="1188" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="830.0" y="1213.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>1,440 → D</text>
+<line x1="830.0" y1="1228" x2="830.0" y2="1254" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="1239" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="680.0" y="1256" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="830.0" y="1281.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">GELU</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>Linear D → D · Dropout 0.5</text>
+<line x1="830.0" y1="1296" x2="830.0" y2="1322" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="680.0" y="1324" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="830.0" y="1349.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Add &amp; LayerNorm</tspan></text>
+<circle cx="830.0" cy="1240" r="2.6" fill="#1B2430"/>
+<path d="M830.0 1240 H660.0 V1344.0 H678.0" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<line x1="830.0" y1="1364" x2="830.0" y2="1406" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="1395" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="680.0" y="1408" width="300" height="40" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="830.0" y="1433.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear projector</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>D → d</text>
+<line x1="830.0" y1="1448" x2="830.0" y2="1472" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="841.0" y="1465.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >d</text>
+<rect x="680.0" y="1474" width="300" height="38" rx="19" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="830.0" y="1498.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG embedding</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>d dimensions</text>
+<rect x="1120.0" y="100" width="300" height="44" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="1270.0" y="127.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG epoch</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>63 electrodes × 250 samples</text>
+<text x="1094.0" y="195" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#5946B0" text-anchor="start" font-weight="700" letter-spacing="0.9">ADDED BY ATM</text>
+<line x1="1270.0" y1="144" x2="1270.0" y2="204" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="160" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >63 × 250</text>
+<rect x="1120.0" y="206" width="300" height="54" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="228" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Token embedding</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>Linear 250 → 250</text>
+<text x="1270.0" y="247" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="11.5" fill="#5F6B7A" text-anchor="middle" font-weight="400" >one token per electrode, plus one shared token</text>
+<line x1="1270.0" y1="260" x2="1270.0" y2="286" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="271" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >64 tokens × 250</text>
+<rect x="1120.0" y="288" width="300" height="40" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="313.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Self-attention across electrodes</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>4 heads</text>
+<line x1="1270.0" y1="328" x2="1270.0" y2="354" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="356" width="300" height="40" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="381.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Add &amp; LayerNorm</tspan></text>
+<line x1="1270.0" y1="396" x2="1270.0" y2="422" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="424" width="300" height="40" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="449.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Feed-forward</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>250 → 256 → 250, GELU</text>
+<line x1="1270.0" y1="464" x2="1270.0" y2="490" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="492" width="300" height="40" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="517.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Add &amp; LayerNorm</tspan></text>
+<line x1="1270.0" y1="532" x2="1270.0" y2="558" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="560" width="300" height="40" rx="7" fill="#D8D1F3" stroke="#5946B0" stroke-width="1.4"/>
+<text x="1270.0" y="585.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">LayerNorm</tspan></text>
+<circle cx="1270.0" cy="272" r="2.6" fill="#1B2430"/>
+<path d="M1270.0 272 H1100.0 V376.0 H1118.0" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<circle cx="1270.0" cy="408" r="2.6" fill="#1B2430"/>
+<path d="M1270.0 408 H1100.0 V512.0 H1118.0" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<line x1="1270.0" y1="600" x2="1270.0" y2="672" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="627" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >63 × 250  (first 63 tokens kept)</text>
+<text x="1094.0" y="663" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#5F6B7A" text-anchor="start" font-weight="700" letter-spacing="0.9">SAME AS TSCONV</text>
+<rect x="1120.0" y="674" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="699.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Temporal convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters, 1 × 25</text>
+<line x1="1270.0" y1="714" x2="1270.0" y2="740" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="732.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 63 × 226</text>
+<rect x="1120.0" y="742" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="767.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Average pooling</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>1 × 51, stride 5</text>
+<line x1="1270.0" y1="782" x2="1270.0" y2="808" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="800.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 63 × 36</text>
+<rect x="1120.0" y="810" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="835.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">BatchNorm</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>ELU</text>
+<line x1="1270.0" y1="850" x2="1270.0" y2="876" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="878" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="903.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Spatial convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters, 63 × 1</text>
+<line x1="1270.0" y1="918" x2="1270.0" y2="944" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="936.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 1 × 36</text>
+<rect x="1120.0" y="946" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="971.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">BatchNorm</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>ELU · Dropout 0.5</text>
+<line x1="1270.0" y1="986" x2="1270.0" y2="1012" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="1014" width="300" height="40" rx="7" fill="#C2E4DF" stroke="#1F7A70" stroke-width="1.4"/>
+<text x="1270.0" y="1039.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">1 × 1 convolution</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>40 filters</text>
+<line x1="1270.0" y1="1054" x2="1270.0" y2="1092" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="1083" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >40 × 1 × 36</text>
+<rect x="1205.0" y="1094" width="130" height="34" rx="17" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="1270.0" y="1116.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Flatten</tspan></text>
+<text x="1094.0" y="1177" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="10.5" fill="#5F6B7A" text-anchor="start" font-weight="700" letter-spacing="0.9">SAME AS EEGPROJECT</text>
+<line x1="1270.0" y1="1128" x2="1270.0" y2="1186" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="1144" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >1,440</text>
+<rect x="1120.0" y="1188" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="1270.0" y="1213.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>1,440 → D</text>
+<line x1="1270.0" y1="1228" x2="1270.0" y2="1254" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="1239" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="1120.0" y="1256" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="1270.0" y="1281.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">GELU</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>Linear D → D · Dropout 0.5</text>
+<line x1="1270.0" y1="1296" x2="1270.0" y2="1322" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="1120.0" y="1324" width="300" height="40" rx="7" fill="#F6E3B6" stroke="#A8741A" stroke-width="1.4"/>
+<text x="1270.0" y="1349.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Add &amp; LayerNorm</tspan></text>
+<circle cx="1270.0" cy="1240" r="2.6" fill="#1B2430"/>
+<path d="M1270.0 1240 H1100.0 V1344.0 H1118.0" fill="none" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<line x1="1270.0" y1="1364" x2="1270.0" y2="1406" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="1395" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >D</text>
+<rect x="1120.0" y="1408" width="300" height="40" rx="7" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="1270.0" y="1433.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">Linear projector</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>D → d</text>
+<line x1="1270.0" y1="1448" x2="1270.0" y2="1472" stroke="#1B2430" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="1281.0" y="1465.0" font-family="'DejaVu Sans Mono', 'Fira Mono', monospace" font-size="11" fill="#5F6B7A" text-anchor="start" font-weight="400" >d</text>
+<rect x="1120.0" y="1474" width="300" height="38" rx="19" fill="#EEF1F4" stroke="#6B7785" stroke-width="1.4"/>
+<text x="1270.0" y="1498.0" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="13.5" fill="#1B2430" text-anchor="middle" font-weight="400" ><tspan font-weight="600">EEG embedding</tspan><tspan fill="#5F6B7A">&#160;&#160;·&#160;&#160;</tspan>d dimensions</text>
+<text x="38" y="1540" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#5F6B7A" text-anchor="start" font-weight="400" >Shapes are channels × electrodes × time for one epoch.  D: width of the head;  d: size of the shared EEG–image embedding.</text>
+<text x="38" y="1559" font-family="Inter, 'Source Sans 3', 'Fira Sans', 'Open Sans', Arial, sans-serif" font-size="12" fill="#5F6B7A" text-anchor="start" font-weight="400" >Dashed frames: blocks reused from an earlier model.  Left-hand loops: residual connections.</text>
+</svg>

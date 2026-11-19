@@ -1,0 +1,46 @@
+2026-11-17 17:31:24 START export_t4_f1
+2026-11-17 17:32:53 END(0) export_t4_f1 | cd scripts/subject_key && /nasbrain/p20fores/Neurobridge_SSL/.venv/bin/python -u export_teacher.py t4 1 atm128_vc/seed3300 atm128_vc/seed3302 tsconv_vc/seed3300 labram_vc/seed3300
+2026-11-17 17:32:54 START export_t4_f5
+2026-11-17 17:34:30 END(0) export_t4_f5 | cd scripts/subject_key && /nasbrain/p20fores/Neurobridge_SSL/.venv/bin/python -u export_teacher.py t4 5 atm128_vc/seed3300 atm128_vc/seed3302 tsconv_vc/seed3300 labram_vc/seed3300
+2026-11-17 17:34:30 START export_t4_f7
+2026-11-17 17:35:55 END(0) export_t4_f7 | cd scripts/subject_key && /nasbrain/p20fores/Neurobridge_SSL/.venv/bin/python -u export_teacher.py t4 7 atm128_vc/seed3300 atm128_vc/seed3302 tsconv_vc/seed3300 labram_vc/seed3300
+2026-11-17 17:35:55 START kd_atm_157
+2026-11-17 17:40:11 END(0) kd_atm_157 | bash scripts/subject_key/train_arm.sh kd_atm "1 5 7" atm --kd_teacher results/things_eeg/subject_key/teachers/t4_fFOLD.pt
+2026-11-17 17:40:12 START kd_tsconv_157
+2026-11-17 19:17:35 END(0) kd_tsconv_157 | bash scripts/subject_key/train_arm.sh kd_tsconv "1 5 7" tsconv --kd_teacher results/things_eeg/subject_key/teachers/t4_fFOLD.pt
+2026-11-17 19:17:35 START kdft_atm_157
+2026-11-17 19:29:38 END(0) kdft_atm_157 | bash scripts/subject_key/train_arm.sh kdft_atm "1 5 7" atm --num_epochs 25 --learning_rate 1e-4 --init_checkpoint results/things_eeg/subject_key/init/atm128_vc_s3300_fFOLD.pth --kd_teacher results/things_eeg/subject_key/teachers/t6_fFOLD.pt
+2026-11-17 19:29:38 START kdft_atm_157
+2026-11-17 20:17:41 END(0) kdft_atm_157 | bash scripts/subject_key/train_arm.sh kdft_atm "1 5 7" atm --num_epochs 25 --save_epochs 10 25 --early_stop_patience 0 --learning_rate 1e-4 --init_checkpoint results/things_eeg/subject_key/init/atm128_vc_s3300_fFOLD.pth --kd_teacher results/things_eeg/subject_key/teachers/t6_fFOLD.pt
+2026-11-17 20:17:41 START export_t6_rest
+2026-11-17 20:30:06 END(0) export_t6_rest | cd scripts/subject_key && for f in 2 3 4 6 8 9 10; do /nasbrain/p20fores/Neurobridge_SSL/.venv/bin/python -u export_teacher.py t6 $f atm128_vc/seed3300 atm128_vc/seed3302 atm128_bigg27_vc/seed3300 atm128_iv20_vc/seed3300 labram_vc/seed3300 tsconv_vc/seed3300; done
+2026-11-17 20:30:06 START k21_all
+2026-11-17 20:34:11 END(0) k21_all | cd scripts/subject_key && /nasbrain/p20fores/Neurobridge_SSL/.venv/bin/python -u k21_heads.py 1,2,3,4,5,6,7,8,9,10
+2026-11-17 20:34:11 START ep_pc_157
+2026-11-17 21:01:41 END(0) ep_pc_157 | bash scripts/subject_key/train_arm.sh ep_pc "1 5 7" ep --person_centre_train
+2026-11-17 21:01:41 START msft_atm_157
+2026-11-17 22:18:05 END(0) msft_atm_157 | bash scripts/subject_key/train_arm.sh msft_atm "1 5 7" atm --num_epochs 25 --save_epochs 10 25 --early_stop_patience 0 --init_checkpoint results/things_eeg/subject_key/init/atm128_vc_s3300_fFOLD.pth --aux_targets /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-bigG-14_layer27_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer20_mean_8bit --aux_dim 128 --aux_lambda 1.0
+2026-11-17 22:18:05 START ms_atm_157
+2026-11-18 02:12:41 END(0) ms_atm_157 | bash scripts/subject_key/train_arm.sh ms_atm "1 5 7" atm --aux_targets /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-bigG-14_layer27_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer20_mean_8bit --aux_dim 128 --aux_lambda 1.0
+2026-11-18 10:07:49 START msft_atm_rest
+2026-11-18 10:11:46 END(0) msft_atm_rest | bash scripts/subject_key/train_arm.sh msft_atm "2 3 4 6 8 9 10" atm --num_epochs 25 --save_epochs 10 25 --early_stop_patience 0 --init_checkpoint results/things_eeg/subject_key/init/atm128_vc_s3300_fFOLD.pth --aux_targets /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-bigG-14_layer27_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer20_mean_8bit --aux_dim 128 --aux_lambda 1.0
+2026-11-18 10:11:47 START base_rmix_157
+2026-11-18 11:13:17 END(0) base_rmix_157 | bash scripts/subject_key/train_arm.sh base_rmix "1 5 7" rmix
+2026-11-18 11:13:17 START msft6_atm_157
+2026-11-18 11:36:36 END(0) msft6_atm_157 | bash scripts/subject_key/train_arm.sh msft6_atm "1 5 7" atm --num_epochs 25 --save_epochs 10 25 --early_stop_patience 0 --init_checkpoint results/things_eeg/subject_key/init/atm128_vc_s3300_fFOLD.pth --aux_targets /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-bigG-14_layer27_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer20_mean_8bit /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer36_mean_8bit /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/EVA02-E-14_layer35_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/dinov2-giant_L20_mean --aux_dim 128 --aux_lambda 1.0
+2026-11-18 11:36:36 START ms_atm_rest
+2026-11-18 19:58:25 END(0) ms_atm_rest | bash scripts/subject_key/train_arm.sh ms_atm "2 3 4 6 8 9 10" atm --aux_targets /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/ViT-bigG-14_layer27_mean /nasbrain/p20fores/Neurobridge_SSL/data/things_eeg/image_feature/InternViT-6B_layer20_mean_8bit --aux_dim 128 --aux_lambda 1.0
+2026-11-18 19:58:25 START k41_refit_157
+2026-11-18 20:02:35 END(0) k41_refit_157 | cd scripts/subject_key && ../../.venv/bin/python -u k41_heads_refit.py 1,5,7
+2026-11-18 20:02:35 START atm_comb_157
+2026-11-19 00:49:01 END(0) atm_comb_157 | bash scripts/subject_key/train_arm.sh atm_comb "1 5 7" atm --subject_key comb_split
+2026-11-19 00:49:01 START release_gpu
+2026-11-19 00:49:01 END(0) release_gpu | scancel $SLURM_JOB_ID
+2026-11-19 00:52:34 START tsconv_swap_157
+2026-11-19 02:06:58 END(0) tsconv_swap_157 | bash scripts/subject_key/train_arm.sh tsconv_swap "1 5 7" tsconv --subject_key swap
+2026-11-19 02:06:58 START atm_swap_157
+2026-11-19 06:27:25 END(0) atm_swap_157 | bash scripts/subject_key/train_arm.sh atm_swap "1 5 7" atm --subject_key swap_split
+2026-11-19 06:27:25 START k51_swap
+2026-11-19 06:27:44 END(0) k51_swap | cd scripts/subject_key && TAG=swap ../../.venv/bin/python -u k51_centre_any.py tsconv_swap atm_swap
+2026-11-19 06:27:44 START release_gpu
+2026-11-19 06:27:44 END(0) release_gpu | scancel $SLURM_JOB_ID

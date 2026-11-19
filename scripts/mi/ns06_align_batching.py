@@ -5,11 +5,11 @@ then any batching is an average of them: 'mixed' (the fold's 5 people shuffled),
 and batch sizes 32 / 128. Estimator = the package's: parabola vertex + 1.5, rounded. Decoding with the applied shift from
 the cached sub16-composition outputs (`autolag_e2e_f<k>.npy`, shifts -5..+5), r=3, 5k, against no alignment, at a
 common delay d of the data (0, +-2, +-4: candidate grid moved by d).
-GATE=<p>: the step acts only on batches whose curve peaks at least p above its mean over the 9 candidates (confidence gate).
+DEAD=<D>: corrections smaller than D samples are skipped. GATE=<p>: the step acts only on batches whose curve peaks at least p above its mean over the 9 candidates (confidence gate).
     [GATE=p] [E2E=<tag>: the composition cached by nw01_e2e_cache.py] ns06_align_batching.py <fold>"""
 from nc_lib import *
 
-k = int(sys.argv[1]); GATE = float(os.environ.get('GATE', 0)); S = list(range(-5, 6)); C = np.arange(-8, 9); tt = torch.arange(120); E = np.load(f"{OUT}/autolag_e2e_{os.environ['E2E'] + '_' if os.environ.get('E2E') else ''}f{k}.npy", mmap_mode='r'); n = E.shape[1]
+k = int(sys.argv[1]); GATE = float(os.environ.get('GATE', 0)); DEAD = int(os.environ.get('DEAD', 0)); S = list(range(-5, 6)); C = np.arange(-8, 9); tt = torch.arange(120); E = np.load(f"{OUT}/autolag_e2e_{os.environ['E2E'] + '_' if os.environ.get('E2E') else ''}f{k}.npy", mmap_mode='r'); n = E.shape[1]
 X, subj, img = cell(FOLDS[k]); X, subj, img = torch.as_tensor(X[:n]), subj[:n], img[:n]; gal = gallery(); p = f'{OUT}/s06_trialnorm_f{k}.npy'
 if not os.path.exists(p):
     f = load('mi_rmix_ho5k_lag5', k, 'checkpoint_ep10.pth'); np.save(p, np.stack([f(X[:, :, (tt - int(c)).clamp(0, 119)], bs=1000).norm(dim=1).numpy() for c in C], 1)); del f
@@ -27,7 +27,10 @@ def applied(batches, d):  # per-trial total shift (delay d + correction) chosen 
         v = N[b][:, ok].mean(0); j = min(max(int(v.argmax()), 1), len(c) - 2); l, m, h = v[j - 1], v[j], v[j + 1]; cur = l - 2 * m + h
         if v.max() / v.mean() - 1 < GATE:  # no clear peak over the candidate shifts: leave the batch as it is
             continue
-        out[b] = int(round(min(max(c[j] + (0.5 * (l - h) / cur * 2 if cur < 0 else 0.), c[0]), c[-1]) + 1.5))
+        t = int(round(min(max(c[j] + (0.5 * (l - h) / cur * 2 if cur < 0 else 0.), c[0]), c[-1]) + 1.5))
+        if abs(t - d) < DEAD:  # DEAD=D: corrections smaller than D samples are not applied (no shift unless the evidence points D or more away)
+            continue
+        out[b] = t
     return np.clip(out, S[0], S[-1])
 
 
@@ -47,5 +50,5 @@ for d in (0, -2, 2, -4, 4):
         tb = applied(bs, d); r = ranks(tb); out = []
         for fn in (lambda v: v < 5, lambda v: v < 100, lambda v: v / 4999.):
             a, c = fn(r).astype(float), fn(base).astype(float); out.append('%+5.1f +- %.1f' % (100 * (a.mean() / c.mean() - 1), 100 * (a[bi].mean(1) / c[bi].mean(1) - 1).std()))
-        print('gate %.2f fold %d delay %+d | %-15s acted on %.0f %% of the trials | residual shift mean %+.2f sd %.2f | per person %s | vs no alignment: top-5 %s | top-100 %s | ranking error %s | per person top-5 %s' % (
-            GATE, k, d, name, 100 * (tb != d).mean() if d else float('nan'), tb.mean(), tb.std(), ' '.join('%+.1f' % tb[q].mean() for q in per), *out, ' '.join('%+.0f%%' % (100 * ((r[s3 == q] < 5).mean() / max((base[s3 == q] < 5).mean(), 1e-9) - 1)) for q in FOLDS[k])), flush=True)
+        print('gate %.2f dead %d fold %d delay %+d | %-15s acted on %.0f %% of the trials | residual shift mean %+.2f sd %.2f | per person %s | vs no alignment: top-5 %s | top-100 %s | ranking error %s | per person top-5 %s' % (
+            GATE, DEAD, k, d, name, 100 * (tb != d).mean() if d else float('nan'), tb.mean(), tb.std(), ' '.join('%+.1f' % tb[q].mean() for q in per), *out, ' '.join('%+.0f%%' % (100 * ((r[s3 == q] < 5).mean() / max((base[s3 == q] < 5).mean(), 1e-9) - 1)) for q in FOLDS[k])), flush=True)

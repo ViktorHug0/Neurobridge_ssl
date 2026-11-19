@@ -12,6 +12,8 @@ MEM = {1: [('mi_d6_ho5k_lag5_jit3', 'checkpoint_test_best.pth'), ('mi_rmix_ho5k_
            ('mi_scr_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_sqf_ho5k_lag5', 'checkpoint_ep32.pth'), ('mi_plab_ho5k_lag5_long', 'checkpoint_ep10.pth')],
        2: [('mi_d6_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_rmix_ho5k_lag5', 'checkpoint_ep10.pth'), ('mi_sqfx_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_scr_ho5k_lag5', 'checkpoint_test_best.pth'),
            ('mi_sqf_ho5k_lag5', 'checkpoint_ep32.pth'), ('mi_plab_ho5k_lag5_long', 'checkpoint_ep10.pth')],  # fold 2 (the weakest people): the six lag-only members
+       4: [('mi_d6_ho5k_lag5_jit3', 'checkpoint_test_best.pth'), ('mi_rmix_ho5k_lag5_jit3', 'checkpoint_ep10.pth'), ('mi_sqfx_ho5k_lag5_jit3', 'checkpoint_test_best.pth'),
+           ('mi_scr_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_plab_ho5k_lag5_long', 'checkpoint_ep10.pth')],  # fold 4: sub16's composition without SQF (its fold-4 run comes later)
        3: [('mi_d6_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_rmix_ho5k_lag5', 'checkpoint_ep10.pth'), ('mi_sqfx_ho5k_lag5', 'checkpoint_test_best.pth'), ('mi_plab_ho5k_lag5_long', 'checkpoint_ep10.pth')]}[k]  # fold 3: the lag-only members that exist there (no jitter: steeper under an offset)
 X, subj, img = cell(FOLDS[k]); X = torch.as_tensor(X); nb = len(X) // 64; n = nb * 64; X, subj, img = X[:n], subj[:n], img[:n]
 p = f'{OUT}/autolag_e2e_f{k}.npy'

@@ -610,6 +610,26 @@ class ExtraTrials(Dataset):
                 int(self.subj[i]), int(self.obj[self.img[i]]), int(self.image[self.img[i]]), 0)
 
 
+class RepeatPairSampler(BatchSampler):
+    """train.py --repeat_agg: each batch = B/2 random trials, then for each another repeat of the same person and image (itself if
+    it has none). Trials are laid out subject / object / image / repetition, so the repeats of u are u - u % R + 0..R-1. len = N // B
+    batches of B: the same compute per epoch as the plain loader."""
+    def __init__(self, indices, n_total, R, batch_size, seed=0):
+        self.idx = np.asarray(indices); self.pos = np.full(n_total, -1); self.pos[self.idx] = np.arange(len(self.idx))
+        self.R, self.B, self.seed, self.epoch = R, batch_size, seed, 0
+
+    def __len__(self):
+        return len(self.idx) // self.B
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed + self.epoch); self.epoch += 1; h = self.B // 2; perm = rng.permutation(len(self.idx))
+        for b in range(len(self)):
+            a = perm[b * h:(b + 1) * h]; u = self.idx[a]
+            cand = self.pos[(u - u % self.R)[:, None] + np.arange(self.R)]; cand[np.arange(h), u % self.R] = -1
+            j = (rng.random(cand.shape) * (cand >= 0)).argmax(1)
+            yield a.tolist() + np.where((cand >= 0).any(1), cand[np.arange(h), j], a).tolist()
+
+
 class GroupedImageBatchSampler(BatchSampler):
     def __init__(self, dataset, batch_size, samples_per_image=4, drop_last=True, seed=0):
         if batch_size <= 0:

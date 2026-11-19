@@ -99,7 +99,7 @@ def eeg(sub, split='test', average=True):
         x = ds.eeg_data_list[0]
         x = x.reshape(-1, *x.shape[2:])  # merge (object, image)
         _DS[key] = x
-        _DS[('img', split)] = ds.image_features.reshape(-1, ds.image_features.shape[-1])
+        _DS.setdefault(('img', split), ds.image_features.reshape(-1, ds.image_features.shape[-1]))  # scripts/subject_key/sk_lib.load may have put another image space there
     return _DS[key]
 
 

@@ -347,7 +347,7 @@ class ATMS(nn.Module):
         if trunk_dim != feature_dim:
             self.proj_eeg.append(nn.Linear(trunk_dim, feature_dim))
 
-    def forward(self, x:Tensor, subject_ids):
+    def forward(self, x:Tensor, subject_ids=None):
         x = x.squeeze(1)
         if x.dim() == 4:  # (B, 2, C, T) = [content, key] (train.py --subject_key split; scripts/mi/MI_LOG.md E13):
             # the electrode attention map is computed from the subject key alone, then applied to the key-free content

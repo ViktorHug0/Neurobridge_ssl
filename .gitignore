@@ -60,3 +60,7 @@ CVPR_paper/figures/*.png
 !CVPR_paper/figures/GALA*.png
 # the figures the paper includes are PDFs: keep them despite the global *.pdf rule
 !CVPR_paper/figures/*.pdf
+
+# arXiv version of the CVPR paper (derived from CVPR_paper/*.tex, rebuilt on demand)
+CVPR_paper/arxiv/
+CVPR_paper/arxiv_source.tar.gz

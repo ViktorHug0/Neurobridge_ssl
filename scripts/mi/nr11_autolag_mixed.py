@@ -7,8 +7,8 @@ applied to all three parts. Pooled top-5 % (5k r=3 / r=4, 14k r=3) as is against
     nr11_autolag_mixed.py [bias, default 1.5]"""
 from nc_lib import *
 
-bias = float(sys.argv[1]) if len(sys.argv) > 1 else 1.5; S = list(range(-5, 6)); t = np.arange(-8, 9); gals = {'5k': gallery(), '14k': gallery(big=True)}; F = {}
-for k in (1, 2, 3):
+bias = float(sys.argv[1]) if len(sys.argv) > 1 else 1.5; GATE = float(os.environ.get('GATE', 0)); DEAD = int(os.environ.get('DEAD', 0)); KS = [int(a) for a in os.environ.get('KS', '1,2,3').split(',')]; S = list(range(-5, 6)); t = np.arange(-8, 9); gals = {'5k': gallery(), '14k': gallery(big=True)}; F = {}
+for k in KS:
     E = np.load(f'{OUT}/autolag_e2e_f{k}.npy', mmap_mode='r'); n = E.shape[1]; X, subj, img = cell(FOLDS[k]); subj, img = subj[:n], img[:n]; groups = {}
     for i, kk in enumerate(zip(subj.tolist(), img.tolist())):
         groups.setdefault(kk, []).append(i)
@@ -31,7 +31,8 @@ def vertex(c, v):
 pool = lambda H: [np.concatenate([H[k][m] for k in H]) for m in range(3)]
 for d in (-4, -2, 0, 2, 4):
     ok = (np.abs(t - d) <= 8) & ((t - d) % 2 == 0); curve = sum(F[k][1][:nb, ok] / F[k][1][:nb, ok].mean(1, keepdims=True) for k in F); tb = np.round(np.clip(vertex(t[ok], curve), t[ok][0], t[ok][-1]) + bias).astype(int)
+    keep = (np.abs(tb - d) < DEAD) | (curve.max(1) / curve.mean(1) - 1 < GATE); tb[keep] = d  # DEAD / GATE: batches left as they are
     A = {k: hits(k, np.full(nb, d)) for k in F}; B = {k: hits(k, tb) for k in F}; a, b = pool(A), pool(B)
     i = np.random.default_rng(0).integers(0, len(a[0]), (2000, len(a[0])))
-    print('delay %+d | residual %+.2f sd %.2f | pooled as is %s -> aligned %s (%s) | per fold 5k r=3: %s' % (d, tb.mean(), tb.std(), ' / '.join('%.3f' % (100 * x.mean()) for x in a), ' / '.join('%.3f' % (100 * x.mean()) for x in b),
+    print('gate %.2f dead %d delay %+d | acted %.0f %% | residual %+.2f sd %.2f | pooled as is %s -> aligned %s (%s) | per fold 5k r=3: %s' % (GATE, DEAD, d, 100 * (tb != d).mean(), tb.mean(), tb.std(), ' / '.join('%.3f' % (100 * x.mean()) for x in a), ' / '.join('%.3f' % (100 * x.mean()) for x in b),
           ' / '.join('%+.1f +- %.1f %%' % (100 * (y.mean() / x.mean() - 1), 100 * (y[i].mean(1) / x[i].mean(1) - 1).std()) for x, y in zip(a, b)), ' '.join('f%d %+.1f %%' % (k, 100 * (B[k][0].mean() / A[k][0].mean() - 1)) for k in F)), flush=True)

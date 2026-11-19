@@ -61,6 +61,7 @@ def cross_subject_stimulus_mix(
     mixed = features.clone()
     partner_indices = torch.arange(features.shape[0], device=features.device)
     mixed_mask = torch.zeros(features.shape[0], device=features.device, dtype=torch.bool)
+    lam_all = torch.ones(features.shape[0], device=features.device)  # weight of the row's own trial (pairwise mixing)
     dist_alpha = max(float(alpha), 1e-3)
 
     for indices in groups.values():
@@ -96,13 +97,14 @@ def cross_subject_stimulus_mix(
             concentration = torch.full((group_size,), dist_alpha, device=features.device, dtype=torch.float32)
             beta = torch.distributions.Beta(concentration, concentration)
             lam = beta.sample().to(group_features.dtype)
+            lam_all[group_idx] = lam.float()
             lam = lam.view(*([group_size] + [1] * (group_features.dim() - 1)))
             mixed_group = lam * group_features + (1.0 - lam) * group_features[partner_pos]
 
         mixed[group_idx] = mixed_group
 
     if return_mixup_metadata:
-        return mixed, {'partner_indices': partner_indices, 'mixed_mask': mixed_mask}
+        return mixed, {'partner_indices': partner_indices, 'mixed_mask': mixed_mask, 'lam': lam_all}
     return mixed
 
 
